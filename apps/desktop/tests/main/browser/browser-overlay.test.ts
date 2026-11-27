@@ -50,6 +50,9 @@ const mocks = vi.hoisted(() => {
     setBounds(value: { x: number; y: number; width: number; height: number }): void {
       this.bounds = value;
     }
+    getBounds(): { x: number; y: number; width: number; height: number } {
+      return this.bounds;
+    }
   }
 
   return { FakeWebContents, FakeWebContentsView, logError: vi.fn(), packaged: false, devBase: vi.fn<() => string | undefined>(() => undefined) };
@@ -68,6 +71,7 @@ import {
   activateBrowserOverlayItem,
   dismissBrowserOverlay,
   attachBrowserOverlayWindow,
+  browserModelOverlayLayout,
   browserOverlayBounds,
   closeBrowserOverlayDialog,
   closeBrowserOverlayMenu,
@@ -320,7 +324,7 @@ describe('browser overlay lifecycle', () => {
     expect(host.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayAction, { menuId: 'site-b', itemId: 'browser' });
   });
 
-  it('[L0:desktop.overlay-menu-stays-closed] keeps a menu closed by Escape when the renderer refreshes it before the close reaches the renderer', async () => {
+  it('keeps a menu closed by Escape when the renderer refreshes it before the close reaches the renderer', async () => {
     const host = createHost();
     attachBrowserOverlayWindow(host as never);
     const view = mocks.FakeWebContentsView.instances[0]!;
@@ -1253,7 +1257,8 @@ describe('browser overlay model menu', () => {
     expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, {
       requestId: 1,
       placement: 'top-end',
-      menuOffset: { x: 256, y: 272 },
+      menuOffset: { x: 256, y: 278 },
+      menuBottom: 68,
       menuFrame: { x: 600, y: 358, viewportWidth: 1440, viewportHeight: 900 },
     });
 
@@ -1262,6 +1267,52 @@ describe('browser overlay model menu', () => {
       IPC.browserOverlayConfig,
       expect.objectContaining({ maxHeight: 284 }),
     );
+  });
+
+  it('keeps the model menu bottom inset constant when menu height changes, unless clamped at the top', () => {
+    const anchor = { x: 700, y: 840, width: 140, height: 32 };
+    const tall = browserModelOverlayLayout({ contentWidth: 1440, contentHeight: 900, anchor, menuHeight: 474 });
+    const short = browserModelOverlayLayout({ contentWidth: 1440, contentHeight: 900, anchor, menuHeight: 282 });
+
+    expect(tall.menuBottom).toBe(68);
+    expect(short.bounds).toEqual(tall.bounds);
+    expect(short.menuBottom).toBe(tall.menuBottom);
+    expect(tall.bounds.y + tall.bounds.height - tall.menuBottom!).toBe(832);
+    expect(short.bounds.y + short.bounds.height - short.menuBottom!).toBe(832);
+    expect(tall.bounds.y + tall.bounds.height - tall.menuBottom! - 474).toBe(tall.menuFrame.y);
+    expect(short.bounds.y + short.bounds.height - short.menuBottom! - 282).toBe(short.menuFrame.y);
+
+    const cramped = browserModelOverlayLayout({
+      contentWidth: 800,
+      contentHeight: 160,
+      anchor: { x: 400, y: 100, width: 120, height: 28 },
+      menuHeight: 200,
+    });
+    expect(cramped.menuFrame.y).toBe(8);
+    expect(cramped.menuBottom).toBeUndefined();
+  });
+
+  it('does not move, resize, refocus, or re-announce the native overlay view when model menu height changes while open', () => {
+    const host = createHost(1440, 900);
+    attachBrowserOverlayWindow(host as never);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    const anchor = { x: 700, y: 840, width: 140, height: 32 };
+    openBrowserOverlayMenu({ ...request, width: 240, maxHeight: 480, anchor, items: [], modelMenu });
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 240, height: 474 });
+    const initialBounds = { ...view.bounds };
+    const setBoundsSpy = vi.spyOn(view, 'setBounds');
+    view.webContents.send.mockClear();
+    view.webContents.focus.mockClear();
+
+    openBrowserOverlayMenu({ ...request, refresh: true, width: 240, maxHeight: 480, anchor, items: [], modelMenu });
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 240, height: 282 });
+
+    expect(setBoundsSpy).not.toHaveBeenCalled();
+    expect(view.bounds).toEqual(initialBounds);
+    expect(view.webContents.focus).not.toHaveBeenCalled();
+    expect(view.webContents.send).toHaveBeenCalledTimes(1);
+    expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayConfig, expect.objectContaining({ requestId: 1 }));
   });
 
   it('forwards structured model actions and keeps the overlay open', () => {

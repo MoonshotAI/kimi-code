@@ -1,5 +1,6 @@
 import {
   createLlmRequesterExecution,
+  mergeLlmPolicies,
   runLlmRequest,
   type LlmRequesterExecution,
   type LlmRunControl,
@@ -70,7 +71,9 @@ export function mergeFields(prev: Fields | undefined, next: Fields | undefined):
 }
 
 function mergeRequest(base: LlmRequestPart, part: LlmRequestPart): LlmRequestPart {
-  return mergeFields(base as Fields, part as Fields) as LlmRequestPart;
+  const merged = mergeFields(base as Fields, part as Fields) as LlmRequestPart;
+  if (base.policy === undefined || part.policy === undefined) return merged;
+  return { ...merged, policy: mergeLlmPolicies(base.policy, part.policy) };
 }
 
 export function contentsOf(part: LlmRequestPart | LlmRequester<LlmDimension>): LlmRequestPart {

@@ -6,7 +6,7 @@ import { Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import { ResolveDetachableTaskKey } from '@moonshot-ai/app-client/contracts';
 import { useAutoReviewHint } from '@moonshot-ai/app-client/composables';
-import { argFallbackText, parseArgRecord, str } from '@moonshot-ai/app-components';
+import { argFallbackText, parseArgRecord, str } from './toolArgs';
 import { createCodeScrollbars } from '@moonshot-ai/app-markdown/lib/codeScrollbars';
 import '@moonshot-ai/app-markdown/codeScrollbars.css';
 import ToolDisclosure from './ToolDisclosure.vue';

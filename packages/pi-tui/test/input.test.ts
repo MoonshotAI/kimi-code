@@ -34,6 +34,50 @@ describe("Input component", () => {
 		assert.strictEqual(input.getValue(), "\\x");
 	});
 
+	it("gets and sets cursor position with clamping and grapheme alignment without changing setValue", () => {
+		const preserved = new Input();
+		preserved.setValue("hello");
+		assert.strictEqual(preserved.getCursor(), 0);
+		preserved.handleInput("\x7f");
+		assert.strictEqual(preserved.getValue(), "hello");
+
+		const ascii = new Input();
+		ascii.setValue("hello");
+		ascii.setCursor(2);
+		assert.strictEqual(ascii.getCursor(), 2);
+		ascii.handleInput("\x7f");
+		assert.strictEqual(ascii.getValue(), "hllo");
+		assert.strictEqual(ascii.getCursor(), 1);
+		ascii.setCursor(99);
+		assert.strictEqual(ascii.getCursor(), 4);
+		ascii.setCursor(-5);
+		assert.strictEqual(ascii.getCursor(), 0);
+		ascii.setCursor(Number.NaN);
+		assert.strictEqual(ascii.getCursor(), 0);
+		ascii.setCursor(Number.POSITIVE_INFINITY);
+		assert.strictEqual(ascii.getCursor(), 4);
+		ascii.handleInput("\x7f");
+		assert.strictEqual(ascii.getValue(), "hll");
+
+		const unicode = new Input();
+		unicode.setValue("你好🙂a");
+		unicode.setCursor(3);
+		assert.strictEqual(unicode.getCursor(), 2);
+		unicode.setCursor(unicode.getValue().length);
+		assert.strictEqual(unicode.getCursor(), 5);
+		unicode.handleInput("\x7f");
+		assert.strictEqual(unicode.getValue(), "你好🙂");
+		unicode.handleInput("\x7f");
+		assert.strictEqual(unicode.getValue(), "你好");
+
+		const combining = new Input();
+		combining.setValue("e\u0301x");
+		combining.setCursor(1);
+		assert.strictEqual(combining.getCursor(), 0);
+		combining.setCursor(2);
+		assert.strictEqual(combining.getCursor(), 2);
+	});
+
 	describe("render", () => {
 		it("supports a custom prompt and styled placeholder", () => {
 			const input = new Input({

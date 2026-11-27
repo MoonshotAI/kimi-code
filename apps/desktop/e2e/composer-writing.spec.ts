@@ -1,7 +1,5 @@
-import { held as holdReply, say as reply } from '@moonshot-ai/testkit/model';
-import { expect, test, testWithProvider } from './fixtures/app';
+import { expect, test } from './fixtures/app';
 import { messageProblems, say } from './fixtures/model';
-import { closeSettings, openSettings } from './fixtures/settings';
 import { sidebarOf } from './fixtures/sessions';
 
 const LINES = ['Plan the migration:', '- move the config loader', '- rename the env flags', '- update the docs', '- keep the old flags working'];
@@ -9,10 +7,6 @@ const MULTILINE = LINES.join('\n');
 const SECOND = 'Now summarise the plan in one sentence';
 const DRAFT = 'unsent thought';
 const OPENER = 'Start a migration planning session';
-
-function prediction(message: string | null): ReturnType<typeof reply> {
-  return reply(JSON.stringify({ show: message === null ? 'no' : 'yes', message: message ?? '' }));
-}
 
 test('a multi-line prompt is written, expanded, sent verbatim and recalled from history after a relaunch', async ({ app, model }) => {
   model.script(say('Ready to plan.'), say('Migration plan noted.'), say('One sentence summary.'));
@@ -130,152 +124,5 @@ test('a multi-line prompt is written, expanded, sent verbatim and recalled from 
     await expect(app.window.getByRole('list').first().getByText('Sent again.', { exact: true })).toBeVisible();
     await expect(restoredLines).toHaveText(['']);
     await expect(app.window.getByRole('alert')).toHaveCount(0);
-  });
-});
-
-test.describe('next-prompt placeholder recall', () => {
-  test.use({ appEnv: { KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION: '1' } });
-
-  const idlePlaceholder = 'Type @ to reference files, or start with / for commands and skills';
-
-  testWithProvider('shows predictions in the placeholder and waits for an in-flight recall without cancelling input', async ({ app, provider }) => {
-    const tabPrediction = 'Recall this prediction with Tab';
-    const rightPrediction = 'Recall this prediction with Right Arrow';
-    const escapePrediction = 'Escape keeps this prediction cached';
-    const draft = 'keep this draft';
-    provider.script(
-      reply('First answer.'),
-      holdReply('composer-tab-prediction', prediction(tabPrediction)),
-      reply('Second answer.'),
-      prediction(rightPrediction),
-      reply('Third answer.'),
-      prediction(escapePrediction),
-      reply('Fourth answer.'),
-      prediction(null),
-    );
-    const predictionHold = provider.hold('composer-tab-prediction');
-    const input = app.window.getByRole('combobox', { name: 'Message input' });
-    const lines = input.getByRole('paragraph');
-    const placeholder = app.window.locator('.composer-placeholder-overlay');
-    const transcript = app.window.getByRole('list').first();
-
-    await expect(placeholder).toHaveText(idlePlaceholder);
-    await app.submit(OPENER);
-    await predictionHold.reached();
-    await expect(placeholder).toHaveText(idlePlaceholder);
-    await input.click();
-    await app.window.keyboard.type('another draft');
-    await expect(placeholder).toBeHidden();
-    await app.window.keyboard.press('ControlOrMeta+a');
-    await app.window.keyboard.press('Backspace');
-    await app.window.keyboard.type(' ');
-    await expect(placeholder).toHaveText(idlePlaceholder);
-    await app.window.keyboard.press('Tab');
-    await expect(placeholder).toHaveText(idlePlaceholder);
-    predictionHold.release();
-    await expect(lines).toHaveText([tabPrediction]);
-    await expect(placeholder).toBeHidden();
-    expect(provider.requests()).toHaveLength(2);
-
-    await app.window.keyboard.press('ControlOrMeta+a');
-    await app.window.keyboard.press('Backspace');
-    await expect(placeholder).toHaveText(tabPrediction);
-    await app.window.keyboard.press('Tab');
-    await expect(lines).toHaveText([tabPrediction]);
-    expect(provider.requests()).toHaveLength(2);
-    await app.window.keyboard.press('Enter');
-    const second = await provider.waitForRequest(2);
-    expect(second.userTextsSinceReply).toEqual([tabPrediction]);
-    await expect(transcript.getByText('Second answer.', { exact: true })).toBeVisible();
-
-    await expect(placeholder).toHaveText(rightPrediction);
-    const descriptionId = await input.getAttribute('aria-describedby');
-    expect(descriptionId).toBeTruthy();
-    await expect(app.window.locator(`#${descriptionId}`)).toHaveText(`Prediction: ${rightPrediction}. Press Tab or Right Arrow to insert.`);
-    await app.window.evaluate(() => window.dispatchEvent(new Event('blur')));
-    await expect(placeholder).toBeVisible();
-    await input.click();
-    await app.window.keyboard.type('another draft');
-    await app.window.keyboard.press('ControlOrMeta+a');
-    await app.window.keyboard.press('Backspace');
-    await expect(placeholder).toHaveText(rightPrediction);
-    await app.window.keyboard.press('ArrowRight');
-    await expect(lines).toHaveText([rightPrediction]);
-    await app.window.keyboard.press('Enter');
-    const third = await provider.waitForRequest(4);
-    expect(third.userTextsSinceReply).toEqual([rightPrediction]);
-    await expect(transcript.getByText('Third answer.', { exact: true })).toBeVisible();
-
-    await expect(placeholder).toHaveText(escapePrediction);
-    await input.click();
-    await app.window.keyboard.type(draft);
-    await app.window.keyboard.press('Escape');
-    await expect(lines).toHaveText([draft]);
-    await app.window.keyboard.press('ControlOrMeta+a');
-    await app.window.keyboard.press('Backspace');
-    await expect(placeholder).toHaveText(escapePrediction);
-    await input.click();
-    await app.window.keyboard.type(draft);
-    expect(provider.requests()).toHaveLength(6);
-
-    await app.window.keyboard.press('Enter');
-    await expect(transcript.getByText('Fourth answer.', { exact: true })).toBeVisible();
-    await expect(placeholder).toHaveText(idlePlaceholder);
-    expect(provider.requests()).toHaveLength(8);
-  });
-});
-
-test.describe('prompt prediction lab toggle', () => {
-  const idlePlaceholder = 'Type @ to reference files, or start with / for commands and skills';
-
-  testWithProvider('the lab switch gates prediction requests precisely', async ({ app, provider }) => {
-    const toggledPrediction = 'Toggle controlled prediction';
-    provider.script(
-      reply('First answer.'),
-      prediction(toggledPrediction),
-      reply('Second answer.'),
-      reply('Third answer.'),
-    );
-    const predictionRequests = () =>
-      provider.requests().filter((request) => request.texts('user').some((text) => text.includes('SUGGESTION MODE')));
-    const placeholder = app.window.locator('.composer-placeholder-overlay');
-    const transcript = app.window.getByRole('list').first();
-
-    await test.step('a completed turn with the switch off sends no prediction request', async () => {
-      await app.submit(OPENER);
-      await expect(transcript.getByText('First answer.', { exact: true })).toBeVisible();
-      await expect(placeholder).toHaveText(idlePlaceholder);
-      expect(provider.requests()).toHaveLength(1);
-      expect(predictionRequests()).toHaveLength(0);
-    });
-
-    await test.step('turning the switch on in the Lab predicts the completed turn', async () => {
-      const dialog = await openSettings(app.window, 'Lab');
-      const toggle = dialog.getByRole('switch', { name: 'Prompt prediction' });
-      await expect(toggle).toHaveAttribute('aria-checked', 'false');
-      await toggle.click();
-      await expect(toggle).toHaveAttribute('aria-checked', 'true');
-      await closeSettings(app.window);
-      const request = await provider.waitForRequest(1);
-      expect(request.texts('user').some((text) => text.includes('SUGGESTION MODE'))).toBe(true);
-      await expect(placeholder).toHaveText(toggledPrediction);
-    });
-
-    await test.step('turning the switch off hides the prediction and later turns send no prediction request', async () => {
-      const dialog = await openSettings(app.window, 'Lab');
-      const toggle = dialog.getByRole('switch', { name: 'Prompt prediction' });
-      await expect(toggle).toHaveAttribute('aria-checked', 'true');
-      await toggle.click();
-      await expect(toggle).toHaveAttribute('aria-checked', 'false');
-      await closeSettings(app.window);
-      await expect(placeholder).toHaveText(idlePlaceholder);
-      await app.submit(SECOND);
-      await expect(transcript.getByText('Second answer.', { exact: true })).toBeVisible();
-      await app.submit('Third prompt');
-      await expect(transcript.getByText('Third answer.', { exact: true })).toBeVisible();
-      await expect(placeholder).toHaveText(idlePlaceholder);
-      expect(provider.requests()).toHaveLength(4);
-      expect(predictionRequests()).toHaveLength(1);
-    });
   });
 });

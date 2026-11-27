@@ -1,5 +1,15 @@
 # @moonshot-ai/kimi-code
 
+## 2.8.1
+
+### Patch Changes
+
+- [`2ad500f`](https://github.com/MoonshotAI/kimi-code/commit/2ad500f948cf56b9fc2759e64c3f7145653e7f83) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Canceling Gemini and Vertex AI requests now closes the connection immediately.
+
+- [`2ad500f`](https://github.com/MoonshotAI/kimi-code/commit/2ad500f948cf56b9fc2759e64c3f7145653e7f83) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Preserve token usage when canceling a Gemini or Vertex AI request.
+
+- [#5516](https://github.com/MoonshotAI/kimi-code/pull/5516) [`0a9c794`](https://github.com/MoonshotAI/kimi-code/commit/0a9c794c0dadf383b9f19955280be8d6c7e26421) Thanks [@sailist](https://github.com/sailist)! - Fix unloaded_tool session errors when tools change or a session resumes.
+
 ## 2.8.0
 
 ### Minor Changes

@@ -34,5 +34,5 @@ export function buildWebManifestKey(target) {
 }
 
 export function buildWebAssetKey(target, relativePath) {
-  return `web/${target}/dist-web/${relativePath}`;
+  return `web/${target}/web-dist/${relativePath}`;
 }

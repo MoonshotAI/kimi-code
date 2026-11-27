@@ -3,9 +3,12 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import { commitLevel, effectiveThinkingLevel, effortLabel, modelThinkingAvailability, providerDisplayName, segmentsFor } from '@moonshot-ai/app-core/lib';
-import { searchModelsForMenu, type ModelSearchTextRange } from '@moonshot-ai/app-client/lib';
+import { searchModelsForMenu } from '@moonshot-ai/app-client/lib';
 import { Icon, useImeComposition } from '@moonshot-ai/app-ui';
 import ModelCapabilityInfo from './ModelCapabilityInfo.vue';
+import ModelMenuScrollThumb from './ModelMenuScrollThumb.vue';
+import { highlightSearchText, supportsThinkingSubmenu, type QuickModelMenuEmits } from './modelMenuShared';
+import { useModelMenuScrollbar } from './useModelMenuScrollbar';
 import {
   MODEL_MENU_ROW_HEIGHT,
   MODEL_MENU_WIDTH,
@@ -45,12 +48,7 @@ const props = defineProps<{
   hostFrame?: { x: number; y: number; viewportWidth: number; viewportHeight: number };
 }>();
 
-const emit = defineEmits<{
-  selectModel: [modelId: string, effort?: string, fromSearch?: boolean];
-  selectEffort: [effort: string];
-  selectProvider: [providerId: string];
-  dismiss: [];
-}>();
+const emit = defineEmits<QuickModelMenuEmits>();
 
 const { t } = useI18n();
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
@@ -58,6 +56,11 @@ const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = us
 const rootEl = ref<HTMLElement>();
 const searchInputEl = ref<HTMLInputElement>();
 const flyoutEl = ref<HTMLElement>();
+const mqmBodyEl = ref<HTMLElement | null>(null);
+const providerScrollEl = ref<HTMLElement | null>(null);
+const resultsScrollEl = ref<HTMLElement | null>(null);
+const recentScrollEl = ref<HTMLElement | null>(null);
+const subScrollEl = ref<HTMLElement | null>(null);
 const rowElements = new Map<string, HTMLElement>();
 const query = ref('');
 const activeKey = ref('');
@@ -69,6 +72,13 @@ let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 let submenuTimer: ReturnType<typeof setTimeout> | undefined;
 
 const searching = computed(() => query.value.trim().length > 0);
+const tightViewport = computed(() => props.maxHeight < 300);
+const mainScrollEl = computed(() =>
+  searching.value ? resultsScrollEl.value : tightViewport.value ? mqmBodyEl.value : providerScrollEl.value,
+);
+const mainScrollbar = useModelMenuScrollbar(mainScrollEl);
+const recentScrollbar = useModelMenuScrollbar(recentScrollEl);
+const subScrollbar = useModelMenuScrollbar(subScrollEl);
 const currentModel = computed(() => props.models.find((model) => model.id === props.currentModelId));
 const currentAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const currentSegments = computed(() => segmentsFor(currentModel.value));
@@ -84,10 +94,6 @@ const effortValueLabel = computed(() => {
 const searchResults = computed(() =>
   searchModelsForMenu(props.models, query.value, (provider) => providerDisplayName(provider, t)).slice(0, SEARCH_MENU_MAX_ITEMS),
 );
-
-function supportsThinkingSubmenu(model: AppModel): boolean {
-  return modelThinkingAvailability(model) !== 'unsupported' && segmentsFor(model).length > 0;
-}
 
 const navRows = computed<NavRow[]>(() => {
   if (searching.value) {
@@ -176,11 +182,15 @@ function openSubmenu(next: SubmenuState): void {
   clearSubmenuTimer();
   hideHoverCard();
   const changed = submenu.value?.kind !== next.kind || submenu.value.triggerKey !== next.triggerKey;
+  if (!changed) return;
   submenu.value = next;
-  if (changed && next.kind === 'effort') {
+  if (next.kind === 'effort') {
     const currentIndex = currentSegments.value.indexOf(currentEffortValue.value);
     submenuIndex.value = currentIndex >= 0 ? currentIndex : 0;
-  } else if (changed) {
+  } else if (next.kind === 'provider') {
+    const currentIndex = props.providers.findIndex((provider) => provider.id === props.activeProvider);
+    submenuIndex.value = currentIndex >= 0 ? currentIndex : 0;
+  } else {
     submenuIndex.value = 0;
   }
 }
@@ -244,7 +254,8 @@ function onRowClick(row: NavRow): void {
 }
 
 function chooseProvider(providerId: string): void {
-  closeSubmenu();
+  const index = props.providers.findIndex((provider) => provider.id === providerId);
+  if (index >= 0) submenuIndex.value = index;
   emit('selectProvider', providerId);
 }
 
@@ -255,10 +266,12 @@ function selectSearchedModel(model: AppModel, effort?: string): void {
   void nextTick(() => {
     const providerKey = `provider:${model.id}`;
     const recentKey = `recent:${model.id}`;
-    const nextKey = rowElements.has(providerKey) ? providerKey : rowElements.has(recentKey) ? recentKey : undefined;
-    if (nextKey === undefined) return;
-    activeKey.value = nextKey;
-    rowElements.get(nextKey)?.scrollIntoView({ block: 'nearest' });
+    if (rowElements.has(providerKey)) {
+      activeKey.value = providerKey;
+      rowElements.get(providerKey)?.scrollIntoView({ block: 'nearest' });
+    } else if (rowElements.has(recentKey)) {
+      activeKey.value = recentKey;
+    }
   });
   emit('selectModel', model.id, effort, true);
 }
@@ -267,10 +280,11 @@ function chooseSubmenuEffort(segment: string): void {
   const current = submenu.value;
   if (current?.kind === 'search-effort') {
     selectSearchedModel(current.model, commitLevel(current.model, segment));
-  } else {
-    closeSubmenu();
-    emit('selectEffort', segment);
+    return;
   }
+  const index = activeSubmenuSegments.value.indexOf(segment);
+  if (index >= 0) submenuIndex.value = index;
+  emit('selectEffort', segment);
 }
 
 function moveActive(delta: number): void {
@@ -361,19 +375,6 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-function highlightParts(text: string, ranges: readonly ModelSearchTextRange[]): { text: string; matched: boolean }[] {
-  if (ranges.length === 0) return [{ text, matched: false }];
-  const parts: { text: string; matched: boolean }[] = [];
-  let cursor = 0;
-  for (const range of ranges) {
-    if (range.start > cursor) parts.push({ text: text.slice(cursor, range.start), matched: false });
-    parts.push({ text: text.slice(range.start, range.end), matched: true });
-    cursor = range.end;
-  }
-  if (cursor < text.length) parts.push({ text: text.slice(cursor), matched: false });
-  return parts;
-}
-
 function syncFlyoutPosition(): void {
   const triggerKey = submenu.value?.triggerKey ?? hoverModel.value?.key;
   const menu = rootEl.value;
@@ -385,8 +386,7 @@ function syncFlyoutPosition(): void {
   const triggerRect = trigger.getBoundingClientRect();
   const flyoutRect = flyout.getBoundingClientRect();
   const firstOption = submenu.value !== null ? flyout.querySelector<HTMLElement>('[data-first-option]') : null;
-  const firstOptionOffset =
-    firstOption === null ? 0 : firstOption.getBoundingClientRect().top - flyoutRect.top;
+  const firstOptionOffset = firstOption?.offsetTop ?? 0;
   const frame = props.hostFrame;
   const position = computeAnchoredFlyoutPosition({
     menuLeft: frame?.x ?? menuRect.left,
@@ -411,11 +411,47 @@ watch([submenu, hoverModel], () => {
   void nextTick(syncFlyoutPosition);
 });
 
+watch(
+  [() => props.hostFrame, () => props.providerModels, () => props.recentModels, () => props.maxHeight, searchResults],
+  () => {
+    if (submenu.value === null && hoverModel.value === null) return;
+    syncFlyoutPosition();
+  },
+  { flush: 'post' },
+);
+
+watch(
+  [rootEl, flyoutEl],
+  ([menu, flyout], _, onCleanup) => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (submenu.value !== null || hoverModel.value !== null) syncFlyoutPosition();
+    });
+    if (menu) observer.observe(menu);
+    if (flyout) observer.observe(flyout);
+    onCleanup(() => observer.disconnect());
+  },
+  { flush: 'post' },
+);
+
 watch(query, () => {
   closeSubmenu();
   hideHoverCard();
   activeKey.value = navRows.value[0]?.key ?? '';
 });
+
+watch([() => props.providerModels, searchResults, submenu, tightViewport], () => {
+  void nextTick(() => {
+    mainScrollbar.sync();
+    recentScrollbar.sync();
+    subScrollbar.sync();
+  });
+});
+
+function onMainScroll(): void {
+  hideHoverCard();
+  mainScrollbar.onScroll();
+}
 
 onMounted(() => {
   const current = navRows.value.find(
@@ -444,11 +480,17 @@ defineExpose({
     :style="{ maxHeight: `${props.maxHeight}px` }"
     tabindex="-1"
     @keydown="onKeydown"
-    @scroll="hideHoverCard"
   >
-    <div class="mqm-scroll">
-      <template v-if="searching">
-        <div v-if="searchResults.length > 0" class="mqm-label">{{ t('status.searchResults') }}</div>
+    <template v-if="searching">
+      <div v-if="searchResults.length > 0" class="mqm-label">{{ t('status.searchResults') }}</div>
+      <div
+        ref="resultsScrollEl"
+        class="mqm-scroll mqm-results-scroll"
+        :style="{ maskImage: mainScrollbar.maskImage.value }"
+        @scroll="onMainScroll"
+        @mouseenter="mainScrollbar.onListMouseEnter"
+        @mouseleave="mainScrollbar.onListMouseLeave"
+      >
         <template v-if="searchResults.length > 0">
           <div
             v-for="entry in searchResults"
@@ -466,20 +508,38 @@ defineExpose({
             @click="onRowClick({ key: `search:${entry.model.id}`, kind: 'model', model: entry.model, hasSubmenu: supportsThinkingSubmenu(entry.model) })"
           >
             <span class="mqm-name">
-              <template v-for="(part, index) in highlightParts(entry.modelName, entry.modelRanges)" :key="index"><span v-if="part.matched" class="mqm-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
+              <template v-for="(part, index) in highlightSearchText(entry.modelName, entry.modelRanges)" :key="index"><span v-if="part.matched" class="mqm-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
             </span>
             <span class="mqm-provider">
-              <template v-for="(part, index) in highlightParts(entry.providerName, entry.providerRanges)" :key="index"><span v-if="part.matched" class="mqm-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
+              <template v-for="(part, index) in highlightSearchText(entry.providerName, entry.providerRanges)" :key="index"><span v-if="part.matched" class="mqm-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
             </span>
             <Icon v-if="supportsThinkingSubmenu(entry.model)" name="chevron-right" size="sm" class="mqm-trailing-icon" />
           </div>
         </template>
         <div v-else class="mqm-row mqm-empty" role="note">{{ t('status.noMatchingModels') }}</div>
-      </template>
+      </div>
+    </template>
 
-      <template v-else>
-        <div v-if="props.recentModels.length > 0" class="mqm-section">
-          <div class="mqm-label">{{ t('status.recentModels') }}</div>
+    <div
+      v-else
+      ref="mqmBodyEl"
+      class="mqm-body"
+      :class="{ 'is-fluid': tightViewport }"
+      :style="tightViewport ? { maskImage: mainScrollbar.maskImage.value } : undefined"
+      @scroll="tightViewport ? onMainScroll() : undefined"
+      @mouseenter="tightViewport ? mainScrollbar.onListMouseEnter() : undefined"
+      @mouseleave="tightViewport ? mainScrollbar.onListMouseLeave() : undefined"
+    >
+      <template v-if="props.recentModels.length > 0">
+        <div class="mqm-label">{{ t('status.recentModels') }}</div>
+        <div
+          ref="recentScrollEl"
+          class="mqm-scroll mqm-section mqm-recent-scroll"
+          :style="!tightViewport ? { maskImage: recentScrollbar.maskImage.value } : undefined"
+          @scroll="recentScrollbar.onScroll"
+          @mouseenter="recentScrollbar.onListMouseEnter"
+          @mouseleave="recentScrollbar.onListMouseLeave"
+        >
           <div
             v-for="model in props.recentModels"
             :key="`recent:${model.id}`"
@@ -498,11 +558,19 @@ defineExpose({
             <Icon v-if="model.id === props.currentModelId" name="check" size="sm" class="mqm-trailing-icon" />
           </div>
         </div>
+        <div class="mqm-divider" />
+      </template>
 
-        <div v-if="props.recentModels.length > 0" class="mqm-divider" />
-
-        <div v-if="props.providerModels.length > 0 || props.activeProvider" class="mqm-section">
-          <div class="mqm-label">{{ props.activeProviderLabel }}</div>
+      <template v-if="props.providerModels.length > 0 || props.activeProvider">
+        <div class="mqm-label">{{ props.activeProviderLabel }}</div>
+        <div
+          ref="providerScrollEl"
+          class="mqm-scroll mqm-provider-scroll"
+          :style="!tightViewport ? { maskImage: mainScrollbar.maskImage.value } : undefined"
+          @scroll="!tightViewport ? onMainScroll() : undefined"
+          @mouseenter="!tightViewport ? mainScrollbar.onListMouseEnter() : undefined"
+          @mouseleave="!tightViewport ? mainScrollbar.onListMouseLeave() : undefined"
+        >
           <div
             v-for="model in props.providerModels"
             :key="`provider:${model.id}`"
@@ -582,6 +650,9 @@ defineExpose({
       />
     </div>
 
+    <ModelMenuScrollThumb v-if="!searching && !tightViewport" :scrollbar="recentScrollbar" />
+    <ModelMenuScrollThumb :scrollbar="mainScrollbar" />
+
     <div
       v-if="submenu !== null"
       ref="flyoutEl"
@@ -592,7 +663,14 @@ defineExpose({
     >
       <template v-if="submenu.kind === 'provider'">
         <div class="mqm-label">{{ t('status.providerLabel') }}</div>
-        <div class="mqm-submenu-scroll">
+        <div
+          ref="subScrollEl"
+          class="mqm-submenu-scroll"
+          :style="{ maskImage: subScrollbar.maskImage.value }"
+          @scroll="subScrollbar.onScroll"
+          @mouseenter="subScrollbar.onListMouseEnter"
+          @mouseleave="subScrollbar.onListMouseLeave"
+        >
           <div
             v-for="(provider, index) in props.providers"
             :key="provider.id"
@@ -612,7 +690,14 @@ defineExpose({
 
       <template v-else-if="submenu.kind === 'effort'">
         <div class="mqm-thinking-desc">{{ thinkingDescription }}</div>
-        <div class="mqm-submenu-scroll">
+        <div
+          ref="subScrollEl"
+          class="mqm-submenu-scroll"
+          :style="{ maskImage: subScrollbar.maskImage.value }"
+          @scroll="subScrollbar.onScroll"
+          @mouseenter="subScrollbar.onListMouseEnter"
+          @mouseleave="subScrollbar.onListMouseLeave"
+        >
           <div
             v-for="(segment, index) in activeSubmenuSegments"
             :key="segment"
@@ -636,7 +721,14 @@ defineExpose({
         </div>
         <div class="mqm-divider" />
         <div class="mqm-label">{{ t('status.statusThinking') }}</div>
-        <div class="mqm-submenu-scroll">
+        <div
+          ref="subScrollEl"
+          class="mqm-submenu-scroll"
+          :style="{ maskImage: subScrollbar.maskImage.value }"
+          @scroll="subScrollbar.onScroll"
+          @mouseenter="subScrollbar.onListMouseEnter"
+          @mouseleave="subScrollbar.onListMouseLeave"
+        >
           <div
             v-for="(segment, index) in activeSubmenuSegments"
             :key="segment"
@@ -658,6 +750,8 @@ defineExpose({
           </div>
         </div>
       </template>
+
+      <ModelMenuScrollThumb :scrollbar="subScrollbar" />
     </div>
 
     <div
@@ -693,10 +787,46 @@ defineExpose({
   box-sizing: border-box;
 }
 .mqm-scroll {
+  --overlay-scrollbar-track-inset: 2px;
+  --overlay-scrollbar-thumb-min: 24px;
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.mqm-scroll::-webkit-scrollbar,
+.mqm-submenu-scroll::-webkit-scrollbar {
+  display: none;
+}
+.mqm-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mqm-body.is-fluid {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.mqm-body.is-fluid::-webkit-scrollbar {
+  display: none;
+}
+.mqm-body.is-fluid .mqm-scroll {
+  flex: none;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+.mqm-recent-scroll {
+  flex: 0 1 auto;
+}
+.mqm-provider-scroll {
+  flex: 0 1000 auto;
+  min-height: var(--mqm-row-height);
+  max-height: calc(var(--mqm-row-height) * 6);
+}
+.mqm-results-scroll {
+  max-height: calc(var(--mqm-row-height) * 8);
 }
 .mqm-section {
   flex: none;
@@ -705,6 +835,7 @@ defineExpose({
   flex: none;
 }
 .mqm-label {
+  flex: none;
   display: flex;
   align-items: center;
   height: var(--mqm-label-height);
@@ -860,8 +991,10 @@ defineExpose({
   padding: 8px;
 }
 .mqm-submenu-scroll {
+  --overlay-scrollbar-track-inset: 2px;
+  --overlay-scrollbar-thumb-min: 24px;
   max-height: 256px;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 </style>

@@ -5,6 +5,7 @@ import type { AppModel } from '@moonshot-ai/app-core/api';
 import { providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { modelCapabilityItems } from '@moonshot-ai/app-client/lib';
 import { Icon } from '@moonshot-ai/app-ui';
+import { modelCapabilityText } from './modelMenuShared';
 
 const props = defineProps<{
   model: AppModel;
@@ -14,21 +15,6 @@ const { t } = useI18n();
 const modelName = computed(() => props.model.displayName ?? props.model.model);
 const providerName = computed(() => providerDisplayName(props.model.provider, t));
 const capabilities = computed(() => modelCapabilityItems(props.model));
-
-function capabilityText(item: ReturnType<typeof modelCapabilityItems>[number]): string {
-  switch (item.kind) {
-    case 'context':
-      return t('model.capabilityContext', { size: item.size });
-    case 'image':
-      return t('model.capabilityImageInput');
-    case 'tool':
-      return t('model.capabilityToolUse');
-    case 'thinking':
-      return t('model.capabilityThinking');
-    case 'always-thinking':
-      return t('model.capabilityAlwaysThinking');
-  }
-}
 </script>
 
 <template>
@@ -41,7 +27,7 @@ function capabilityText(item: ReturnType<typeof modelCapabilityItems>[number]): 
     <ul v-if="capabilities.length > 0" class="model-cap-info__list">
       <li v-for="item in capabilities" :key="item.kind" class="model-cap-info__item">
         <Icon name="check-check" size="md" class="model-cap-info__icon" />
-        <span>{{ capabilityText(item) }}</span>
+        <span>{{ modelCapabilityText(item, t) }}</span>
       </li>
     </ul>
   </div>

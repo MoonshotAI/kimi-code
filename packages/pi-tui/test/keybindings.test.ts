@@ -38,9 +38,9 @@ describe("KeybindingsManager", () => {
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.lineDown"), []);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.previousPrompt"), ["ctrl+shift+up", "ctrl+up"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.nextPrompt"), ["ctrl+shift+down", "ctrl+down"]);
-		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.search"), ["ctrl+shift+f"]);
-		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchNext"), ["enter", "ctrl+g"]);
-		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchPrevious"), ["shift+enter", "ctrl+shift+g"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.search"), ["ctrl+f", "ctrl+shift+f"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchNext"), ["down", "enter", "ctrl+g"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchPrevious"), ["up", "shift+enter", "ctrl+shift+g"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchClose"), ["escape"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.top"), ["ctrl+home"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.bottom"), ["ctrl+end"]);

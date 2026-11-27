@@ -119,7 +119,7 @@ export const FLAKE_MASKING_PATTERNS = [
   pattern('toPass(', `${WAIT_FOR_CONDITION}; toPass re-runs a block until it passes, which is a retry`, /\btoPass\(/g),
 ];
 
-const SURFACE_BLIND = 'use only product, model and workspace; a difference between surfaces belongs in its driver, or in except/onlyOn with a reason';
+const SURFACE_BLIND = 'use only product, model, workspace and mcp; a difference between surfaces belongs in its driver, or in except/onlyOn with a reason';
 
 export const SCENARIO_ENVIRONMENT_PATTERNS = [
   pattern('process.', SURFACE_BLIND, /\bprocess(?:\.[A-Za-z_$]|\[)/g),

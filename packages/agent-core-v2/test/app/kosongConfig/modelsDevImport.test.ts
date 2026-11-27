@@ -14,13 +14,14 @@ import { ModelsDevImportErrors } from '#/app/kosongConfig/errors';
 import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
 import { IModelsDevImportService } from '#/app/kosongConfig/modelsDevImport';
 import '#/app/kosongConfig/modelsDevImportService';
-import { IModelCatalog, type ProviderCatalogItem } from '#/llm-adapter/model/catalog';
-import type { ModelsSection } from '#/llm-adapter/model/model';
-import type { ProvidersSection } from '#/llm-adapter/provider/provider';
+import { type ProviderCatalogItem } from '#/provider-catalog/model/catalog';
+import type { ModelsSection } from '#/provider-catalog/model/model';
+import type { ProvidersSection } from '#/provider-catalog/provider/provider';
 
 import { StubConfigService } from '../../stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubAgentIdentity } from '../agentIdentity/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0' };
 
@@ -117,7 +118,7 @@ function stubKosongConfig(): IKosongConfigService {
   return { _serviceBrand: undefined, ready: Promise.resolve() } as IKosongConfigService;
 }
 
-function stubModelCatalog(): IModelCatalog {
+function stubModelCatalog(): IProviderCatalogService {
   return {
     _serviceBrand: undefined,
     getProvider: (id: string): Promise<ProviderCatalogItem> =>
@@ -127,7 +128,7 @@ function stubModelCatalog(): IModelCatalog {
         has_api_key: true,
         status: 'connected',
       } as ProviderCatalogItem),
-  } as unknown as IModelCatalog;
+  } as unknown as IProviderCatalogService;
 }
 
 function createHost(
@@ -142,7 +143,7 @@ function createHost(
   const host = createScopedTestHost([
     [IConfigService, config],
     [IKosongConfigService, stubKosongConfig()],
-    [IModelCatalog, stubModelCatalog()],
+    [IProviderCatalogService, stubModelCatalog()],
     [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: hostHeaders })],
     [IAgentIdentity, stubAgentIdentity({ slug: identitySlug, hostRequestHeaders: hostHeaders })],
   ]);

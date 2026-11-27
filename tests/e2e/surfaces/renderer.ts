@@ -1,4 +1,4 @@
-import { TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
+import { TIMEOUTS, until, WaitTimeoutError } from '@moonshot-ai/testkit/fixtures';
 import type { Locator, Page } from '@playwright/test';
 
 import {
@@ -38,6 +38,7 @@ const DESCRIBED_LINES = 80;
 const NEW_SESSION = 'New Session';
 const COMPACT_COMMAND = '/compact';
 const COMPACTED = /^Context compacted/;
+const COMPACTION_FAILED = 'Context compaction failed';
 const APPROVAL_TITLES: Readonly<Record<string, ApprovalToolName>> = { 'Run command?': 'Bash', 'Apply changes?': 'Edit', 'Write file?': 'Write' };
 const COMMAND_PROMPT = '$ ';
 const FEEDBACK_BOX = 'Explain why you are rejecting…';
@@ -47,6 +48,10 @@ const QUEUE_WAITING = /\d+ waiting to send$/;
 const QUESTION_MAIN = /^(?:Submit|Next question)$/;
 const QUESTION_STEPS = /^(?:Next question|Back)$/;
 const SUBMIT = 'Submit';
+const SEND = 'Send ↵';
+const UNDO_MESSAGE = 'Undo message';
+const UNDO_DIALOG = 'Undo';
+const CONFIRM = 'Confirm';
 const DISMISS = 'Dismiss';
 const OTHER_ANSWER = 'Other';
 const ASKED = 'Collected your answers';
@@ -88,6 +93,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   private readonly page: Page;
   private readonly workspace: string;
   private readonly menus: MenuPage;
+  private recalled: string | undefined;
 
   constructor(page: Page, workspace: string, menus: MenuPage) {
     this.page = page;
@@ -99,17 +105,105 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     if (!(await this.idle())) {
       throw new Error(`send() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
     }
+    await this.assertEmptyInput('send()');
     const before = await this.conversationSize();
     await this.press('send()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
-    const send = this.page.getByRole('button', { name: 'Send ↵', exact: true, disabled: false });
+    await this.enter(text, before);
+  }
+
+  async submit(text: string): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`submit() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    const held = await this.composerText();
+    if (held !== text) throw new Error(`submit() expected the message input to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.\n${await this.describe()}`);
+    const before = await this.conversationSize();
+    await this.focusComposer('submit()');
+    await this.enter(text, before);
+  }
+
+  async expectComposer(text: string): Promise<void> {
+    let held = '';
+    const settled = await this.settle(
+      `the message input to hold ${JSON.stringify(text)}`,
+      async () => {
+        held = await this.composerText();
+        return held === text;
+      },
+      [this.composer()],
+    );
+    if (settled === 'over') {
+      throw new Error(`expectComposer() expected the message input to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.\n${await this.describe()}`);
+    }
+  }
+
+  async recallPrevious(): Promise<void> {
+    const before = await this.composerText();
+    if (before !== '' && before !== this.recalled) {
+      throw new Error(
+        `recallPrevious() needs an empty message input, or one holding the prompt it recalled last; it holds ${JSON.stringify(before)}, and the up key there moves the cursor instead of walking the history.\n${await this.describe()}`,
+      );
+    }
+    await this.focusComposer('recallPrevious()');
+    await this.page.keyboard.press('ArrowUp');
+    try {
+      this.recalled = await until(
+        'an earlier prompt to appear in the message input',
+        async () => {
+          const now = await this.composerText();
+          return now !== '' && now !== before ? now : undefined;
+        },
+        { timeoutMs: TIMEOUTS.wait },
+      );
+    } catch (cause) {
+      if (!(cause instanceof WaitTimeoutError)) throw cause;
+      throw new Error(`recallPrevious() found no earlier prompt: the message input did not change.\n${await this.describe()}`, { cause });
+    }
+  }
+
+  async undo(): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`undo() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.assertEmptyInput('undo()');
+    const rows = this.userRows();
+    const count = await rows.count();
+    if (count === 0) throw new Error(`undo() found no user message to withdraw.\n${await this.describe()}`);
+    const latest = rows.last();
+    await latest.hover({ timeout: TIMEOUTS.wait });
+    await this.press('undo()', UNDO_MESSAGE, latest.getByRole('button', { name: UNDO_MESSAGE, exact: true }));
+    await this.press('undo()', CONFIRM, this.page.getByRole('dialog', { name: UNDO_DIALOG, exact: true }).getByRole('button', { name: CONFIRM, exact: true }));
+    await this.wait('the withdrawn message to leave the conversation and come back to the message input', async () =>
+      (await rows.count()) < count && (await this.composerText()) !== '' ? true : undefined,
+    );
+    this.recalled = undefined;
+  }
+
+  private async enter(text: string, before: number): Promise<void> {
+    const send = this.page.getByRole('button', { name: SEND, exact: true, disabled: false });
     await this.wait('the Send button to become enabled', async () => (await send.isVisible()) || undefined);
     await this.page.keyboard.press('Enter');
+    this.recalled = undefined;
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the conversation`, () => this.messageAfter(before, text));
+  }
+
+  private async focusComposer(verb: string): Promise<void> {
+    if ((await this.composer().and(this.page.locator(':focus')).count()) === 0) await this.press(verb, 'the message input', this.composer());
+  }
+
+  private async composerText(): Promise<string> {
+    return (await this.composer().getByRole('paragraph').allTextContents()).join('\n').trimEnd();
+  }
+
+  private async assertEmptyInput(verb: string): Promise<void> {
+    const held = await this.composerText();
+    if (held !== '') throw new Error(`${verb} needs an empty message input, but it holds ${JSON.stringify(held)}; send it with submit() first.\n${await this.describe()}`);
   }
 
   async queue(text: string): Promise<void> {
     await this.assertTurnRunning('queue()');
+    await this.assertEmptyInput('queue()');
     if ((await this.queuedMessage(text).count()) > 0) {
       throw new Error(`queue() found ${JSON.stringify(text)} already in the queue; queue each message once.\n${await this.describe()}`);
     }
@@ -123,6 +217,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   async steer(text: string): Promise<void> {
     await this.assertTurnRunning('steer()');
+    await this.assertEmptyInput('steer()');
     if (await this.queueShown()) {
       throw new Error(
         `steer() needs an empty queue: with messages queued, Ctrl+S on the terminal UI steers the whole queue into the turn along with this message, while Desktop and Web steer only this one. Let the queue run first.\n${await this.describe()}`,
@@ -356,13 +451,17 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
     const compacted = this.conversation().getByText(COMPACTED);
     const before = await compacted.count();
+    const failed = this.conversation().getByText(COMPACTION_FAILED);
+    const failedBefore = await failed.count();
     await this.press('compact()', 'the message input', this.composer());
     await this.page.keyboard.type(COMPACT_COMMAND);
     await this.page.keyboard.press('Enter');
     await this.page.keyboard.press('Enter');
-    await this.wait('the conversation to show Context compacted (Desktop and Web show nothing when a compaction fails, so a failed one ends in this timeout)', async () =>
-      (await compacted.count()) > before && (await this.idle()) ? true : undefined,
-    );
+    const outcome = await this.wait(`the conversation to show Context compacted, or a ${COMPACTION_FAILED} divider`, async () => {
+      if ((await failed.count()) > failedBefore) return 'failed' as const;
+      return (await compacted.count()) > before && (await this.idle()) ? ('compacted' as const) : undefined;
+    });
+    if (outcome === 'failed') throw new Error(`compact() saw the compaction fail.\n${await this.describe()}`);
   }
 
   async newSession(): Promise<void> {

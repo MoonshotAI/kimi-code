@@ -8,7 +8,7 @@ kimi acp
 
 Once started, the command prints no banner and immediately waits for the ACP client to send an `initialize` request on stdin. Logs are written to stderr (as well as the diagnostic log under `~/.kimi-code/logs/`), so the ACP channel itself stays clean.
 
-When Kimi starts a turn to report a completed background task, `kimi acp` sends the reply and tool calls to the IDE through `session/update`, even after the previous `session/prompt` has ended. A new prompt sent while that turn is running receives `turn.agent_busy` and can be retried when the turn is complete.
+When Kimi starts a turn on its own — to report a completed background task, to continue after a `Stop` hook blocks, or to run a scheduled task — `kimi acp` sends the reply and tool calls to the IDE through `session/update`, even after the previous `session/prompt` has ended. A new prompt sent while that turn is running receives `turn.agent_busy` and can be retried when the turn is complete.
 
 ::: tip Who calls this?
 You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md).
@@ -76,7 +76,7 @@ Sessions created or restored with Plan mode active report Plan in both mode pick
 | `session/request_permission` | Yes | Shared channel for tool approvals and questions. Bash approvals include the complete command and working directory. Resolved absolute file targets appear in `toolCall.locations` |
 | `fs/read_text_file` | Yes | Engine file reads are routed to the client when it advertises `fsCapabilities` |
 | `fs/write_text_file` | Yes | Engine file writes are routed to the client |
-| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | Yes | Shell executions reverse-RPC to the client when it advertises `clientCapabilities.terminal` |
+| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | Yes | Shell executions reverse-RPC to the client when it advertises `clientCapabilities.terminal`. Otherwise the command runs locally, and what it has printed so far is sent as `tool_call_update` text content while it runs |
 | `elicitation/create` | Yes | Ask-user questions go through the native form when the client advertises `elicitation.form`; RPC failures fall back to `session/request_permission` |
 | `elicitation/complete` | No | |
 

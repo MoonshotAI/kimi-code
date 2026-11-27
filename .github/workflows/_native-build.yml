@@ -128,7 +128,7 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.web-ci-run-id }}
           name: cli-web-${{ inputs.sha || github.sha }}
-          path: apps/kimi-code/dist-web
+          path: apps/kimi-code/web-dist
 
       - name: Build Kimi web assets
         if: inputs.web-ci-run-id == ''

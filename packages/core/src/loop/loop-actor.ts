@@ -31,7 +31,8 @@ import {
   runTurnStarting,
   type TurnStartingRun,
 } from '#/hook/loop/run';
-import type { LoopLlmRequester, LoopRequestRuntime } from './request';
+import type { FullLoopLlmRequester, LoopLlmRunObserver, LoopRequestRuntime } from './request';
+import { createRawLoopRequester } from './requester';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import {
   canContinue,
@@ -288,6 +289,7 @@ class LoopActor implements Loop {
   readonly executor: LoopToolExecutor;
   readonly policy: PolicyRegistry;
   readonly waitForTasks: WaitForTasks;
+  readonly requester: FullLoopLlmRequester;
 
   private readonly hook: Partial<LoopHooks>;
   private readonly turnHooks = createTurnHookRegistry();
@@ -296,6 +298,7 @@ class LoopActor implements Loop {
   private readonly actor: Actor<LoopActorState, LoopEmitted>;
   private mailbox: LoopMailbox;
   private readonly toolContext?: CreateLoopOptions['toolContext'];
+  private readonly llmObserver?: LoopLlmRunObserver;
   private readonly completionFactory?: CreateLoopOptions['completionMessage'];
   private readonly shouldQueueTaskNotification?: CreateLoopOptions['shouldQueueTaskNotification'];
   private readonly abortGraceMs: number;
@@ -304,7 +307,7 @@ class LoopActor implements Loop {
   private readonly tools = new Map<string, LiveTool>();
   private toolBatch: ActiveToolBatch | undefined;
   private completedToolBatch: { readonly turnId: number; readonly step: number; readonly result: TurnToolBatchResult } | undefined;
-  private requesterTemplate: LoopLlmRequester | undefined;
+  private requesterTemplate: FullLoopLlmRequester | undefined;
   private revision = 0;
   private seq = 0;
   private readonly completionWaiters = new Set<() => void>();
@@ -337,11 +340,23 @@ class LoopActor implements Loop {
     this.requesterTemplate = options.requester;
     this.executor = options.executor;
     this.toolContext = options.toolContext;
+    this.llmObserver = options.llmObserver;
     this.completionFactory = options.completionMessage;
     this.shouldQueueTaskNotification = options.shouldQueueTaskNotification;
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
     this.hook = options.hook ?? {};
     this.policy = createPolicyRegistry();
+    this.requester = createRawLoopRequester(
+      () => {
+        const base = this.requesterTemplate;
+        if (base === undefined) throw new Error('loop has no full core requester');
+        return base;
+      },
+      () => this.durable.messages,
+      () => this.durable.profile,
+      () => this.policy.asPolicy(),
+      () => this.llmObserver,
+    );
     this.waitForTasks = createWaitForTasks(() =>
       Array.from(this.tools.values()).filter((slot) => slot.detached && !slot.done),
     );
@@ -379,6 +394,7 @@ class LoopActor implements Loop {
     const rootSignal = this.actor.act((ctrl) => ctrl.rootSignal);
     this.turnRuntime = {
       requester: () => this.requesterTemplate,
+      llmObserver: this.llmObserver,
       policy: this.policy,
       executeBatch: (batch) => this.actor.act(() => this.executeToolBatch(batch)),
       abortBatch: (batch, reason, options) => this.actor.act(() => this.abortToolBatch(batch, reason, options)),
@@ -455,6 +471,10 @@ class LoopActor implements Loop {
 
   get historyRevision(): number {
     return this.revision;
+  }
+
+  get baseRequester(): FullLoopLlmRequester | undefined {
+    return this.requesterTemplate;
   }
 
   operation<T>(create: (runtime: LoopRequestRuntime) => T): T {
@@ -823,7 +843,7 @@ class LoopActor implements Loop {
     }
   }
 
-  setRequester(requester: LoopLlmRequester | undefined): void {
+  setRequester(requester: FullLoopLlmRequester | undefined): void {
     if (!this.open()) return;
     this.actor.act(() => {
       if (!this.open()) return;

@@ -6,7 +6,7 @@ import { isAbortError, isUserCancellation, userCancellationReason } from '#/_bas
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
-import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { isProviderRateLimitError } from '#/provider-catalog/errors';
 import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SubagentCreatedEvent } from '#/app/telemetry/events';

@@ -59,6 +59,8 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
 
   abstract close(): Promise<void>;
 
+  abstract quitDuringTurn(): Promise<void>;
+
   abstract reopenState(): ReopenState;
 
   abstract kill(): Promise<void>;
@@ -143,6 +145,22 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().expectTranscript(text);
   }
 
+  undo(): Promise<void> {
+    return this.window().undo();
+  }
+
+  recallPrevious(): Promise<void> {
+    return this.window().recallPrevious();
+  }
+
+  submit(text: string): Promise<void> {
+    return this.window().submit(text);
+  }
+
+  expectComposer(text: string): Promise<void> {
+    return this.window().expectComposer(text);
+  }
+
   newSession(): Promise<void> {
     return this.window().newSession();
   }
@@ -186,6 +204,11 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     if (!(await this.window().idle())) {
       throw new Error(`The scenario ended while a turn was running or an approval was pending; end it with waitIdle().\n${this.lastPage}`);
     }
+    await this.saveTrace();
+  }
+
+  protected async leaveDuringTurn(): Promise<void> {
+    this.lastPage = await this.window().describe();
     await this.saveTrace();
   }
 

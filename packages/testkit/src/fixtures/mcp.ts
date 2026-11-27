@@ -41,6 +41,14 @@ export interface McpServerEntry {
   readonly deferred?: boolean;
 }
 
+export interface McpRemoteServerEntry {
+  readonly transport: 'http' | 'sse';
+  readonly url: string;
+  readonly deferred?: boolean;
+}
+
+export type McpConfigEntry = McpServerEntry | McpRemoteServerEntry;
+
 export function fakeMcpServer(name: string, options: FakeMcpServerOptions): McpServerEntry {
   const spec: FakeMcpProcessSpec = { name, ...options };
   return { command: process.execPath, args: [FAKE_MCP_SERVER, JSON.stringify(spec)] };
@@ -51,7 +59,7 @@ export function fakeMcpServerName(args: readonly string[] | undefined): string |
   return (JSON.parse(args[1]) as Partial<FakeMcpProcessSpec>).name;
 }
 
-export async function writeMcpConfig(path: string, servers: Readonly<Record<string, McpServerEntry>>): Promise<string> {
+export async function writeMcpConfig(path: string, servers: Readonly<Record<string, McpConfigEntry>>): Promise<string> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`, 'utf8');
   return path;

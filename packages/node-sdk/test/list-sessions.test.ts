@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { createGitWorktree, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
+import { createGitWorktree, slashPathOf, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -246,7 +246,7 @@ describe('KimiHarness.listSessions', () => {
 
       const projects = await client.engineAccessor.get(IProjectService).list();
       expect((await client.listSessions({ workDir: worktree })).map((item) => [item.id, item.workDir])).toEqual([
-        ['ses_worktree', worktree],
+        ['ses_worktree', slashPathOf(worktree)],
       ]);
       expect((await client.listSessionsPage({ workDir: worktree, limit: 1 })).items.map((item) => item.id)).toEqual(['ses_worktree']);
       expect((await client.listSessions({ workDir: main })).map((item) => item.id)).toEqual(['ses_main']);
@@ -296,9 +296,9 @@ describe('KimiHarness.listSessions', () => {
       const fromMain = await client.listSessionsPage({ workDir: main, limit: 1 });
       const fromWorktree = await client.listSessionsPage({ workDir: worktree, limit: 1 });
 
-      expect(fromMain.items.map((item) => [item.id, item.workDir])).toEqual([['ses_main', main]]);
+      expect(fromMain.items.map((item) => [item.id, item.workDir])).toEqual([['ses_main', slashPathOf(main)]]);
       expect(fromWorktree.items.map((item) => [item.id, item.workDir])).toEqual([
-        ['ses_worktree_newer', worktree],
+        ['ses_worktree_newer', slashPathOf(worktree)],
       ]);
       expect((await client.listSessions({ workDir: worktree })).map((item) => item.id)).toEqual([
         'ses_worktree_newer',
@@ -324,8 +324,8 @@ describe('KimiHarness.listSessions', () => {
     try {
       const mainSession = await harness.createSession({ id: 'ses_project_main', workDir: main });
       const wtSession = await harness.createSession({ id: 'ses_project_wt', workDir: worktree });
-      expect(mainSession.summary?.projectWorkDir).toBe(main);
-      expect(wtSession.summary?.projectWorkDir).toBe(main);
+      expect(mainSession.summary?.projectWorkDir).toBe(slashPathOf(main));
+      expect(wtSession.summary?.projectWorkDir).toBe(slashPathOf(main));
 
       expect((await harness.listSessions({ workDir: worktree })).map((item) => item.id)).toEqual(['ses_project_wt']);
       expect((await harness.listSessions({ workDir: main })).map((item) => item.id)).toEqual(['ses_project_main']);
@@ -333,8 +333,8 @@ describe('KimiHarness.listSessions', () => {
       const fromWorktree = await harness.listSessions({ workDir: worktree, scope: 'project' });
       const fromMain = await harness.listSessions({ workDir: main, scope: 'project' });
       const expected = [
-        { id: 'ses_project_main', projectWorkDir: main },
-        { id: 'ses_project_wt', projectWorkDir: main },
+        { id: 'ses_project_main', projectWorkDir: slashPathOf(main) },
+        { id: 'ses_project_wt', projectWorkDir: slashPathOf(main) },
       ];
       expect(
         fromWorktree.map(({ id, projectWorkDir }) => ({ id, projectWorkDir })).toSorted((a, b) => a.id.localeCompare(b.id)),
@@ -380,12 +380,12 @@ describe('KimiHarness.listSessions', () => {
 
       const byProject = await client.listSessions({ workDir, scope: 'project' });
       expect(byProject).toEqual([
-        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: workDir }),
+        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: slashPathOf(workDir) }),
       ]);
 
       const globalList = await client.listSessions({});
       expect(globalList).toEqual([
-        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: workDir }),
+        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: slashPathOf(workDir) }),
       ]);
     } finally {
       await client.close();

@@ -15,21 +15,18 @@ import '#/app/kosongConfig/discoveryService';
 import { MODEL_CATALOG_SECTION } from '#/app/kosongConfig/configSection';
 import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
 import '#/app/kosongConfig/kosongConfigService';
-import '#/llm-adapter/model/errors';
+import '#/provider-catalog/model/errors';
 import {
-  IModelService,
   type ModelRecord,
-} from '#/llm-adapter/model/model';
-import '#/llm-adapter/model/model-service';
+} from '#/provider-catalog/model/model';
 import {
-  IProviderService,
   type ProviderConfig,
-} from '#/llm-adapter/provider/provider';
-import '#/llm-adapter/provider/provider-service';
+} from '#/provider-catalog/provider/provider';
 
 import { StubConfigService, stubOAuthService, stubTokenProvider } from '../../stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubAgentIdentity } from '../agentIdentity/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 function stubEvents(): IEventService & { published: Array<{ type: string; payload: unknown }> } {
   const published: Array<{ type: string; payload: unknown }> = [];
@@ -68,8 +65,8 @@ async function createHost(
   config: StubConfigService;
   events: ReturnType<typeof stubEvents>;
   discovery: IProviderDiscoveryService;
-  providers: IProviderService;
-  models: IModelService;
+  providers: IProviderCatalogService;
+  models: IProviderCatalogService;
 }> {
   const config = new StubConfigService(sections);
   const events = stubEvents();
@@ -87,8 +84,8 @@ async function createHost(
       stubAgentIdentity({ hostRequestHeaders: { 'User-Agent': 'kimi-test/1.0' } }),
     ],
   ]);
-  const providers = host.app.accessor.get(IProviderService);
-  const models = host.app.accessor.get(IModelService);
+  const providers = host.app.accessor.get(IProviderCatalogService);
+  const models = host.app.accessor.get(IProviderCatalogService);
   const bridge = host.app.accessor.get(IKosongConfigService);
   await bridge.ready;
   return {
@@ -187,10 +184,10 @@ describe('refreshProviderModels modelSource short-circuit', () => {
         expect.objectContaining({ type: 'event.model_catalog.changed' }),
       ]);
 
-      const providerRecords = providers.list();
+      const providerRecords = providers.listProviderConfigs();
       expect(Object.keys(providerRecords).toSorted()).toEqual(['acme', 'static-p']);
       expect(providerRecords['static-p']).toEqual({ type: 'openai', modelSource: 'static', apiKey: 'sk-static' });
-      const modelRecords = models.list();
+      const modelRecords = models.listModelRecords();
       expect(modelRecords['s1']).toEqual({ provider: 'static-p', model: 'static-model', maxContextSize: 1000 });
       expect(modelRecords['acme/m1']).toBeDefined();
       expect(config.get<string>('defaultModel')).toBe('s1');
@@ -265,7 +262,7 @@ describe('refreshProviderModels modelSource short-circuit', () => {
         unchanged: [],
         failed: [],
       });
-      expect(models.list()['acme/current']?.upgrade).toEqual({
+      expect(models.listModelRecords()['acme/current']?.upgrade).toEqual({
         model: 'acme/next',
         migrationMarkdown: 'Use next',
         retirementAt: '2030-01-01T00:00:00Z',
@@ -545,12 +542,12 @@ describe('refreshProviderModels write behavior', () => {
           headers: expect.objectContaining({ Authorization: 'Bearer sk-distributed-key' }),
         }),
       );
-      expect(providers.list()['my-kimi']).toEqual({
+      expect(providers.listProviderConfigs()['my-kimi']).toEqual({
         type: 'kimi',
         baseUrl,
         apiKey: 'sk-distributed-key',
       });
-      const modelRecords = models.list();
+      const modelRecords = models.listModelRecords();
       expect(modelRecords['my-kimi/kimi-k2']?.displayName).toBe('Fresh K2');
       expect(modelRecords['my-kimi/kimi-k2.5']).toBeDefined();
       expect(config.get<string>('defaultModel')).toBe('my-kimi/kimi-k2');
@@ -597,7 +594,7 @@ describe('refreshProviderModels write behavior', () => {
       ]);
       expect(config.get('defaultModel')).toBeUndefined();
       expect(config.get('thinking')).toBeUndefined();
-      const modelRecords = models.list();
+      const modelRecords = models.listModelRecords();
       expect(modelRecords['my-kimi/kimi-k3']).toBeDefined();
       expect(modelRecords['my-kimi/kimi-k2']).toBeUndefined();
     } finally {
@@ -729,8 +726,8 @@ describe('refreshProviderModels write behavior', () => {
       const originalReplaceSections = config.replaceSections.bind(config);
       vi.spyOn(config, 'replaceSections').mockImplementation(async (sections) => {
         seenDuringWrite = {
-          providers: Object.keys(providers.list()),
-          models: Object.keys(models.list()),
+          providers: Object.keys(providers.listProviderConfigs()),
+          models: Object.keys(models.listModelRecords()),
         };
         await originalReplaceSections(sections);
       });
@@ -740,9 +737,9 @@ describe('refreshProviderModels write behavior', () => {
       expect(result.failed).toEqual([]);
       expect(seenDuringWrite).toEqual({ providers: ['acme'], models: ['acme/m1'] });
       expect(vi.mocked(config.replaceSections).mock.calls.length).toBe(1);
-      expect(providers.list()['acme']).toBeDefined();
-      expect(models.list()['acme/m2']).toBeDefined();
-      expect(models.list()['acme/m1']).toBeUndefined();
+      expect(providers.listProviderConfigs()['acme']).toBeDefined();
+      expect(models.listModelRecords()['acme/m2']).toBeDefined();
+      expect(models.listModelRecords()['acme/m1']).toBeUndefined();
       expect(config.get('defaultModel')).toBeUndefined();
     } finally {
       host.dispose();
@@ -798,7 +795,7 @@ describe('refreshProviderModels api_key_env credentials', () => {
       expect(result.changed).toEqual([
         { provider_id: 'acme', provider_name: 'Acme', added: 1, removed: 0 },
       ]);
-      expect(models.list()['acme/m1']).toBeDefined();
+      expect(models.listModelRecords()['acme/m1']).toBeDefined();
     } finally {
       host.dispose();
     }
@@ -829,7 +826,7 @@ describe('refreshProviderModels api_key_env credentials', () => {
           headers: expect.objectContaining({ Authorization: 'Bearer sk-open-platform' }),
         }),
       );
-      expect(providers.list()['moonshot-cn']).toEqual({
+      expect(providers.listProviderConfigs()['moonshot-cn']).toEqual({
         type: 'kimi',
         baseUrl: 'https://api.moonshot.cn/v1',
         apiKeyEnv: 'KIMI_TEST_OPEN_PLATFORM_KEY',
@@ -902,7 +899,7 @@ describe('refreshProviderModels defaultModel self-heal', () => {
       expect(replaceSections).toHaveBeenCalledTimes(1);
       expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
       expect(config.get('thinking')).toEqual({ enabled: true });
-      expect(models.list()['kimi-code/kimi-k2']).toBeDefined();
+      expect(models.listModelRecords()['kimi-code/kimi-k2']).toBeDefined();
       expect(events.published).toEqual([
         expect.objectContaining({ type: 'event.model_catalog.changed' }),
       ]);

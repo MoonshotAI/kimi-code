@@ -168,6 +168,10 @@ interface SearchHighlightRange {
 	current: boolean;
 }
 
+function sanitizeSearchQuery(query: string): string {
+	return query.replace(/\r\n|[\r\n\t]/g, " ");
+}
+
 export interface TuiAltScreenOptions {
 	/**
 	 * Logical lines moved for each mouse-wheel event (default: 1). `"auto"` accelerates fast wheel
@@ -394,6 +398,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return this.currentLayout?.primaryScrollView ?? this.implicitScrollView;
 	}
 
+	private hasSearchableScrollView(): boolean {
+		return this.layoutRoot === undefined || this.currentLayout?.primaryScrollView !== undefined;
+	}
+
 	protected override beforeTerminalStart(): void {
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
@@ -579,19 +587,37 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 	}
 
-	private toggleSearch(): void {
-		if (this.activeSearch) {
-			this.closeSearch();
+	/** Open and focus transcript search, optionally pre-filling a single-line query. */
+	openSearch(query?: string): void {
+		const sanitized = query === undefined ? undefined : sanitizeSearchQuery(query);
+		const existing = this.activeSearch;
+		if (existing) {
+			existing.overlay?.focus();
+			if (sanitized !== undefined) {
+				existing.component.setQuery(sanitized);
+				if (sanitized !== existing.query) {
+					existing.query = sanitized;
+					existing.component.setResult(-1, 0);
+				}
+				existing.anchorRow = this.getPrimaryScrollView().scrollTop;
+				existing.selectionMode = "query";
+			}
+			this.requestRender();
 			return;
 		}
+		if (!this.hasSearchableScrollView()) return;
+
 		const component = new AltScreenSearchComponent(
-			(query) => this.updateSearchQuery(query),
+			(nextQuery) => this.updateSearchQuery(nextQuery),
 			this.searchNavigationButtonStyle,
 		);
+		if (sanitized !== undefined) {
+			component.setQuery(sanitized);
+		}
 		const search: ActiveSearch = {
 			component,
 			index: new AltScreenSearchIndex(),
-			query: "",
+			query: sanitized ?? "",
 			matches: [],
 			selectedIndex: -1,
 			anchorRow: this.getPrimaryScrollView().scrollTop,
@@ -604,6 +630,15 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			minWidth: 32,
 			margin: 1,
 		});
+		this.requestRender();
+	}
+
+	private toggleSearch(): void {
+		if (this.activeSearch) {
+			this.closeSearch();
+			return;
+		}
+		this.openSearch();
 	}
 
 	private closeSearch(): void {
@@ -809,7 +844,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		// full-screen component mounted as the layout root), let navigation keys
 		// fall through to the focused component instead of consuming them.
 		const primaryScrollable = this.getPrimaryScrollView().canScroll;
-		if (keybindings.matches(data, "tui.altScreen.search")) {
+		if (keybindings.matches(data, "tui.altScreen.search") && (this.activeSearch || this.hasSearchableScrollView())) {
 			if (!isRelease) this.toggleSearch();
 			return { consume: true };
 		}
@@ -936,8 +971,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private applyMouseDispatchResult(event: TuiMouseEvent, result: TuiMouseDispatchResult): boolean {
 		const focusTarget = this.resolveMouseFocusTarget(result.focusTarget ?? result.target.component);
-		const focusChanged = result.focus === true && this.getFocusedComponent() !== focusTarget;
-		if (result.focus) this.setFocus(focusTarget);
+		const shouldFocus = result.focus === true && !(this.activeSearch && event.type === "wheel");
+		const focusChanged = shouldFocus && this.getFocusedComponent() !== focusTarget;
+		if (shouldFocus) {
+			if (this.activeSearch && focusTarget !== this.activeSearch.component) {
+				this.closeSearch();
+			}
+			this.setFocus(focusTarget);
+		}
 		if (result.capture) this.mouseCapture = result.target;
 		return (
 			result.render ??

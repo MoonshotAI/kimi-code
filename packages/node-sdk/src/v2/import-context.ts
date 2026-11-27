@@ -12,7 +12,7 @@
  * v2-written import reduce to the same history.
  */
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
-import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
+import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/session/tokenCounting/tokens';
 
 import { ErrorCodes, KimiError } from '#/errors';
 

@@ -4,9 +4,6 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp, h, nextTick, reactive, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('@moonshot-ai/app-components', () => import('../src/chat/tool-calls/toolArgs'));
-
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';

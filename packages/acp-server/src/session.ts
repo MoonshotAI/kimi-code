@@ -10,7 +10,7 @@ import type {
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
 import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
-import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+import { toLlmMessage } from '@moonshot-ai/agent-core-v2/wire/message';
 import {
   RPCError,
   type AgentEventPayloads,
@@ -48,6 +48,7 @@ import {
   availableCommandsUpdateNotification,
   configOptionUpdateNotification,
   currentModeUpdateNotification,
+  liveToolOutputToSessionUpdate,
   planFromDisplayBlock,
   sessionInfoUpdateNotification,
   thinkingDeltaToSessionUpdate,
@@ -64,6 +65,7 @@ import {
   stringifyArgs,
 } from './events-map';
 import { AcpInteractionBridge } from './interaction-bridge';
+import { LiveToolOutput } from './live-output';
 import { log } from './log';
 import { projectModelCatalog } from './model-catalog';
 import { ACP_MODES, type AcpModeId, acpModeToToggles, DEFAULT_MODE_ID } from './modes';
@@ -79,6 +81,13 @@ function leadingText(blocks: readonly ContentBlock[]): string | undefined {
 const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
 const SESSION_OCCUPIED_CODE = 'session.occupied';
 const SESSION_STALE_CODE = 'session.stale';
+
+const AGENT_STARTED_ORIGIN_KINDS: ReadonlySet<string> = new Set(['task', 'cron_job', 'cron_missed', 'system_trigger']);
+
+function isAgentStartedOrigin(origin: unknown): boolean {
+  if (typeof origin !== 'object' || origin === null || !('kind' in origin)) return false;
+  return typeof origin.kind === 'string' && AGENT_STARTED_ORIGIN_KINDS.has(origin.kind);
+}
 
 export function mapPromptLaunchError(error: unknown, sessionId: string): RequestError {
   const code = (error as { readonly code?: unknown } | null | undefined)?.code;
@@ -125,13 +134,17 @@ interface ResolvedCommands {
   readonly skillCommandMap: ReadonlyMap<string, string>;
 }
 
+type EarlyDispatch =
+  | { readonly kind: 'turnEvent'; readonly turnId: number; readonly dispatch: () => void }
+  | { readonly kind: 'interaction'; readonly dispatch: () => void };
+
 interface TurnDriver {
   resolve(response: PromptResponse): void;
   reject(error: unknown): void;
   turnId?: number;
   settled: boolean;
   cancelRequested?: boolean;
-  early: Array<{ readonly turnId: number; readonly dispatch: () => void }>;
+  early: EarlyDispatch[];
 }
 
 export class AcpSession {
@@ -146,7 +159,7 @@ export class AcpSession {
   private modeChangesInFlight = 0;
   private skills: readonly SkillSummary[] = [];
   private driver: TurnDriver | undefined;
-  private taskNotificationTurnId: number | undefined;
+  private agentStartedTurnId: number | undefined;
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
   private readonly subscriptions: IDisposable[] = [];
   private readonly toolCallStreamArgs = new Map<string, { args: string }>();
@@ -155,6 +168,9 @@ export class AcpSession {
   private readonly bashCallsAwaitingTerminal = new Map<string, string>();
   private readonly terminalBackedCalls = new Map<string, string>();
   private readonly terminalsAwaitingCall: AcpTerminalCreatedEvent[] = [];
+  private readonly liveOutput = new LiveToolOutput((toolCallId, text) => {
+    this.emit(liveToolOutputToSessionUpdate(this.sessionId, toolCallId, text));
+  });
   private readonly interactionBridge: AcpInteractionBridge;
 
   constructor(
@@ -171,7 +187,9 @@ export class AcpSession {
     this.klient = klient;
     this.session = klient.session(sessionId);
     this.agent = this.session.agent('main');
-    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm);
+    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm, (dispatch) => {
+      this.dispatchInteraction(dispatch);
+    });
   }
 
   async init(readMode?: () => AcpModeId | undefined): Promise<void> {
@@ -186,9 +204,7 @@ export class AcpSession {
         if (mode !== undefined && mode !== this.currentModeId) void this.publishMode(mode);
       }),
       events.on('turn.started', ({ turnId, origin }) => {
-        if (typeof origin === 'object' && origin !== null && 'kind' in origin && origin.kind === 'task') {
-          this.taskNotificationTurnId = turnId;
-        }
+        if (isAgentStartedOrigin(origin)) this.agentStartedTurnId = turnId;
       }),
       events.on('assistant.delta', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
@@ -286,12 +302,13 @@ export class AcpSession {
       });
     }
     this.interactionBridge.dispose();
+    this.liveOutput.dispose();
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
   }
 
-  async replayHistory(): Promise<void> {
+  async replayHistory(cwd?: string): Promise<void> {
     let messages: readonly ContextMessage[];
     try {
       messages = (await this.agent.getContext()).history.map((message) => ({
@@ -315,7 +332,10 @@ export class AcpSession {
       });
       return;
     }
-    const updates = projectHistoryToSessionUpdates(this.sessionId, messages);
+    const updates = projectHistoryToSessionUpdates(this.sessionId, messages, {
+      cwd,
+      skillCommandMap: this.resolveCommands().skillCommandMap,
+    });
     for (const update of updates) {
       try {
         await this.conn.sessionUpdate(update);
@@ -473,7 +493,7 @@ export class AcpSession {
   }
 
   private assertNoActiveTurn(): void {
-    if (this.taskNotificationTurnId !== undefined || (this.driver !== undefined && !this.driver.settled)) {
+    if (this.agentStartedTurnId !== undefined || (this.driver !== undefined && !this.driver.settled)) {
       throw RequestError.invalidRequest(
         { code: TURN_AGENT_BUSY_CODE },
         'another turn is already in progress',
@@ -509,7 +529,7 @@ export class AcpSession {
             });
           }
           for (const early of driver.early.splice(0)) {
-            if (early.turnId === driver.turnId) early.dispatch();
+            if (early.kind === 'interaction' || early.turnId === driver.turnId) early.dispatch();
           }
         },
         (error) => {
@@ -522,23 +542,35 @@ export class AcpSession {
   }
 
   private dispatchTurnEvent(turnId: number, dispatch: () => void): void {
-    if (this.taskNotificationTurnId === turnId) {
+    if (this.agentStartedTurnId === turnId) {
       dispatch();
       return;
     }
     const driver = this.driver;
     if (driver === undefined || driver.settled) return;
     if (driver.turnId === undefined) {
-      driver.early.push({ turnId, dispatch });
+      driver.early.push({ kind: 'turnEvent', turnId, dispatch });
       return;
     }
     if (driver.turnId === turnId) dispatch();
+  }
+
+  private dispatchInteraction(dispatch: () => void): void {
+    const driver = this.driver;
+    if (driver === undefined || driver.settled || driver.turnId !== undefined) {
+      dispatch();
+      return;
+    }
+    driver.early.push({ kind: 'interaction', dispatch });
   }
 
   private settleDriver(driver: TurnDriver, action: () => void): void {
     if (driver.settled) return;
     driver.settled = true;
     if (this.driver === driver) this.driver = undefined;
+    for (const early of driver.early.splice(0)) {
+      if (early.kind === 'interaction') early.dispatch();
+    }
     action();
   }
 
@@ -603,6 +635,9 @@ export class AcpSession {
 
   private onToolUpdated(event: AgentEventPayloads['tool.updated']): void {
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    if (event.output !== undefined && this.toolCallStreamArgs.has(key) && !this.terminalBackedCalls.has(key)) {
+      this.liveOutput.append(key, event.output.offset, event.output.text);
+    }
     const status = event.fields['status'];
     if (typeof status !== 'string' || status.length === 0 || this.toolStatuses.get(key) === status) return;
     this.toolStatuses.set(key, status);
@@ -612,6 +647,7 @@ export class AcpSession {
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    this.liveOutput.end(key);
     this.toolStatuses.delete(key);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
@@ -648,6 +684,7 @@ export class AcpSession {
   }
 
   private attachTerminal(key: string, terminalId: string): void {
+    this.liveOutput.end(key);
     this.bashCallsAwaitingTerminal.delete(key);
     this.terminalBackedCalls.set(key, terminalId);
     this.emit({
@@ -685,8 +722,8 @@ export class AcpSession {
 
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
     this.terminalsAwaitingCall.length = 0;
-    if (event.turnId === this.taskNotificationTurnId) {
-      this.taskNotificationTurnId = undefined;
+    if (event.turnId === this.agentStartedTurnId) {
+      this.agentStartedTurnId = undefined;
       void this.emitUsageUpdate();
       return;
     }
@@ -766,7 +803,7 @@ export class AcpSession {
     driver.cancelRequested = true;
     const turnId = driver.turnId;
     if (turnId === undefined) {
-      if (this.taskNotificationTurnId !== undefined) return;
+      if (this.agentStartedTurnId !== undefined) return;
       void this.agent.cancel().catch((error) => {
         log.warn('acp: cancel (unaddressed) failed', {
           sessionId: this.sessionId,

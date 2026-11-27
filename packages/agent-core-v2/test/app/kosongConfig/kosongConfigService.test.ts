@@ -7,13 +7,12 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/llm-adapter/model/model';
-import { ModelService } from '#/llm-adapter/model/model-service';
-import { type ProviderConfig } from '#/llm-adapter/provider/provider';
-import { ProviderService } from '#/llm-adapter/provider/provider-service';
+import { type ModelRecord } from '#/provider-catalog/model/model';
+import { type ProviderConfig } from '#/provider-catalog/provider/provider';
 
 import { StubConfigService } from '../../stubs';
 import { KosongConfigService } from '#/app/kosongConfig/kosongConfigService';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 function stubLogService(): ILogService & { warnings: Array<{ message: string; payload?: LogPayload }> } {
   const warnings: Array<{ message: string; payload?: LogPayload }> = [];
@@ -37,20 +36,19 @@ function stubLogService(): ILogService & { warnings: Array<{ message: string; pa
 
 interface BridgeFixture {
   readonly config: StubConfigService;
-  readonly providers: ProviderService;
-  readonly models: ModelService;
+  readonly providers: ProviderCatalogService;
+  readonly models: ProviderCatalogService;
   readonly log: ReturnType<typeof stubLogService>;
   readonly bridge: KosongConfigService;
 }
 
 async function createBridge(sections: Record<string, unknown> = {}): Promise<BridgeFixture> {
   const config = new StubConfigService(sections);
-  const providers = new ProviderService();
-  const models = new ModelService();
+  const providerCatalog = new ProviderCatalogService();
   const log = stubLogService();
-  const bridge = new KosongConfigService(config, providers, models, log);
+  const bridge = new KosongConfigService(config, providerCatalog, log);
   await bridge.ready;
-  return { config, providers, models, log, bridge };
+  return { config, providers: providerCatalog, models: providerCatalog, log, bridge };
 }
 
 async function flush(): Promise<void> {
@@ -73,10 +71,10 @@ describe('KosongConfigService startup hydration', () => {
   it('loads providers, models, and the default pointers from config and readies the registries', async () => {
     const { providers, models } = await createBridge(seededSections);
 
-    expect(providers.list()).toEqual({ kimi: KIMI_PROVIDER });
-    expect(providers.getDefaultProvider()).toBe('kimi');
-    expect(models.list()).toEqual({ k1: K1_MODEL });
-    expect(models.getDefaultModel()).toBe('k1');
+    expect(providers.listProviderConfigs()).toEqual({ kimi: KIMI_PROVIDER });
+    expect(providers.getDefaultProviderId()).toBe('kimi');
+    expect(models.listModelRecords()).toEqual({ k1: K1_MODEL });
+    expect(models.getDefaultModelId()).toBe('k1');
     await expect(providers.ready).resolves.toBeUndefined();
     await expect(models.ready).resolves.toBeUndefined();
   });
@@ -84,10 +82,10 @@ describe('KosongConfigService startup hydration', () => {
   it('hydrates empty registries from an empty config', async () => {
     const { providers, models } = await createBridge();
 
-    expect(providers.list()).toEqual({});
-    expect(providers.getDefaultProvider()).toBeUndefined();
-    expect(models.list()).toEqual({});
-    expect(models.getDefaultModel()).toBeUndefined();
+    expect(providers.listProviderConfigs()).toEqual({});
+    expect(providers.getDefaultProviderId()).toBeUndefined();
+    expect(models.listModelRecords()).toEqual({});
+    expect(models.getDefaultModelId()).toBeUndefined();
   });
 });
 
@@ -97,7 +95,7 @@ describe('KosongConfigService kosong → config persistence', () => {
     try {
       const replaceSpy = vi.spyOn(config, 'replace');
 
-      await providers.set('openai', { type: 'openai', apiKey: 'sk-o' });
+      await providers.setProviderConfig('openai', { type: 'openai', apiKey: 'sk-o' });
       await flush();
       expect(replaceSpy).toHaveBeenCalledWith(PROVIDERS_SECTION, {
         kimi: KIMI_PROVIDER,
@@ -108,7 +106,7 @@ describe('KosongConfigService kosong → config persistence', () => {
         openai: { type: 'openai', apiKey: 'sk-o' },
       });
 
-      await providers.delete('openai');
+      await providers.deleteProviderConfig('openai');
       await flush();
       expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
         kimi: KIMI_PROVIDER,
@@ -121,8 +119,8 @@ describe('KosongConfigService kosong → config persistence', () => {
   it('persists model records and the default-model pointer', async () => {
     const { config, models, bridge } = await createBridge(seededSections);
     try {
-      await models.set('k2', { provider: 'kimi', model: 'kimi-k2.5', maxContextSize: 2000 });
-      await models.setDefaultModel('k2');
+      await models.setModelRecord('k2', { provider: 'kimi', model: 'kimi-k2.5', maxContextSize: 2000 });
+      await models.setDefaultModelId('k2');
       await flush();
 
       expect(config.get<Record<string, ModelRecord>>(MODELS_SECTION)).toEqual({
@@ -138,8 +136,8 @@ describe('KosongConfigService kosong → config persistence', () => {
   it('persists the default-provider pointer', async () => {
     const { config, providers, bridge } = await createBridge(seededSections);
     try {
-      await providers.set('openai', { type: 'openai' });
-      await providers.setDefaultProvider('openai');
+      await providers.setProviderConfig('openai', { type: 'openai' });
+      await providers.setDefaultProviderId('openai');
       await flush();
 
       expect(config.get<string>(DEFAULT_PROVIDER_SECTION)).toBe('openai');
@@ -153,13 +151,13 @@ describe('KosongConfigService awaited-mutation semantics', () => {
   it('an awaited registry mutation resolves only after the write has landed in config', async () => {
     const { config, providers, models, bridge } = await createBridge(seededSections);
     try {
-      await providers.set('openai', { type: 'openai', apiKey: 'sk-o' });
+      await providers.setProviderConfig('openai', { type: 'openai', apiKey: 'sk-o' });
       expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
         kimi: KIMI_PROVIDER,
         openai: { type: 'openai', apiKey: 'sk-o' },
       });
 
-      await models.setDefaultModel('k1');
+      await models.setDefaultModelId('k1');
       expect(config.get<string>(DEFAULT_MODEL_SECTION)).toBe('k1');
     } finally {
       bridge.dispose();
@@ -181,7 +179,7 @@ describe('KosongConfigService awaited-mutation semantics', () => {
 
       vi.useFakeTimers();
       try {
-        const pending = providers.set('openai', { type: 'openai' });
+        const pending = providers.setProviderConfig('openai', { type: 'openai' });
         await vi.advanceTimersByTimeAsync(1000);
         await pending;
       } finally {
@@ -205,14 +203,14 @@ describe('KosongConfigService awaited-mutation semantics', () => {
 
       vi.useFakeTimers();
       try {
-        const pending = providers.set('openai', { type: 'openai' });
+        const pending = providers.setProviderConfig('openai', { type: 'openai' });
         await vi.advanceTimersByTimeAsync(2500);
         await pending;
       } finally {
         vi.useRealTimers();
       }
 
-      expect(providers.get('openai')).toEqual({ type: 'openai' });
+      expect(providers.getProviderConfig('openai')).toEqual({ type: 'openai' });
       expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
         kimi: KIMI_PROVIDER,
       });
@@ -220,7 +218,7 @@ describe('KosongConfigService awaited-mutation semantics', () => {
       expect(log.warnings[0]?.message).toBe('kosong config persist failed');
 
       replaceSpy.mockRestore();
-      await providers.set('mistral', { type: 'mistral' });
+      await providers.setProviderConfig('mistral', { type: 'mistral' });
       expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
         kimi: KIMI_PROVIDER,
         openai: { type: 'openai' },
@@ -237,19 +235,19 @@ describe('KosongConfigService config → kosong sync', () => {
     const { config, providers, models, bridge } = await createBridge(seededSections);
     try {
       await config.set(PROVIDERS_SECTION, { openai: { type: 'openai', apiKey: 'sk-o' } });
-      expect(providers.get('openai')).toEqual({ type: 'openai', apiKey: 'sk-o' });
-      expect(providers.get('kimi')).toEqual(KIMI_PROVIDER);
+      expect(providers.getProviderConfig('openai')).toEqual({ type: 'openai', apiKey: 'sk-o' });
+      expect(providers.getProviderConfig('kimi')).toEqual(KIMI_PROVIDER);
 
       await config.replace(MODELS_SECTION, { k2: { provider: 'openai', model: 'gpt-5' } });
-      expect(models.list()).toEqual({ k2: { provider: 'openai', model: 'gpt-5' } });
+      expect(models.listModelRecords()).toEqual({ k2: { provider: 'openai', model: 'gpt-5' } });
 
       await config.replace(DEFAULT_MODEL_SECTION, 'k2');
       await flush();
-      expect(models.getDefaultModel()).toBe('k2');
+      expect(models.getDefaultModelId()).toBe('k2');
 
       await config.replace(DEFAULT_PROVIDER_SECTION, 'openai');
       await flush();
-      expect(providers.getDefaultProvider()).toBe('openai');
+      expect(providers.getDefaultProviderId()).toBe('openai');
     } finally {
       bridge.dispose();
     }
@@ -265,8 +263,8 @@ describe('KosongConfigService loop termination', () => {
       providers.onDidChangeProviders(() => events.push('providers'));
       providers.onDidChangeDefaultProvider(() => events.push('defaultProvider'));
 
-      await providers.set('openai', { type: 'openai' });
-      await providers.setDefaultProvider('openai');
+      await providers.setProviderConfig('openai', { type: 'openai' });
+      await providers.setDefaultProviderId('openai');
       await flush();
 
       expect(events).toEqual(['providers', 'defaultProvider']);
@@ -291,8 +289,8 @@ describe('KosongConfigService loop termination', () => {
       await config.set(MODELS_SECTION, { k2: { provider: 'openai', model: 'gpt-5' } });
       await flush();
 
-      expect(providers.get('openai')).toEqual({ type: 'openai' });
-      expect(models.get('k2')).toEqual({ provider: 'openai', model: 'gpt-5' });
+      expect(providers.getProviderConfig('openai')).toEqual({ type: 'openai' });
+      expect(models.getModelRecord('k2')).toEqual({ provider: 'openai', model: 'gpt-5' });
       expect(replaceSpy).not.toHaveBeenCalled();
     } finally {
       bridge.dispose();
@@ -309,10 +307,10 @@ describe('KosongConfigService default-provider deletion', () => {
     try {
       const replaceSpy = vi.spyOn(config, 'replace');
 
-      await providers.delete('kimi');
+      await providers.deleteProviderConfig('kimi');
       await flush();
 
-      expect(providers.getDefaultProvider()).toBeUndefined();
+      expect(providers.getDefaultProviderId()).toBeUndefined();
       expect(replaceSpy).toHaveBeenCalledWith(PROVIDERS_SECTION, {
         openai: { type: 'openai' },
       });
@@ -342,19 +340,18 @@ describe('KosongConfigService env-pinned default pointer', () => {
 
   it('re-asserts the pinned effective default model into the registry after a registry-originated write', async () => {
     const config = new PinnedConfigService(DEFAULT_MODEL_SECTION, 'env-model', seededSections);
-    const providers = new ProviderService();
-    const models = new ModelService();
-    const bridge = new KosongConfigService(config, providers, models, stubLogService());
+    const models = new ProviderCatalogService();
+    const bridge = new KosongConfigService(config, models, stubLogService());
     await bridge.ready;
     try {
-      expect(models.getDefaultModel()).toBe('env-model');
+      expect(models.getDefaultModelId()).toBe('env-model');
       const replaceSpy = vi.spyOn(config, 'replace');
 
-      await models.setDefaultModel('k1');
+      await models.setDefaultModelId('k1');
       await flush();
 
       expect(replaceSpy).toHaveBeenCalledWith(DEFAULT_MODEL_SECTION, 'k1');
-      expect(models.getDefaultModel()).toBe('env-model');
+      expect(models.getDefaultModelId()).toBe('env-model');
     } finally {
       bridge.dispose();
     }

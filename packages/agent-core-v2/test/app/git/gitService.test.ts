@@ -293,6 +293,53 @@ describe('GitService', () => {
     });
   });
 
+  describe('commands that cannot start in a remote environment', () => {
+    function remoteGitService(missing: ReadonlySet<string>): { readonly service: GitService; activeLeases(): number } {
+      const host = new HostProcessService();
+      const environment = {
+        process: {
+          spawn: (command: string, args: readonly string[], options: Parameters<HostProcessService['spawn']>[2]) =>
+            missing.has(command)
+              ? Promise.reject(Object.assign(new Error(`spawn ${command} ENOENT`), { code: 'ENOENT' }))
+              : host.spawn(command, args, options),
+        },
+      } as unknown as Environment;
+      let active = 0;
+      const resolver = {
+        acquire: () => {
+          active += 1;
+          let released = false;
+          return {
+            environment,
+            track: <T>(resource: T): T => resource,
+            dispose: () => {
+              if (released) return;
+              released = true;
+              active -= 1;
+            },
+          };
+        },
+      } as unknown as EnvironmentResolver;
+      return { service: new GitService(resolver, new HostFileSystem(), 'remote-box'), activeLeases: () => active };
+    }
+
+    it('releases the lease when gh is missing and still reports the status without a pull request', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'hello\n');
+      commitAll('init');
+      const remote = remoteGitService(new Set(['gh']));
+
+      await expect(remote.service.status(repo)).resolves.toMatchObject({ pullRequest: null });
+      expect(remote.activeLeases()).toBe(0);
+    });
+
+    it.each(['status', 'pullRequest'] as const)('releases the lease when git is missing and %s reports git unavailable', async (method) => {
+      const remote = remoteGitService(new Set(['git', 'gh']));
+
+      await expect(remote.service[method](repo)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+      expect(remote.activeLeases()).toBe(0);
+    });
+  });
+
   describe('diff', () => {
     it('returns the unified diff for a tracked modified file', async () => {
       writeFileSync(join(repo, 'a.txt'), 'old\n');

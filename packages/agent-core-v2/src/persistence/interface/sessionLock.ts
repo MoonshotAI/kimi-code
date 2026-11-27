@@ -13,6 +13,7 @@ export interface SessionLockHolder {
   readonly startedAt: number;
   readonly clientIdentity: string;
   readonly clientDisplayName?: string;
+  readonly liveness?: string;
 }
 
 export interface SessionLockLease {

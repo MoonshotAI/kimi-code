@@ -13,17 +13,17 @@ import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { PROVIDERS_SECTION, THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { Error2, ErrorCodes } from '#/errors';
-import { llmMessageFromError } from '#/llm-adapter/contract/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
-import type { ModelOverrides } from '#/llm-adapter/model/model.types';
+import { llmMessageFromError } from '#/provider-catalog/errors';
+import type { Model } from '#/provider-catalog/model/catalog';
+import { resolveMaxOutputTokens } from '#/provider-catalog/model/completion-budget';
+import type { ModelOverrides } from '#/provider-catalog/model/model.types';
 import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,
   type ThinkingConfig,
-} from '#/llm-adapter/model/thinking';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import type { ProvidersSection } from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/model/thinking';
+import type { ProvidersSection } from '#/provider-catalog/provider/provider';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import {
@@ -117,8 +117,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   constructor(
     @IFlagService private readonly flags: IFlagService,
     @IConfigService private readonly configService: IConfigService,
-    @IModelCatalog private readonly models: IModelCatalog,
-    @IProtocolAdapterRegistry private readonly protocols: IProtocolAdapterRegistry,
+    @IProviderCatalogService private readonly providerCatalog: IProviderCatalogService,
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
@@ -214,7 +213,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
 
   private tryGetModel(alias: string): Model | undefined {
     try {
-      return this.models.get(alias);
+      return this.providerCatalog.get(alias);
     } catch {
       return undefined;
     }
@@ -224,7 +223,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     target: string,
     mainModel: Model,
   ): { readonly alias: string; readonly model: Model } | undefined {
-    const byName = this.models.findByName?.(target) ?? [];
+    const byName = this.providerCatalog.findByName(target);
     const candidates = new Set<string>([
       ...byName,
       `${KIMI_CODE_PLATFORM_ID}/${target}`,
@@ -247,7 +246,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     if (modelAlias !== config?.model && config?.effort === undefined) return;
     let model;
     try {
-      model = this.models.get(modelAlias);
+      model = this.providerCatalog.get(modelAlias);
     } catch (error) {
       const source = modelAlias === config?.model ? '[auto_review].model' : 'Auto Review model';
       throw new Error2(
@@ -331,10 +330,10 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     binding: ReviewBinding,
     signal: AbortSignal,
   ): Promise<LlmOutcome> {
-    const model = this.models.get(binding.modelAlias);
+    const model = this.providerCatalog.get(binding.modelAlias);
     const overrides = this.configService.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.configService.get<ThinkingConfig>(THINKING_SECTION);
-    const strict = requiresStrictThinkingValidation(this.protocols, model.protocol, model.providerType);
+    const strict = requiresStrictThinkingValidation(this.providerCatalog, model.protocol, model.providerType);
     const requestedEffort = resolveSubagentThinking(this.configService, model, binding.effort);
     const resolvedEffort = resolveThinkingEffortForModel(requestedEffort, thinkingConfig, model.spec, strict);
     const thinkingEffort = binding.effort !== undefined
@@ -362,7 +361,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
         }),
       },
     };
-    return this.protocols.request(model, params, this.requesterExecution).with({
+    return this.providerCatalog.createRequester(model, params, this.requesterExecution).with({
       model: { responseFormat: RESPONSE_FORMAT },
       profile: { systemPrompt: REVIEW_POLICY, tools: [] },
       content: { messages: input.messages },

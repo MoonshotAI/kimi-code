@@ -12,6 +12,7 @@ import {
   type ClientConnection,
   type CreateTerminalRequest,
   type JsonRpcId,
+  type McpServer,
   type ReadTextFileRequest,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -40,6 +41,8 @@ import {
   type PermissionMode,
   type ReopenState,
   type SurfaceDriver,
+  StartupFailure,
+  type EditorMcpServer,
   type SurfaceLaunch,
   type ToolExpectation,
   type ToolStatus,
@@ -264,6 +267,7 @@ function tailOf(bytes: Buffer, limit: number | undefined): { text: string; trunc
 class AcpDriver implements SurfaceDriver<'acp'> {
   private readonly proc: TestProcess;
   private readonly home: TestHome;
+  private readonly mcpServers: McpServer[];
   private readonly bare: boolean;
   private readonly handled: ReadonlySet<string>;
   private readonly connection: ClientConnection;
@@ -292,10 +296,11 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private leftSessionUpdates = 0;
   private turn: Turn | undefined;
 
-  constructor(proc: TestProcess, home: TestHome, bare: boolean) {
+  constructor(proc: TestProcess, home: TestHome, bare: boolean, mcpServers: readonly EditorMcpServer[]) {
     this.proc = proc;
     this.home = home;
     this.bare = bare;
+    this.mcpServers = mcpServers.map(({ name, url }) => ({ type: 'http', name, url, headers: [] }));
     this.handled = new Set(bare ? SESSION_METHODS : [...SESSION_METHODS, ...EDITOR_CAPABILITY_METHODS]);
     const session = client({ name: EDITOR_NAME })
       .onNotification(methods.client.session.update, ({ params }) => {
@@ -344,7 +349,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (resume === undefined) {
       const session = await this.response(
         'the agent to create a session',
-        this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+        this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: this.mcpServers }),
       );
       this.sessionId = session.sessionId;
       this.openedMode = session.modes?.currentModeId;
@@ -355,7 +360,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     const loaded = await this.response(
       `the agent to load session ${resume}`,
-      this.connection.agent.request(methods.agent.session.load, { sessionId: resume, cwd: this.home.workspace, mcpServers: [] }),
+      this.connection.agent.request(methods.agent.session.load, { sessionId: resume, cwd: this.home.workspace, mcpServers: this.mcpServers }),
     );
     this.sessionId = resume;
     this.restored = true;
@@ -494,7 +499,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
     const session = await this.response(
       'the agent to create a new session',
-      this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+      this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: this.mcpServers }),
     );
     if (session.sessionId === this.sessionId) {
       throw new Error(`newSession() asked for a new session, but the agent answered with the current one, ${session.sessionId}.\n${this.describe()}`);
@@ -629,7 +634,15 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`The scenario ended while a turn was running or an approval was pending; end it with waitIdle().\n${this.describe()}`);
     }
-    if (this.proc.exit() !== undefined) throw new Error(`kimi acp exited before the scenario closed it.\n${this.describe()}`);
+    await this.closeEditor();
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    await this.closeEditor();
+  }
+
+  private async closeEditor(): Promise<void> {
+    if (this.proc.exit() !== undefined) throw new Error(`kimi acp exited before the editor closed it.\n${this.describe()}`);
     this.proc.stdin.end();
     let exit;
     try {
@@ -899,7 +912,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private askedQuestions(pending: PendingPermission): readonly string[] {
-    return toolsOf(this.turnUpdates()).find((tool) => tool.id === pending.params.toolCall.toolCallId)?.questions ?? [];
+    const { toolCallId } = pending.params.toolCall;
+    const asked = toolsOf(this.turnUpdates()).find((tool) => tool.id === toolCallId)?.questions ?? [];
+    if (asked.length === 0) {
+      throw new Error(`answer() got a question for tool call ${toolCallId}, but the agent asked it before showing that tool call with its questions.\n${this.describe()}`);
+    }
+    return asked;
   }
 
   private async answerQuestion(pending: PendingPermission, optionId: string): Promise<void> {
@@ -1081,7 +1099,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 }
 
-export async function startAcp({ home, reopen, variant }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
+export async function startAcp({ home, reopen, variant, editorMcpServers }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
   const proc = TestProcess.start({
     label: 'kimi acp',
     command: kimiCliCommand(),
@@ -1092,12 +1110,13 @@ export async function startAcp({ home, reopen, variant }: SurfaceLaunch): Promis
     stdin: true,
     fetchStubs: offlineStubs(),
   });
-  const driver = new AcpDriver(proc, home, variant === 'bare-editor');
+  const driver = new AcpDriver(proc, home, variant === 'bare-editor', editorMcpServers ?? []);
   try {
     await driver.open(reopen?.state.sessionId);
   } catch (error) {
+    const diagnostics = await driver.diagnostics();
     await driver.kill();
-    throw error;
+    throw new StartupFailure(error, diagnostics);
   }
   return driver;
 }

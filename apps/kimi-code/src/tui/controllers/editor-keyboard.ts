@@ -29,7 +29,7 @@ import type {
   VideoAttachment,
 } from '../utils/image-attachment-store';
 import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
-import { resolveUserInput } from '../commands/resolve';
+import { resolveHostUserInput } from '../commands/resolve';
 import type { PendingExit, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
@@ -352,19 +352,7 @@ export class EditorKeyboardController {
         return;
       }
       if (extraction !== undefined) {
-        const { activations } = resolveUserInput({
-          input: text,
-          skillCommandMap: host.skillCommandMap,
-          pluginCommandMap: host.pluginCommandMap,
-          isStreaming: true,
-          isCompacting: host.state.appState.isCompacting,
-          skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
-            ? undefined
-            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
-          defaultSkillPathForCommand: host.defaultSkillPathForCommand === undefined
-            ? undefined
-            : (commandName) => host.defaultSkillPathForCommand!(commandName),
-        });
+        const { activations } = resolveHostUserInput(host, text, { isStreaming: true });
         host.state.queuedMessages.push({
           text,
           agentId: host.harness?.interactiveAgentId,

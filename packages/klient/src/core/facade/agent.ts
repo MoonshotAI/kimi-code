@@ -16,7 +16,7 @@ import {
 import {
   fromLlmMessage,
   type Message as LegacyMessage,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+} from '@moonshot-ai/agent-core-v2/wire/message';
 import type {
   ContextMessage as CoreContextMessage,
   ContextMessageTiming,
