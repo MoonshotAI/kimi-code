@@ -3,7 +3,7 @@ import { encode } from '@toon-format/toon';
 import type { ChatTurn, ToolCall } from '@moonshot-ai/app-core/client/types';
 import zh from '../../app-i18n/src/locales/zh/tools';
 import en from '../../app-i18n/src/locales/en/tools';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import {
   browserToolContexts,
   browserApprovalPresentation,

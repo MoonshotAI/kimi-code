@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppNotice, AppNoticeDetail, AppWarning, ReadRequestOptions } from '@moonshot-ai/app-core/api';
+import type { AppNotice, AppWarning, ReadRequestOptions } from '@moonshot-ai/app-core/api';
+import type { AppNoticeDetail } from '@moonshot-ai/app-core/contracts';
 import { isDaemonApiError, isDaemonNetworkError, isDaemonTimeoutError } from '@moonshot-ai/app-core/api';
 import {
   errorInfo,

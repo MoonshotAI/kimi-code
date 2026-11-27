@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   region: { value: 'mainland-cn' },
 }));
 vi.mock('electron', () => ({ app: mocks.app, net: { fetch: mocks.fetch } }));
-vi.mock('../../../src/main/window/main-window', () => ({ sendToRenderer: mocks.send, markQuitting: vi.fn() }));
+vi.mock('../../../src/main/window/window-registry', () => ({ sendToRenderer: mocks.send, markQuitting: vi.fn() }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: vi.fn(), trySendDesktopEvent: vi.fn() }));
 vi.mock('../../../src/main/app/ui-state', () => ({ isUpdateAutoDownloadEnabled: () => false, setUpdateAutoDownloadEnabled: vi.fn() }));
 vi.mock('../../../src/main/server/region', () => ({

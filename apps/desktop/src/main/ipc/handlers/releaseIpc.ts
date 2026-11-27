@@ -10,7 +10,7 @@ import {
 } from '../../release/updater';
 import { getCanaryInfo } from '../../release/canary';
 import { shouldBlockQuit } from '../../app/quit-confirm';
-import { getMainWindow } from '../../window/main-window';
+import { getMainWindow } from '../../window/window-registry';
 import { getRemoteControlRestoreState, setRemoteControlPreviousEnabled, setRemoteControlRestoreEnabled } from '../../app/ui-state';
 import { stableSettingsPrecheck, stableUserDataDir, writeImportMarker } from '../../release/stable-settings-import';
 import { log } from '../../diagnostics/log';

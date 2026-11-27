@@ -71,8 +71,8 @@ import { MANAGED_KIMI_CODE_PROVIDER_ID, type AppModel, type ReadRequestOptions, 
 import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
-import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
-import type { IconName } from '@moonshot-ai/app-client/icons';
+import { useAppearance, useContextInspector } from '@moonshot-ai/app-core/composables';
+import type { IconName } from '@moonshot-ai/app-ui/icons';
 import type { PermissionMode, ToolMedia, TurnAttachment } from '@moonshot-ai/app-core/client/types';
 import {
   commitLevel,

@@ -1,10 +1,12 @@
 import { app, ipcMain, nativeTheme } from 'electron';
-import { getMainWindow, showMainWindow, applyWindowVibrancy, markQuitting, markRendererUiMounted, windowForWebContents } from '../../window/main-window';
+import { showMainWindow, applyWindowVibrancy, markRendererUiMounted } from '../../window/main-window';
+import { getMainWindow, markQuitting, windowForWebContents } from '../../window/window-registry';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from '../../shell/tray';
 import { setContextMenuLocale, showSelectionContextMenu } from '../../shell/context-menu';
 import { resolveQuitConfirmResponse, setQuitConfirmLocale, shouldBlockQuit } from '../../app/quit-confirm';
 import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from '../../shell/jump-list';
-import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended, setTerminalMenuFocus, onTerminalMenuFocus } from '../../shell/menu';
+import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended } from '../../shell/menu';
+import { onTerminalMenuFocus, setTerminalMenuFocus } from '../../shell/terminal-menu-focus';
 import { setGlobalShortcutForAction, setGlobalShortcutSuspended, setGlobalShortcutTerminalFocus } from '../../shell/shortcuts';
 import { isLinuxNativeTitleBar, isVibrancyEnabled, markOnboarded, setColorScheme, setLinuxNativeTitleBar, setVibrancyEnabled } from '../../app/ui-state';
 import { isDockIconChoice, setDockIconChoice } from '../../shell/dock-icon';

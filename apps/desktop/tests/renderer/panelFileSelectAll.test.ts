@@ -2,7 +2,7 @@
 import { computed, createApp, h, nextTick, ref, type App, type ComponentPublicInstance } from 'vue';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { ModelDisplayKey, noopProductTracker, setProductTracker, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { AgentPanel, DiffView, FilePreview } from '@moonshot-ai/app-components';

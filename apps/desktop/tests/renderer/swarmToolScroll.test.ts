@@ -24,7 +24,7 @@ import { SwarmTool } from '@moonshot-ai/app-components';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { ResolveSwarmMembersKey } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey, type PanelApi } from '@moonshot-ai/app-client/panel';
-import { useAppearance } from '@moonshot-ai/app-core';
+import { useAppearance } from '@moonshot-ai/app-core/composables';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
 

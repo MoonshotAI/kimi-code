@@ -1,5 +1,5 @@
 import type { WebContents } from 'electron';
-import { getMainWindow } from '../window/main-window';
+import { getMainWindow } from '../window/window-registry';
 
 export function isMainRendererSender(sender: WebContents): boolean {
   const win = getMainWindow();

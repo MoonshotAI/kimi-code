@@ -4,7 +4,9 @@ import { kimiRendererViteConfig } from '@moonshot-ai/vite-preset';
 
 const preset = kimiRendererViteConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
-  iconsDir: fileURLToPath(new URL('./src/icons/kimi', import.meta.url)),
+  iconsDir: fileURLToPath(
+    new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-ui/package.json')),
+  ),
 });
 
 export default defineConfig({

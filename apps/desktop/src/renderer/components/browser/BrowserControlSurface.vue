@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Button, Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
-import { iconSvg } from '@moonshot-ai/app-client/icons';
+import { iconSvg } from '@moonshot-ai/app-ui/icons';
 import { browserControlDuration, type BrowserControlActivity, type BrowserControlActivityKind, type BrowserControlDialogs, type BrowserControlPointer, type BrowserControlSurface, type BrowserControlSurfaceBridge } from '../../../shared/browser-control';
 import type { BrowserDialogRecord } from '../../../shared/browser-dialogs';
 import { browserDialogRecordIcon } from '../../lib/browserDialogRecords';
