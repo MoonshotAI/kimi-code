@@ -10,10 +10,7 @@ import type {
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type {
-  PermissionPolicyEvaluateOptions,
-  PermissionPolicyEvaluation,
-} from '#/agent/permissionPolicy/permissionPolicy';
+import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode, PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import {
@@ -23,19 +20,10 @@ import {
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import {
-  createAutoReviewReviewer,
-  resolveAutoReview,
-} from '#/features/autoReview/autoReviewGate';
-import {
-  type AutoReviewOutcome,
-  type IAutoReviewService,
-} from '#/features/autoReview/review';
 import type { ToolCall } from '#human/message';
 
-import { stubFlag } from '../../app/flag/stubs';
-
 import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
 import { stubPermissionRulesService } from '../permissionRules/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
@@ -70,10 +58,6 @@ describe('AgentPermissionGate', () => {
   let mode: PermissionMode;
   let rules: readonly PermissionRule[];
   let policyResult: PermissionPolicyEvaluation | undefined;
-  let manualPolicyResult: PermissionPolicyEvaluation | undefined;
-  let autoReviewEnabled: boolean;
-  let autoReviewOutcome: AutoReviewOutcome;
-  let review: ReturnType<typeof vi.fn<IAutoReviewService['review']>>;
   let records: TelemetryRecord[];
   let executorEvents: ToolExecutorEventStubs;
   let resolvePermissionResolution: ReturnType<
@@ -88,10 +72,6 @@ describe('AgentPermissionGate', () => {
     mode = 'auto';
     rules = [];
     policyResult = undefined;
-    manualPolicyResult = undefined;
-    autoReviewEnabled = false;
-    autoReviewOutcome = { decision: 'allow', risk: 'low' };
-    review = vi.fn(async () => autoReviewOutcome);
     records = [];
     executorEvents = stubToolExecutorEvents();
     resolvePermissionResolution = vi.fn(async () => undefined);
@@ -103,16 +83,14 @@ describe('AgentPermissionGate', () => {
       formatDenyMessage: (message) => message,
       formatApprovalRejectionMessage: () => '',
     };
-    const policyService: IAgentPermissionPolicyService = {
-      _serviceBrand: undefined,
-      evaluate: async (_ctx, options?: PermissionPolicyEvaluateOptions) =>
-        options?.mode === 'manual' ? manualPolicyResult : policyResult,
-    };
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(IAgentPermissionRulesService, stubPermissionRulesService(() => rules));
-        reg.defineInstance(IAgentPermissionPolicyService, policyService);
+        reg.defineInstance(
+          IAgentPermissionPolicyService,
+          stubPermissionPolicyService(() => policyResult),
+        );
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
@@ -126,19 +104,41 @@ describe('AgentPermissionGate', () => {
   });
 
   function make(): IAgentPermissionGate {
-    const gate = ix.get(IAgentPermissionGate);
-    disposables.add(
-      gate.registerReviewer(
-        createAutoReviewReviewer(
-          stubFlag(() => autoReviewEnabled),
-          stubPermissionModeService(() => mode),
-          ix.get(IAgentPermissionPolicyService),
-          { review },
-        ),
-      ),
-    );
-    return gate;
+    return ix.get(IAgentPermissionGate);
   }
+
+  it('returns undefined without consulting approvals when no policy evaluates', async () => {
+    const svc = make();
+
+    expect(await svc.authorize(makeContext('bash'))).toBeUndefined();
+    expect(resolvePermissionResolution).not.toHaveBeenCalled();
+    expect(records).toEqual([]);
+  });
+
+  it('forwards the policy resolution to the approval service and returns its result', async () => {
+    const resolution: PermissionPolicyResolution = { kind: 'deny', message: 'nope' };
+    policyResult = { policyName: 'user-configured-deny', result: resolution };
+    const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
+    resolvePermissionResolution.mockResolvedValue(blocked);
+    const svc = make();
+    const ctx = makeContext('bash');
+
+    expect(await svc.authorize(ctx)).toBe(blocked);
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      resolution,
+      ctx,
+      'user-configured-deny',
+    );
+  });
+
+  it('passes an approve result with executionMetadata straight through', async () => {
+    const executionMetadata = { marker: true };
+    policyResult = { policyName: 'p', result: { kind: 'approve', executionMetadata } };
+    resolvePermissionResolution.mockResolvedValue({ executionMetadata });
+    const svc = make();
+
+    expect(await svc.authorize(makeContext('bash'))).toEqual({ executionMetadata });
+  });
 
   it('tracks the policy decision with the reason payload', async () => {
     policyResult = {
@@ -149,9 +149,9 @@ describe('AgentPermissionGate', () => {
         reason: { matched_rule: 'Bash', match_strategy: 'literal' },
       },
     };
-    make();
+    const svc = make();
 
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
+    await svc.authorize(makeContext('Bash'));
 
     expect(records).toContainEqual({
       event: 'permission_policy_decision',
@@ -170,26 +170,19 @@ describe('AgentPermissionGate', () => {
 
   it('vetoes with the resolved denial and ends adjudication on a deny resolution', async () => {
     const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
-    const resolution: PermissionPolicyResolution = { kind: 'deny', message: 'nope' };
-    policyResult = { policyName: 'p', result: resolution };
+    policyResult = { policyName: 'p', result: { kind: 'deny', message: 'nope' } };
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
     const later = vi.fn();
     executorEvents.executor.registerHook({ permitting: later });
-    const ctx = makeContext('bash');
 
-    const decision = await executorEvents.fireBeforeExecute(ctx);
+    const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 
     expect(decision).toEqual(blocked);
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      expect.objectContaining(resolution),
-      expect.objectContaining({ toolCall: ctx.toolCall }),
-      'p',
-    );
     expect(later).not.toHaveBeenCalled();
   });
 
-  it('requests tool approval on an ask resolution', async () => {
+  it('defers an ask resolution to a cold waitUntil factory', async () => {
     const synthetic: BeforeExecuteDecision = { veto: { output: 'Plan review handled.' } };
     const ask: PermissionPolicyResolution = { kind: 'ask' };
     policyResult = { policyName: 'p', result: ask };
@@ -216,7 +209,6 @@ describe('AgentPermissionGate', () => {
     expect(decision).toBeUndefined();
     expect(resolvePermissionResolution).not.toHaveBeenCalled();
     expect(requestToolApproval).not.toHaveBeenCalled();
-    expect(records).toEqual([]);
   });
 
   it('passes an approve resolution with its executionMetadata', async () => {
@@ -237,207 +229,6 @@ describe('AgentPermissionGate', () => {
     const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 
     expect(decision).toBeUndefined();
-  });
-
-  const fallbackAsk: PermissionPolicyEvaluation = { policyName: 'fallback-ask', result: { kind: 'ask' } };
-  const configuredAsk: PermissionPolicyEvaluation = { policyName: 'user-configured-ask', result: { kind: 'ask' } };
-  const modeApproval: PermissionPolicyEvaluation = { policyName: 'auto-mode-approve', result: { kind: 'approve' } };
-  const allowPolicy = (policyName: string): PermissionPolicyEvaluation => ({ policyName, result: { kind: 'approve' } });
-  const denyPolicy: PermissionPolicyEvaluation = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'no' } };
-
-  function reviewModeApprovals(): void {
-    autoReviewEnabled = true;
-    policyResult = modeApproval;
-    manualPolicyResult = fallbackAsk;
-  }
-
-  it.each([
-    [false, 'yolo', 'Bash', fallbackAsk, undefined, false, 1],
-    [true, 'manual', 'Bash', fallbackAsk, undefined, false, 1],
-    [true, 'yolo', 'Write', fallbackAsk, undefined, false, 1],
-    [true, 'yolo', 'Edit', modeApproval, fallbackAsk, false, 0],
-    [true, 'yolo', 'Bash', denyPolicy, undefined, false, 0],
-    [true, 'auto', 'Bash', modeApproval, allowPolicy('default-tool-approve'), false, 0],
-    [true, 'yolo', 'Bash', fallbackAsk, undefined, true, 0],
-    [true, 'yolo', 'Bash', configuredAsk, undefined, false, 1],
-    [true, 'auto', 'Bash', modeApproval, configuredAsk, true, 0],
-    [true, 'auto', 'Bash', modeApproval, fallbackAsk, true, 0],
-    [true, 'yolo', 'mcp__fs__write_file', modeApproval, fallbackAsk, true, 0],
-  ] satisfies Array<[boolean, PermissionMode, string, PermissionPolicyEvaluation, PermissionPolicyEvaluation | undefined, boolean, number]>)(
-    'reviews tool=%s mode=%s policy=%s -> %s',
-    async (enabled, nextMode, tool, policy, manualPolicy, expected, expectedHumanAsks) => {
-      autoReviewEnabled = enabled;
-      mode = nextMode;
-      policyResult = policy;
-      manualPolicyResult = manualPolicy;
-      make();
-
-      await executorEvents.fireBeforeExecute(makeContext(tool));
-
-      expect(review).toHaveBeenCalledTimes(expected ? 1 : 0);
-      expect(requestToolApproval).toHaveBeenCalledTimes(expectedHumanAsks);
-    },
-  );
-
-  it('passes the asking policy name and routes a denial back to approval in Ask When Needed', async () => {
-    policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
-    autoReviewOutcome = { decision: 'deny', risk: 'high' };
-    autoReviewEnabled = true;
-    mode = 'yolo';
-    make();
-
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
-    expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask');
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'ask' }),
-      expect.anything(),
-      'auto-review',
-    );
-  });
-
-  it('defers asks and skips review when another listener vetoes or finally allows', async () => {
-    reviewModeApprovals();
-    const blocked: BeforeExecuteDecision = { veto: { output: 'hook denied', isError: true } };
-    make();
-    let outcome: 'veto' | 'allow' = 'veto';
-    executorEvents.executor.registerLegacyStarting((event) => {
-      if (outcome === 'veto') event.veto(blocked.veto!);
-      else event.allow();
-    });
-
-    expect(await executorEvents.fireBeforeExecute(makeContext('Bash'))).toEqual(blocked);
-    outcome = 'allow';
-    expect(await executorEvents.fireBeforeExecute(makeContext('Bash'))).toEqual({ allow: true });
-    expect(review).not.toHaveBeenCalled();
-    expect(requestToolApproval).not.toHaveBeenCalled();
-
-    policyResult = fallbackAsk;
-    autoReviewEnabled = false;
-    outcome = 'veto';
-    expect(await executorEvents.fireBeforeExecute(makeContext('Write'))).toEqual(blocked);
-    expect(requestToolApproval).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['yolo', 'yolo', 'failed', 'ask'],
-    ['auto', 'auto', 'failed', 'deny'],
-    ['auto', 'yolo', 'deny', 'ask'],
-    ['yolo', 'auto', 'deny', 'deny'],
-    ['auto', 'manual', 'deny', 'ask'],
-    ['auto', 'manual', 'allow', 'ask'],
-  ] as const)('resolves a %s review started in %s and finished in %s as %s', async (from, to, outcome, expected) => {
-    reviewModeApprovals();
-    mode = from;
-    review.mockImplementation(async () => {
-      mode = to;
-      if (outcome === 'failed') return { decision: 'failed', reason: 'invalid JSON' };
-      return outcome === 'allow' ? { decision: 'allow', risk: 'low' } : { decision: 'deny', risk: 'high' };
-    });
-    make();
-
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: expected }),
-      expect.anything(),
-      'auto-review',
-    );
-  });
-
-  it('lets the user override a high-risk review denial in Ask When Needed and explains it without a user', () => {
-    const risk = 'high';
-    const onUnderlyingApproved = vi.fn(() => undefined);
-    const { result } = resolveAutoReview(
-      makeContext('Bash'),
-      modeApproval,
-      { kind: 'ask', reason: { executable_name: 'ssh' }, resolveApproval: onUnderlyingApproved },
-      { decision: 'deny', risk, reason: 'Too broad.' },
-      'yolo',
-    );
-
-    expect(result).toMatchObject({
-      kind: 'ask',
-      approvalDetail: { outcome: 'denied', risk, reason: 'Too broad.' },
-      reason: { executable_name: 'ssh', review_risk: risk },
-    });
-    if (result.kind !== 'ask') return;
-    expect(result.resolveApproval?.({ decision: 'approved' })).toBeUndefined();
-    expect(onUnderlyingApproved).toHaveBeenCalledWith({ decision: 'approved' });
-    expect(result.resolveApproval?.({ decision: 'rejected' })).toMatchObject({
-      kind: 'deny', message: expect.stringContaining('Too broad.'),
-    });
-    expect(result.resolveApproval?.({ decision: 'rejected', feedback: 'Only delete generated/.' })).toMatchObject({
-      kind: 'deny', message: expect.stringContaining('Reason: Only delete generated/.'),
-    });
-    expect(result.resolveNonInteractive?.()).toMatchObject({
-      kind: 'deny', message: expect.stringContaining('Too broad.'),
-    });
-  });
-
-  it.each([
-    ['low', 'Do not retry it or work around the review. If the action is still required, end your reply by stating the exact action and its target and asking the user to confirm.'],
-    ['high', 'High-risk actions cannot be authorized through Auto Review. Do not retry it or work around the review; tell the user it was blocked.'],
-  ] as const)('tells the main model how to proceed after a %s-risk denial in Never Ask', (risk, guidance) => {
-    const { result } = resolveAutoReview(
-      makeContext('Bash'),
-      modeApproval,
-      { kind: 'ask', reason: { executable_name: 'git' } },
-      { decision: 'deny', risk, reason: 'Pushing tags was not authorized.' },
-      'auto',
-    );
-
-    expect(result).toEqual({
-      kind: 'deny',
-      reason: { executable_name: 'git', review_risk: risk },
-      message: `Auto Review denied tool "Bash"; it was not executed. Pushing tags was not authorized. ${guidance}`,
-    });
-  });
-
-  it('surfaces review failure details to the main model in Never Ask and rejected Ask When Needed fallbacks', () => {
-    const autoResult = resolveAutoReview(
-      makeContext('Bash'),
-      modeApproval,
-      { kind: 'ask', reason: { dangerous_command: 'rm -rf' } },
-      { decision: 'failed', reason: 'Review timed out.' },
-      'auto',
-    ).result;
-
-    expect(autoResult).toEqual({
-      kind: 'deny',
-      reason: { dangerous_command: 'rm -rf', review_error: true },
-      message:
-        'Auto Review could not complete; the tool was not executed: Review timed out. Do not retry the same action or attempt to fix the review configuration yourself; inform the user in your response that Auto Review failed and include this reason.',
-    });
-
-    const onUnderlyingApproved = vi.fn(() => undefined);
-    const yoloResult = resolveAutoReview(
-      makeContext('Bash'),
-      modeApproval,
-      { kind: 'ask', reason: { dangerous_command: 'rm -rf' }, resolveApproval: onUnderlyingApproved },
-      { decision: 'failed', reason: 'Review timed out.' },
-      'yolo',
-    ).result;
-
-    expect(yoloResult).toMatchObject({
-      kind: 'ask',
-      approvalDetail: { outcome: 'failed', reason: 'Review timed out.' },
-      reason: { dangerous_command: 'rm -rf', review_error: true },
-    });
-    if (yoloResult.kind !== 'ask') return;
-    expect(yoloResult.resolveApproval?.({ decision: 'approved' })).toBeUndefined();
-    expect(onUnderlyingApproved).toHaveBeenCalledWith({ decision: 'approved' });
-    expect(yoloResult.resolveApproval?.({ decision: 'rejected', feedback: 'Wait for service recovery.' })).toEqual({
-      kind: 'deny',
-      message:
-        'Tool "Bash" was not run because the user rejected the approval request (Auto Review failed: Review timed out.). Reason: Wait for service recovery.',
-    });
-    expect(yoloResult.resolveApproval?.({ decision: 'cancelled' })).toEqual({
-      kind: 'deny',
-      message:
-        'Tool "Bash" was not run because the approval request was cancelled (Auto Review failed: Review timed out.).',
-    });
-    expect(yoloResult.resolveNonInteractive?.()).toEqual(autoResult);
   });
 
   it('data() reflects the mode and rules services', () => {

@@ -114,6 +114,10 @@ describe('CacheHintDialogComponent', () => {
       expect(dialog.focused).toBe(true);
       expect(onSelect).not.toHaveBeenCalled();
 
+      vt.sendInput(`\u001B[<35;10;${String(newRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip)[newRow]).toContain('❯ Start a new session');
+
       vt.sendInput(`\u001B[<0;10;${String(newRow + 1)}M`);
       vt.sendInput(`\u001B[<32;10;${String(newRow + 2)}M`);
       vt.sendInput(`\u001B[<0;10;${String(newRow + 2)}m`);

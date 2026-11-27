@@ -1,7 +1,6 @@
 import {
   Key,
   matchesKey,
-  truncateToWidth,
   visibleWidth,
   type Component,
   type Focusable,
@@ -9,12 +8,10 @@ import {
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
+import { finishDialogLines } from '#/tui/components/chrome/dock-section';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
-import {
-  handleSearchableListMouse,
-  type MouseRowRegion,
-} from '#/tui/utils/mouse-hit-test';
+import { handleSearchableListMouse, type MouseRowRegion } from '#/tui/utils/mouse-hit-test';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface AlignedChoiceItem<TValue extends string> {
@@ -65,7 +62,6 @@ export abstract class AlignedChoiceDialogComponent<TValue extends string>
       focused: this.focused,
       shownAt: this.shownAt,
       regions: this.choiceRegions,
-      selectOnHover: false,
       activate: (chosen) => {
         this.onSelect(chosen.value);
       },
@@ -80,7 +76,7 @@ export abstract class AlignedChoiceDialogComponent<TValue extends string>
     this.choiceRegions = this.appendOptionRows(lines);
     lines.push('');
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
-    return lines.map((line) => truncateToWidth(line, width));
+    return finishDialogLines(lines, width, this.focused);
   }
 
   private appendOptionRows(lines: string[]): readonly MouseRowRegion[] {

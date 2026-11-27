@@ -13,7 +13,7 @@ import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { setMarkdownMermaidMode, setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
 import { applyTranscriptPresentation } from './config';
-import { isExperimentalFlagEnabled, setExperimentalFeatures } from './experimental-flags';
+import { setExperimentalFeatures } from './experimental-flags';
 
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
   const tuiConfig = await loadTuiConfig(undefined, (message) =>
@@ -38,9 +38,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   }
 
   const config = await host.harness.getConfig({ reload: true });
-  const worktreeWasEnabled = isExperimentalFlagEnabled('worktree');
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
-  if (isExperimentalFlagEnabled('worktree') !== worktreeWasEnabled) await host.refreshWorkLocation();
   if (session === undefined) {
     await host.refreshSkillCommands();
     await host.refreshPluginCommands();

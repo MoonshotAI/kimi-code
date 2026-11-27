@@ -8,7 +8,12 @@ import {
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
-import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
+import {
+  DockSection,
+  finishDialogLines,
+  type DockLayout,
+  type DockPart,
+} from '#/tui/components/chrome/dock-section';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import {
@@ -105,7 +110,6 @@ export class UndoSelectorComponent extends DockSection implements Focusable {
       focused: this.focused,
       shownAt: this.shownAt,
       regions: this.choiceRegions,
-      selectOnHover: false,
       activate: (selected) => {
         this.submitted = true;
         this.opts.onSelect(selected);
@@ -117,18 +121,24 @@ export class UndoSelectorComponent extends DockSection implements Focusable {
     switch (part) {
       case 'head': {
         const hintParts = ['↑↓ navigate', 'Enter select', 'Esc cancel'];
-        return [
-          currentTheme.fg('primary', '─'.repeat(width)),
-          currentTheme.boldFg('primary', ' Select messages to undo'),
-          currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
-          '',
-        ].map((line) => truncateToWidth(line, width));
+        return finishDialogLines(
+          [
+            currentTheme.fg('primary', '─'.repeat(width)),
+            currentTheme.boldFg('primary', ' Select messages to undo'),
+            currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
+            '',
+          ],
+          width,
+          this.focused,
+        );
       }
       case 'body':
-        return this.renderBody(width).map((line) => truncateToWidth(line, width));
+        return finishDialogLines(this.renderBody(width), width, this.focused);
       case 'foot':
-        return ['', currentTheme.fg('primary', '─'.repeat(width))].map((line) =>
-          truncateToWidth(line, width),
+        return finishDialogLines(
+          ['', currentTheme.fg('primary', '─'.repeat(width))],
+          width,
+          this.focused,
         );
     }
   }

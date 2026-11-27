@@ -18,7 +18,6 @@ import {
   countedAt,
   phaseAt,
   preparingAt,
-  reviewHintAt,
   settledAt,
   slowAt,
   slowSince,
@@ -35,7 +34,6 @@ export interface GroupViewInput {
   readonly members: NonEmpty<LogicalTranscriptItem>;
   readonly pending: readonly LogicalTranscriptItem[];
   readonly last: boolean;
-  readonly expanded?: boolean;
   readonly timeline: TimelineReader;
 }
 
@@ -293,43 +291,14 @@ function ownsLiveTurn(input: GroupViewInput, members: readonly MemberState[], no
   return hasThinking(members) && timeline.latestThinking(now) !== undefined;
 }
 
-function reviewingTail(
-  input: GroupViewInput,
-  members: readonly MemberState[],
-  now: Instant,
-): { readonly kind: RunningKind; readonly since: Instant } | undefined {
-  if (input.expanded === true && members.some((member) => reviewHintAt(member.facts, now))) {
-    return undefined;
-  }
-  const seen = new Set<string>();
-  const names: string[] = [];
-  let since = now;
-  for (const item of [...members.map((member) => member.item), ...input.pending]) {
-    if (item.callId === undefined || seen.has(item.callId)) continue;
-    const facts = input.timeline.call(item.callId);
-    if (facts === undefined || !reviewHintAt(facts, now)) continue;
-    seen.add(item.callId);
-    if (facts.start < since) since = facts.start;
-    const kind = kindOf(item.event);
-    names.push(kind === undefined ? item.label.subject ?? item.label.rowVerb : nameOf(kind, item));
-  }
-  const [first, ...rest] = names;
-  return first === undefined ? undefined : { kind: { verb: 'reviewing', names: [first, ...rest] }, since };
-}
-
 function deriveTail(input: GroupViewInput, members: readonly MemberState[], now: Instant): TailView {
   const { timeline } = input;
-  const review = reviewingTail(input, members, now);
-  const slowMembers = members.filter((member) => phaseAt(member.facts, now).kind !== 'reviewing' && slowAt(member.facts, now));
-  const [firstSlow, ...otherSlow] = bucketsOf(slowMembers);
-  const slowKinds = firstSlow === undefined ? [] : [runningKind(firstSlow), ...otherSlow.map(runningKind)];
-  const kinds = [...(review === undefined ? [] : [review.kind]), ...slowKinds];
-  const [first, ...rest] = kinds;
-  if (first !== undefined) {
+  const [firstSlow, ...otherSlow] = bucketsOf(members.filter((member) => slowAt(member.facts, now)));
+  if (firstSlow !== undefined) {
     return {
       kind: 'running',
-      kinds: [first, ...rest],
-      since: review !== undefined ? review.since : slowSince(slowMembers.map((member) => member.facts), now) ?? now,
+      kinds: [runningKind(firstSlow), ...otherSlow.map(runningKind)],
+      since: slowSince(members.map((member) => member.facts), now) ?? now,
     };
   }
   const thinking = hasThinking(members) ? timeline.latestThinking(now) : undefined;

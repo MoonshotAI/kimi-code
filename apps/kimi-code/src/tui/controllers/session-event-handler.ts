@@ -43,6 +43,9 @@ import {
 import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
+  PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE,
+  PROVIDER_FILTERED_TURN_STOPPED_NOTICE,
+  TURN_INTERRUPTED_BY_USER_NOTICE,
 } from '../constant/kimi-tui';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import {
@@ -336,8 +339,6 @@ export class SessionEventHandler {
       case 'tool.call.started': this.handleToolCall(event); break;
       case 'tool.call.delta': this.handleToolCallDelta(event); break;
       case 'tool.result': this.handleToolResult(event); break;
-      case 'auto_review.started': this.setToolAutoReviewing(event.toolCallId, event.toolName, true); break;
-      case 'auto_review.decision': this.setToolAutoReviewing(event.toolCallId, event.toolName, false); break;
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
@@ -448,10 +449,10 @@ export class SessionEventHandler {
     }
     this.subAgentEventHandler.dropForegroundOnlyActivityRecords();
     if (event.reason === 'failed' && event.error?.code === 'provider.filtered') {
-      this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
+      this.host.showStatus(PROVIDER_FILTERED_TURN_STOPPED_NOTICE, 'error');
     }
     if (event.reason === 'blocked') {
-      this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
+      this.host.showStatus(PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE, 'error');
     }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
@@ -610,7 +611,7 @@ export class SessionEventHandler {
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
       if (event.message === undefined || event.message === '') {
-        this.host.showStatus('Interrupted by user', 'error');
+        this.host.showStatus(TURN_INTERRUPTED_BY_USER_NOTICE, 'error');
       } else {
         this.host.showError(event.message);
       }
@@ -709,20 +710,6 @@ export class SessionEventHandler {
       pendingApproval: null,
       pendingQuestion: null,
     });
-  }
-
-  private setToolAutoReviewing(toolCallId: string, toolName: string, reviewing: boolean): void {
-    const { streamingUI } = this.host;
-    if (isToolCallId(toolCallId)) {
-      if (reviewing) {
-        streamingUI.timeline.reviewStarted(toolCallId, toolName);
-        if (streamingUI.getToolComponent(toolCallId) === undefined) {
-          streamingUI.accumulateToolCallDelta(toolCallId, toolName, undefined);
-        }
-      } else streamingUI.timeline.reviewEnded(toolCallId);
-    }
-    streamingUI.flushNow();
-    streamingUI.getToolComponent(toolCallId)?.setAutoReviewing(reviewing);
   }
 
   private handleToolCallDelta(event: ToolCallDeltaEvent): void {

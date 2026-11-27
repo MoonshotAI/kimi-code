@@ -20,7 +20,6 @@ import type { ILogService } from '#/_base/log/log';
 import type { IAgentStateService } from '#/agent/state/agentState';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { legacyToolDurationMs } from '#/tool/executor';
 import type { AgentLoopService, LoopInterruptReason } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
 import {
@@ -423,7 +422,7 @@ export class AgentTurnProjection {
             output: result?.output ?? toolMessage.content,
             isError: event.outcome.type === 'succeeded' ? result?.isError : true,
             note: result?.note,
-            durationMs: event.detached || snapshot === undefined ? undefined : legacyToolDurationMs(snapshot),
+            durationMs: event.detached ? undefined : prepared?.durationMs,
             stopTurn: stop?.stopTurn,
             stopTurnReason: stop?.stopTurnReason,
           },

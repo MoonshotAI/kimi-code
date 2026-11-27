@@ -4,7 +4,6 @@ import { ErrorCodes, KimiError, type WorktreeRemovalCheck } from '@moonshot-ai/k
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import {
   formatWorktreeExit,
   WorktreeExitController,
@@ -89,28 +88,15 @@ function makeHost() {
 describe('WorktreeExitController', () => {
   beforeEach(() => {
     vi.stubEnv('HOME', '/home/me');
-    setExperimentalFeatures([{ id: 'worktree', enabled: true }]);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
-    setExperimentalFeatures([]);
   });
 
   it('exits right away outside a Kimi worktree', async () => {
     const { host, controller } = makeHost();
     host.state.appState.worktree = undefined;
-
-    await controller.exit();
-
-    expect(host.stop).toHaveBeenCalledOnce();
-    expect(host.harness.inspectWorktreeRemoval).not.toHaveBeenCalled();
-    expect(controller.outcome).toBeUndefined();
-  });
-
-  it('exits right away while the worktree flag is off', async () => {
-    const { host, controller } = makeHost();
-    setExperimentalFeatures([]);
 
     await controller.exit();
 

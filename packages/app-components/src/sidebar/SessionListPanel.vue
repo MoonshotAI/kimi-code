@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import '../lib/anchored-menu.css';
 import type { PinnedEntry, WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import {
   copyTextToClipboard,
@@ -19,13 +20,12 @@ import {
   type SidebarViewMode,
   type WorkspaceSortMode,
 } from '@moonshot-ai/app-core/lib';
-import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core';
+import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core/composables';
 import { SESSIONS_EXPAND_BATCH, useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { hostsStore, sessionViewsStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
-import { useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import { track } from '@moonshot-ai/app-client/contracts';
-import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip, useOverlayScrollbar } from '@moonshot-ai/app-ui';
 import PinnedSessionList from '../PinnedSessionList.vue';
 import SessionRow from '../SessionRow.vue';
 import WorkspaceGroup from '../WorkspaceGroup.vue';
@@ -1334,8 +1334,6 @@ defineExpose({
 }
 
 </style>
-
-<style src="../lib/anchored-menu.css"></style>
 
 <style scoped src="../lib/locate-flash.css"></style>
 

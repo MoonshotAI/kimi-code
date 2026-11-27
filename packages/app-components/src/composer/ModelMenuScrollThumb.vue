@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { UseOverlayScrollbar } from '@moonshot-ai/app-client/composables';
+import type { UseOverlayScrollbar } from '@moonshot-ai/app-ui';
 
 defineProps<{
   scrollbar: Pick<

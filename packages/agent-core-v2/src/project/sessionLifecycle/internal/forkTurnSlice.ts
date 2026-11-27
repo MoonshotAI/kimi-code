@@ -12,6 +12,10 @@ import {
   promptMetadataTextFromText,
 } from '#/agent/prompt/promptMetadataText';
 import { matchWireTurnInputRecords } from '#/agent/replayBuilder/fold';
+import {
+  promptMetadataTextFromSkill,
+  skillCommandLabel,
+} from '#/features/skill/prompt';
 import type { WireRecord } from '#/wire/record';
 
 export interface MainTurnSlice {
@@ -395,10 +399,19 @@ function promptMetadataFromInput(
   content: unknown,
   origin: Record<string, unknown> | undefined,
 ): string | undefined {
+  const rawClientMetadata = origin?.['clientMetadata'];
+  const clientMetadata = Array.isArray(rawClientMetadata)
+    ? (rawClientMetadata as readonly Readonly<Record<string, unknown>>[])
+    : undefined;
   if (origin?.['kind'] === 'skill_activation') {
     const name = origin['skillName'];
     if (typeof name !== 'string') return undefined;
-    return promptMetadataTextFromContentParts([{ type: 'text', text: slashCommandText(`/${name}`, origin['skillArgs']) }], origin['clientMetadata']);
+    const args = origin['skillArgs'];
+    return promptMetadataTextFromSkill({
+      name,
+      args: typeof args === 'string' ? args : undefined,
+      clientMetadata,
+    });
   }
   if (origin?.['kind'] === 'plugin_command') {
     const pluginId = origin['pluginId'];
@@ -414,11 +427,15 @@ function promptMetadataFromInput(
     origin?.['kind'] === 'user' && Array.isArray(activations)
       ? (activations as BundledSkillActivation[])
       : [];
-  return promptMetadataTextFromContentParts(
+  const text = promptMetadataTextFromContentParts(
     annotateBundledSkillParts(content as readonly ContentPart[], bundled).filter(
       (part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part),
     ),
     origin?.['kind'] === 'user' ? origin['clientMetadata'] : undefined,
+  );
+  if (text !== undefined || bundled.length === 0) return text;
+  return promptMetadataTextFromText(
+    bundled.map((skill) => skillCommandLabel(skill.skillName, skill.skillArgs)).join(' '),
   );
 }
 

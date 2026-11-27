@@ -17,7 +17,7 @@ const apiMock = {
 
 setKimiClientDeps({ api: () => apiMock as never, t: (key) => key });
 
-import { DaemonApiError, DaemonNetworkError, type AppCapabilityStatus } from '@moonshot-ai/app-core';
+import { DaemonApiError, DaemonNetworkError, type AppCapabilityStatus } from '@moonshot-ai/app-core/api';
 import {
   usePlugins,
   __resetPluginsForTests,

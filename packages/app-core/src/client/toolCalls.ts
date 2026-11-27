@@ -311,11 +311,6 @@ export function toAgentMember(task: AppTask, recoveredCommand?: string): AgentMe
 }
 
 export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
-  const core = buildApprovalBlockBody(a);
-  return a.approvalDetail === undefined ? core : { ...core, review: a.approvalDetail };
-}
-
-function buildApprovalBlockBody(a: AppApprovalRequest): ApprovalBlock {
   const d = (a.display ?? {}) as Record<string, unknown>;
   const kind = typeof d['kind'] === 'string' ? d['kind'] : '';
   if (a.toolName === BROWSER_TOOL_NAME) {

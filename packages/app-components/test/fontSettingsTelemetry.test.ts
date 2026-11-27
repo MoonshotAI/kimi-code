@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { noopProductTracker, setProductTracker } from '@moonshot-ai/app-client/contracts';
-import { useFontPrefs, type FontTarget } from '@moonshot-ai/app-core';
+import { useFontPrefs, type FontTarget } from '@moonshot-ai/app-core/composables';
 
 vi.mock('../src/settings/FontSettingsPreview.vue', () => ({
   default: defineComponent({ render: () => h('figure') }),

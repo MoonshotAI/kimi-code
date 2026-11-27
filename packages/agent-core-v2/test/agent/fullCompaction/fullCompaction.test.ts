@@ -44,7 +44,7 @@ import {
   type TestkitAgentFixtures,
   type MockProviderResponse,
 } from '../../harness';
-import { batch, call, held, say, withUsage } from '@moonshot-ai/testkit/model';
+import { batch, call, held, say, think, withUsage } from '@moonshot-ai/testkit/model';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -1663,6 +1663,153 @@ describe('FullCompaction', () => {
       expect(compactionRequest.view.messages.slice(0, turnRequest.view.messages.length)).toEqual(
         turnRequest.view.messages,
       );
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  function findEventArgs(
+    events: ReturnType<TestAgentContext['newEvents']>,
+    type: string,
+  ): Record<string, unknown> | undefined {
+    const match = events.find((event) => {
+      if (typeof event !== 'object' || event === null) return false;
+      return (event as { readonly event?: unknown }).event === type;
+    });
+    return (match as { readonly args?: Record<string, unknown> } | undefined)?.args;
+  }
+
+  function expectedEstimatedCompactionTokensAfter(
+    ctx: TestAgentContext,
+    contextSummary: string,
+  ): number {
+    const tokenCounting = ctx.get(ISessionTokenCountingService);
+    const requestOverhead = tokenCounting.requestSize({
+      systemPrompt: ctx.context.getSystemPrompt(),
+      tools: ctx
+        .get(IAgentToolSelectService)
+        .defaultTools()
+        .filter((tool) => tool.deferred !== true),
+      messages: [],
+    });
+    const nonSummaryMessages = ctx.context
+      .history()
+      .filter((message) => message.origin?.kind !== 'compaction_summary');
+    return (
+      requestOverhead +
+      tokenCounting.estimateText(contextSummary) +
+      tokenCounting.estimateMessages(nonSummaryMessages)
+    );
+  }
+
+  testkitTest.for([
+    {
+      label: 'discarded think blocks with thinking enabled',
+      thinkingLevel: 'high' as const,
+      expectedEffort: 'on',
+      step: () =>
+        withUsage(
+          { input: 50_000, output: 8_000 },
+          think('Extended reasoning discarded from the compacted context.', say('Concise summary.')),
+        ),
+    },
+    {
+      label: 'hidden reasoning output tokens when thinking is enabled without think blocks',
+      thinkingLevel: 'high' as const,
+      expectedEffort: 'on',
+      step: () => withUsage({ input: 50_000, output: 8_000 }, say('Concise summary.')),
+    },
+    {
+      label: 'discarded think blocks even when thinking level is off',
+      thinkingLevel: 'off' as const,
+      expectedEffort: 'off',
+      step: () =>
+        withUsage(
+          { input: 50_000, output: 8_000 },
+          think('Unsolicited gateway reasoning block.', say('Concise summary.')),
+        ),
+    },
+  ])(
+    'excludes reasoning output tokens from tokensAfter ($label)',
+    async ({ label: _label, thinkingLevel, expectedEffort, step }, { agent: ctx, model }) => {
+      ctx.configure({ modelCapabilities: CATALOGUED_MODEL_CAPABILITIES });
+      if (thinkingLevel !== 'off') {
+        ctx.get(IAgentLoopService).update({ thinkingLevel });
+      }
+      const track2 = vi.spyOn(ctx.get(ITelemetryService), 'track2');
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20_000);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 50_000);
+
+      model.lane('compaction').script(step());
+      const compacted = ctx.once('full_compaction.complete');
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await compacted;
+      await completed;
+
+      const events = ctx.newEvents();
+      const completedArgs = findEventArgs(events, 'compaction.completed');
+      const applyArgs = findEventArgs(events, 'context.apply_compaction');
+      const tokensAfter = (completedArgs?.['result'] as { tokensAfter: number } | undefined)?.tokensAfter;
+      const contextSummary = applyArgs?.['contextSummary'] as string;
+      const expectedTokensAfter = expectedEstimatedCompactionTokensAfter(ctx, contextSummary);
+      expect(tokensAfter).toBe(expectedTokensAfter);
+      expect(tokensAfter).toBe(ctx.tokenCounting.get().size);
+      expect(applyArgs?.['summaryOutputTokens']).toBeUndefined();
+      expect(track2).toHaveBeenCalledWith(
+        'compaction_finished',
+        expect.objectContaining({
+          tokens_after: expectedTokensAfter,
+          output_tokens: 8_000,
+          thinking_effort: expectedEffort,
+        }),
+      );
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  testkitTest(
+    'estimates summary text when thinking is off and provider omits usage',
+    async ({ agent: ctx, model }) => {
+      ctx.configure({ modelCapabilities: CATALOGUED_MODEL_CAPABILITIES });
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20_000);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 50_000);
+
+      model.lane('compaction').script(withUsage(null, say('Concise summary.')));
+      const compacted = ctx.once('full_compaction.complete');
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await compacted;
+      await completed;
+
+      const events = ctx.newEvents();
+      const completedArgs = findEventArgs(events, 'compaction.completed');
+      const applyArgs = findEventArgs(events, 'context.apply_compaction');
+      const tokensAfter = (completedArgs?.['result'] as { tokensAfter: number } | undefined)?.tokensAfter;
+      const contextSummary = applyArgs?.['contextSummary'] as string;
+      expect(tokensAfter).toBe(expectedEstimatedCompactionTokensAfter(ctx, contextSummary));
+      expect(applyArgs?.['summaryOutputTokens']).toBeUndefined();
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  testkitTest(
+    'uses measured summary output tokens when thinking is off and response has no think blocks',
+    async ({ agent: ctx, model }) => {
+      ctx.configure({ modelCapabilities: CATALOGUED_MODEL_CAPABILITIES });
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20_000);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 50_000);
+
+      model.lane('compaction').script(
+        withUsage({ input: 50_000, output: 600 }, say('Concise summary.')),
+      );
+      const compacted = ctx.once('full_compaction.complete');
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await compacted;
+      await completed;
+
+      const applyArgs = findEventArgs(ctx.newEvents(), 'context.apply_compaction');
+      expect(applyArgs?.['summaryOutputTokens']).toBeGreaterThanOrEqual(600);
       await ctx.expectResumeMatches();
     },
   );

@@ -57,7 +57,7 @@ export class GitService implements IGitService {
     const dirty = porc.stdout
       .split('\0')
       .some((record) => record.length > 0 && !record.startsWith('## '));
-    if (dirty && options.includeStats !== false) {
+    if (dirty) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {
         const diffArgs = ['diff', '--no-color', '--numstat', 'HEAD', '--'];

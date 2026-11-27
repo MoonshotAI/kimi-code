@@ -1,6 +1,6 @@
 
 import { ref, shallowRef } from 'vue';
-import type { RestAbortInfo, RestFailureInfo, RestRequestInfo, RestResponseInfo } from '@moonshot-ai/app-core';
+import type { RestAbortInfo, RestFailureInfo, RestRequestInfo, RestResponseInfo } from '@moonshot-ai/app-core/contracts';
 import { logError } from '@moonshot-ai/app-core/lib';
 import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 

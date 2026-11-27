@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({ client: null as unknown, archive: vi.fn(), rel
 vi.mock('vue-i18n',()=>({useI18n:()=>({t:(k:string)=>k})}));
 vi.mock('../../src/renderer/lib/browserOverlayMenu',()=>({registerBrowserOverlayMenu:(r: BrowserOverlayMenuRegistration)=>{mocks.registration=r;return {available:true,open:ref(false),close(){},refresh(){}}}}));
 vi.mock('@moonshot-ai/app-core/lib',async(importOriginal)=>({sessionLink:(await importOriginal<typeof import('@moonshot-ai/app-core/lib')>()).sessionLink,copyTextToClipboard:vi.fn(),sessionLinksSupported:()=>mocks.sessionLinks,isMacosDesktop:true,safeGetJson:vi.fn(()=>null),safeSetJson:vi.fn(),STORAGE_KEYS:{shortcutOverrides:'kimi.shortcutOverrides'}}));
-vi.mock('@moonshot-ai/app-core',()=>({useSidebarTabs:()=>({sidebarTabs:ref(false)})}));
+vi.mock('@moonshot-ai/app-core/composables',()=>({useSidebarTabs:()=>({sidebarTabs:ref(false)})}));
 vi.mock('@moonshot-ai/app-components',()=>({OpenInMenu:{}}));
 vi.mock('@moonshot-ai/app-client/contracts',()=>({track(){}}));
 vi.mock('@moonshot-ai/app-client/client',()=>({useKimiWebClient:()=>mocks.client}));

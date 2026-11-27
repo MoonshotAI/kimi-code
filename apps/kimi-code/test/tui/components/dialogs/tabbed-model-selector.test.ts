@@ -1,5 +1,5 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
-import { TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { ScrollView, Text, TuiAltScreen, VStack } from '@moonshot-ai/pi-tui';
 import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -231,6 +231,68 @@ describe('TabbedModelSelectorComponent', () => {
       vt.sendInput(`\u001B[<0;10;${String(gptRow + 1)}m`);
       await vt.waitForRender();
       expect(onSelect).toHaveBeenCalledExactlyOnceWith({ alias: 'gpt', thinking: 'on' });
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('keeps bottom-anchored provider tab strip stationary across uneven tabs and steps tabs on wheel', async () => {
+    let now = 60_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const component = new TabbedModelSelectorComponent({
+      models: {
+        k1: model('Kimi One', 'managed:kimi-code'),
+        k2: model('Kimi Two', 'managed:kimi-code'),
+        k3: model('Kimi Three', 'managed:kimi-code'),
+        k4: model('Kimi Four', 'managed:kimi-code'),
+        k5: model('Kimi Five', 'managed:kimi-code'),
+        gpt: model('GPT-5', 'openai'),
+      },
+      currentValue: 'k1',
+      currentThinkingEffort: 'on',
+      layout: { maxBodyRows: 5 },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const transcript = new ScrollView(new Text('msg-1\nmsg-2\nmsg-3', 0, 0), {
+      follow: 'end',
+      primary: true,
+    });
+    const vt = new VirtualTerminal(90, 20);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(
+      new VStack([
+        { component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+        { component: component, shrink: 1, minSize: 3 },
+      ]),
+    );
+    ui.start();
+    ui.setFocus(component);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      const before = vt.getViewport().map(strip);
+      const tabRowBefore = before.findIndex(
+        (line) => line.includes('All') && line.includes('openai'),
+      );
+      expect(tabRowBefore).toBeGreaterThan(0);
+      const openaiCol = before[tabRowBefore]!.indexOf('openai') + 2;
+
+      vt.sendInput(`\u001B[<0;${String(openaiCol)};${String(tabRowBefore + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(openaiCol)};${String(tabRowBefore + 1)}m`);
+      await vt.waitForRender();
+      const onOpenai = vt.getViewport().map(strip);
+      const tabRowAfter = onOpenai.findIndex(
+        (line) => line.includes('All') && line.includes('openai'),
+      );
+      expect(tabRowAfter).toBe(tabRowBefore);
+      expect(onOpenai.join('\n')).toContain('GPT-5');
+      expect(onOpenai.join('\n')).not.toContain('Kimi One');
+
+      vt.sendInput(`\u001B[<65;${String(openaiCol)};${String(tabRowBefore + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('Kimi One');
     } finally {
       ui.stop();
       vi.restoreAllMocks();

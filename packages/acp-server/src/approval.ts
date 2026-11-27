@@ -4,10 +4,9 @@ import type {
   ToolCallContent,
   ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
-import {
-  formatApprovalReviewTitle,
-  type SessionApprovalRequest as ApprovalRequest,
-  type SessionApprovalResponse as ApprovalResponse,
+import type {
+  SessionApprovalRequest as ApprovalRequest,
+  SessionApprovalResponse as ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2';
 
 import { displayBlockToAcpContent } from './convert';
@@ -126,13 +125,9 @@ export function buildPermissionToolCallUpdate(req: ApprovalRequest): ToolCallUpd
       content.push({ type: 'content', content: { type: 'text', text: `Working directory\n${display.cwd}` } });
     }
   }
-  const review = req.approvalDetail;
-  const prompt = review === undefined
-    ? `Requesting approval to ${req.action}`
-    : `${formatApprovalReviewTitle(review)}: ${review.reason}\n\nRequesting approval to ${req.action}`;
   content.push({
     type: 'content',
-    content: { type: 'text', text: prompt },
+    content: { type: 'text', text: `Requesting approval to ${req.action}` },
   });
   const locations = toolCallLocations(req.toolName, undefined, display);
   return {

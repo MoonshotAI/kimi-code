@@ -27,14 +27,22 @@ import { currentTheme } from '#/tui/theme';
 import {
   focusOnUnfocusedMouse,
   handleActionBarMouse,
-  handleSelectableListMouse,
+  rowIndexAt,
   type MouseActionSpan,
   type MouseRowRegion,
 } from '#/tui/utils/mouse-hit-test';
 import { printableChar } from '#/tui/utils/printable-key';
 import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
-import { fitViewerLine as fitExactly } from './framed-scroll-viewer';
+import { isSettlingClick } from '#/tui/utils/terminal-focus';
+import {
+  fitViewerLine as fitExactly,
+  formatActionHint,
+  ScrollFrameBox,
+  type ActionHintState,
+  type ViewerFooterItem,
+} from './framed-scroll-viewer';
+import { paintHoverRow } from './hover-row';
 import { modelDisplayName } from './model-selector';
 import { STATUS_LABEL, statusColor } from './task-output-viewer';
 
@@ -153,6 +161,12 @@ class SplitColumn extends VStack {
   }
 }
 
+type TasksHoverTarget =
+  | { readonly zone: 'none' }
+  | { readonly zone: 'header'; readonly index: number }
+  | { readonly zone: 'footer'; readonly index: number }
+  | { readonly zone: 'list'; readonly index: number };
+
 export class TasksBrowserApp extends VStack implements Focusable {
   focused = false;
   capturesViewportInput = true;
@@ -167,10 +181,11 @@ export class TasksBrowserApp extends VStack implements Focusable {
   private pendingStopTaskId: string | undefined;
   private pendingStopTimer: NodeJS.Timeout | undefined;
   private readonly shownAt = Date.now();
+  private hover: TasksHoverTarget = { zone: 'none' };
 
-  private readonly leftBox: Box;
-  private readonly detailBox: Box;
-  private readonly previewBox: Box;
+  private readonly leftBox: ScrollFrameBox;
+  private readonly detailBox: ScrollFrameBox;
+  private readonly previewBox: ScrollFrameBox;
   private readonly listScrollView: OverflowScrollView;
   private readonly detailScrollView: OverflowScrollView;
   private readonly previewScrollView: OverflowScrollView;
@@ -201,6 +216,8 @@ export class TasksBrowserApp extends VStack implements Focusable {
       invalidate: () => {},
     };
 
+    const clearHover = (): boolean => this.setHover({ zone: 'none' });
+
     const headerView = createInteractiveChildView(
       this,
       (width) => {
@@ -220,6 +237,8 @@ export class TasksBrowserApp extends VStack implements Focusable {
           focused: this.focused,
           shownAt: this.shownAt,
           spans: this.headerSpans,
+          onHover: (index) =>
+            this.setHover(index === undefined ? { zone: 'none' } : { zone: 'header', index }),
         }),
     );
 
@@ -238,12 +257,11 @@ export class TasksBrowserApp extends VStack implements Focusable {
         this.ensureSelectedTaskVisibleInScrollView();
       },
     });
-    this.leftBox = new Box({
-      border: true,
+    this.leftBox = new ScrollFrameBox(this.listScrollView, {
       borderColor: paintPrimary,
       title: formatFrameTitle(`Tasks [${props.filter}]`),
+      onPointerEnter: clearHover,
     });
-    this.leftBox.addChild(this.listScrollView);
 
     const detailBodyView: Component = {
       render: (innerWidth) =>
@@ -251,12 +269,11 @@ export class TasksBrowserApp extends VStack implements Focusable {
       invalidate: () => {},
     };
     this.detailScrollView = new OverflowScrollView(detailBodyView);
-    this.detailBox = new Box({
-      border: true,
+    this.detailBox = new ScrollFrameBox(this.detailScrollView, {
       borderColor: paintPrimary,
       title: formatFrameTitle('Detail'),
+      onPointerEnter: clearHover,
     });
-    this.detailBox.addChild(this.detailScrollView);
 
     const previewBodyView: Component = {
       render: (innerWidth) =>
@@ -264,12 +281,11 @@ export class TasksBrowserApp extends VStack implements Focusable {
       invalidate: () => {},
     };
     this.previewScrollView = new OverflowScrollView(previewBodyView, { follow: 'end' });
-    this.previewBox = new Box({
-      border: true,
+    this.previewBox = new ScrollFrameBox(this.previewScrollView, {
       borderColor: paintPrimary,
       title: formatFrameTitle('Preview Output'),
+      onPointerEnter: clearHover,
     });
-    this.previewBox.addChild(this.previewScrollView);
 
     this.rightStack = new SplitColumn();
     this.rightStack.addChild(this.detailBox, { basis: 10, shrink: 1, minSize: 3 });
@@ -288,6 +304,8 @@ export class TasksBrowserApp extends VStack implements Focusable {
           focused: this.focused,
           shownAt: this.shownAt,
           spans: this.footerSpans,
+          onHover: (index) =>
+            this.setHover(index === undefined ? { zone: 'none' } : { zone: 'footer', index }),
         }),
     );
 
@@ -306,6 +324,9 @@ export class TasksBrowserApp extends VStack implements Focusable {
       .filter((task) => isVisibleTask(task, next.filter))
       .toSorted(compareTasks);
     this.syncSelectionFromProps();
+    if (this.hover.zone === 'list' && this.hover.index >= this.sortedVisible.length) {
+      this.hover = { zone: 'none' };
+    }
     const nextTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
     this.displayedTaskId = nextTaskId;
     if (nextTaskId !== prevTaskId) {
@@ -323,6 +344,18 @@ export class TasksBrowserApp extends VStack implements Focusable {
       if (task === undefined || isTerminal(task.status)) this.clearPendingStop();
     }
     this.invalidate();
+  }
+
+  private setHover(next: TasksHoverTarget): boolean {
+    if (
+      this.hover.zone === next.zone &&
+      (next.zone === 'none' || (this.hover.zone !== 'none' && this.hover.index === next.index))
+    ) {
+      return false;
+    }
+    this.hover = next;
+    this.invalidate();
+    return true;
   }
 
   private syncSelectionFromProps(): void {
@@ -345,6 +378,9 @@ export class TasksBrowserApp extends VStack implements Focusable {
 
   private clearPendingStop(): void {
     this.pendingStopTaskId = undefined;
+    if (this.hover.zone === 'footer' || this.hover.zone === 'header') {
+      this.hover = { zone: 'none' };
+    }
     if (this.pendingStopTimer !== undefined) {
       clearTimeout(this.pendingStopTimer);
       this.pendingStopTimer = undefined;
@@ -368,6 +404,9 @@ export class TasksBrowserApp extends VStack implements Focusable {
       return;
     }
     this.pendingStopTaskId = task.taskId;
+    if (this.hover.zone === 'footer' || this.hover.zone === 'header') {
+      this.hover = { zone: 'none' };
+    }
     this.pendingStopTimer = setTimeout(() => {
       this.clearPendingStop();
       this.invalidate();
@@ -458,33 +497,41 @@ export class TasksBrowserApp extends VStack implements Focusable {
 
   private handleListMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (!this.focused) return focusOnUnfocusedMouse(event);
-    if (this.pendingStopTaskId !== undefined) return undefined;
+    if (event.type === 'wheel') return undefined;
+    if (this.pendingStopTaskId !== undefined) {
+      if (event.type === 'move') {
+        return { handled: true, render: this.setHover({ zone: 'none' }) };
+      }
+      return undefined;
+    }
 
-    let wasAlreadySelected = false;
-    return handleSelectableListMouse({
-      event,
-      focused: this.focused,
-      shownAt: this.shownAt,
-      regions: this.taskRegions,
-      selectOnHover: false,
-      select: (index) => {
-        wasAlreadySelected = index === this.selectedIndex;
-        this.selectedIndex = index;
-        return !wasAlreadySelected;
-      },
-      activate: (index) => {
-        const task = this.sortedVisible[index];
-        if (task === undefined) return;
-        if (wasAlreadySelected) {
-          this.props.onOpenOutput(task.taskId);
-          return;
-        }
+    const index = rowIndexAt(this.taskRegions, event.y);
+    if (event.type === 'move') {
+      const next: TasksHoverTarget =
+        index === undefined ? { zone: 'none' } : { zone: 'list', index };
+      return { handled: true, render: this.setHover(next) };
+    }
+    if (event.button !== 'left' || index === undefined) return undefined;
+    if (event.type === 'press') {
+      return { handled: true, render: this.setHover({ zone: 'list', index }) };
+    }
+    if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
+      const task = this.sortedVisible[index];
+      if (task === undefined) return { handled: true };
+      const changedSelection = index !== this.selectedIndex || task.taskId !== this.displayedTaskId;
+      this.selectedIndex = index;
+      if (changedSelection) {
         this.displayedTaskId = task.taskId;
         this.detailScrollView.scrollToStart();
         this.previewScrollView.scrollToEnd();
         this.props.onSelect(task.taskId);
-      },
-    });
+      }
+      if ((event.clickCount ?? 1) >= 2) {
+        this.props.onOpenOutput(task.taskId);
+      }
+      return { handled: true, render: true };
+    }
+    return { handled: true };
   }
 
   override render(width: number): string[] {
@@ -515,22 +562,28 @@ export class TasksBrowserApp extends VStack implements Focusable {
 
   private renderHeader(width: number): string {
     const title = currentTheme.boldFg('primary', ' TASK BROWSER ');
-    const filterRaw = ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `;
-    const filterText = currentTheme.fg('textMuted', filterRaw);
+    const filterLabel = `filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'}`;
     const titleWidth = visibleWidth(title);
-    const filterWidth = visibleWidth(filterRaw);
-    this.headerSpans =
-      this.pendingStopTaskId === undefined && titleWidth < width
-        ? [
-            {
-              start: titleWidth,
-              end: Math.min(width, titleWidth + filterWidth),
-              onClick: () => {
-                this.props.onToggleFilter();
-              },
+    const filterWidth = visibleWidth(` ${filterLabel} `);
+    const filterInteractive = this.pendingStopTaskId === undefined && titleWidth < width;
+    const filterHovered = filterInteractive && this.hover.zone === 'header' && this.hover.index === 0;
+    const filterStyled = !filterInteractive
+      ? currentTheme.fg('textMuted', filterLabel)
+      : filterHovered
+        ? currentTheme.underline(currentTheme.boldFg('textStrong', filterLabel))
+        : currentTheme.fg('text', filterLabel);
+    const filterText = ` ${filterStyled} `;
+    this.headerSpans = filterInteractive
+      ? [
+          {
+            start: titleWidth + 1,
+            end: Math.min(width, titleWidth + filterWidth - 1),
+            onClick: () => {
+              this.props.onToggleFilter();
             },
-          ]
-        : [];
+          },
+        ]
+      : [];
 
     const visible = this.sortedVisible;
     const counts = countByStatus(visible);
@@ -556,13 +609,11 @@ export class TasksBrowserApp extends VStack implements Focusable {
     if (this.pendingStopTaskId !== undefined) {
       const warn = (text: string): string => currentTheme.boldFg('warning', text);
       const prefix = ` ${warn('Stop')} ${currentTheme.fg('text', this.pendingStopTaskId)}? `;
-      const confirmItem = `${key('Y')} ${dim('confirm')}`;
-      const cancelItem = `${key('N')}${dim('/')}${key('esc')} ${dim('cancel')}`;
       const prefixW = visibleWidth(prefix);
-      const confirmW = visibleWidth(confirmItem);
-      const cancelStart = prefixW + confirmW + 2;
-      const cancelW = visibleWidth(cancelItem);
       const spans: MouseActionSpan[] = [];
+      const confirmHovered = this.hover.zone === 'footer' && this.hover.index === 0;
+      const confirmItem = formatActionHint('Y', 'confirm', confirmHovered ? 'hovered' : 'clickable');
+      const confirmW = visibleWidth(confirmItem);
       if (prefixW < width) {
         spans.push({
           start: prefixW,
@@ -572,6 +623,13 @@ export class TasksBrowserApp extends VStack implements Focusable {
           },
         });
       }
+      const cancelStart = prefixW + confirmW + 2;
+      const cancelHovered = this.hover.zone === 'footer' && this.hover.index === spans.length;
+      const cancelBase = `${key('N')}${dim('/')}${key('esc')} ${
+        cancelHovered ? currentTheme.boldFg('textStrong', 'cancel') : currentTheme.fg('text', 'cancel')
+      }`;
+      const cancelItem = cancelHovered ? currentTheme.underline(cancelBase) : cancelBase;
+      const cancelW = visibleWidth(cancelItem);
       if (cancelStart < width) {
         spans.push({
           start: cancelStart,
@@ -587,23 +645,25 @@ export class TasksBrowserApp extends VStack implements Focusable {
       return fitExactly(`${prefix}${confirmItem}  ${cancelItem} `, width);
     }
 
-    const items: Array<{ readonly text: string; readonly onClick?: () => void }> = [
-      { text: `${key('↑↓')} ${dim('select')}` },
+    const items: ViewerFooterItem[] = [
+      { keys: '↑↓', label: 'select' },
       {
-        text: `${key('Enter/O')} ${dim('output')}`,
+        keys: 'Enter/O',
+        label: 'output',
         onClick: () => {
           const selected = this.sortedVisible[this.selectedIndex];
           if (selected) this.props.onOpenOutput(selected.taskId);
         },
       },
-      { text: `${key('R')} ${dim('refresh')}`, onClick: () => this.props.onRefresh() },
-      { text: `${key('Tab')} ${dim('filter')}`, onClick: () => this.props.onToggleFilter() },
-      { text: `${key('Q/Esc')} ${dim('cancel')}`, onClick: () => this.props.onCancel() },
+      { keys: 'R', label: 'refresh', onClick: () => this.props.onRefresh() },
+      { keys: 'Tab', label: 'filter', onClick: () => this.props.onToggleFilter() },
+      { keys: 'Q/Esc', label: 'cancel', onClick: () => this.props.onCancel() },
     ];
     const selectedTask = this.sortedVisible[this.selectedIndex];
     if (selectedTask !== undefined && selectedTask.detached !== false) {
       items.splice(2, 0, {
-        text: `${key('S')} ${dim('stop')}`,
+        keys: 'S',
+        label: 'stop',
         onClick: () => this.requestStopSelected(),
       });
     }
@@ -612,7 +672,15 @@ export class TasksBrowserApp extends VStack implements Focusable {
     let col = 1;
     const renderedParts: string[] = [];
     for (const item of items) {
-      const itemW = visibleWidth(item.text);
+      const spanIndex = spans.length;
+      const state: ActionHintState =
+        item.onClick === undefined
+          ? 'passive'
+          : this.hover.zone === 'footer' && this.hover.index === spanIndex
+            ? 'hovered'
+            : 'clickable';
+      const text = formatActionHint(item.keys, item.label, state);
+      const itemW = visibleWidth(text);
       if (item.onClick !== undefined && col < width) {
         spans.push({
           start: col,
@@ -620,7 +688,7 @@ export class TasksBrowserApp extends VStack implements Focusable {
           onClick: item.onClick,
         });
       }
-      renderedParts.push(item.text);
+      renderedParts.push(text);
       col += itemW + 2;
     }
     this.footerSpans = spans;
@@ -678,12 +746,22 @@ export class TasksBrowserApp extends VStack implements Focusable {
 
     const allLines: string[] = [];
     const regions: MouseRowRegion[] = [];
+    const hoverBg = this.focused ? currentTheme.hoverBackground() : undefined;
     for (const [index, task] of this.sortedVisible.entries()) {
       const startRow = allLines.length;
-      allLines.push(this.renderListRow(task, index === this.selectedIndex, innerWidth));
+      const hovered = this.hover.zone === 'list' && this.hover.index === index;
+      const rowLine = this.renderListRow(task, index === this.selectedIndex, hovered, innerWidth);
+      allLines.push(
+        hovered && hoverBg !== undefined ? paintHoverRow(rowLine, innerWidth, hoverBg) : rowLine,
+      );
       const modelText = this.agentModelText(task);
       if (modelText !== undefined) {
-        allLines.push(fitExactly(this.renderModelRow(modelText, innerWidth), innerWidth));
+        const modelLine = fitExactly(this.renderModelRow(modelText, innerWidth), innerWidth);
+        allLines.push(
+          hovered && hoverBg !== undefined
+            ? paintHoverRow(modelLine, innerWidth, hoverBg)
+            : modelLine,
+        );
       }
       regions.push({ start: startRow, end: allLines.length, index });
     }
@@ -706,7 +784,12 @@ export class TasksBrowserApp extends VStack implements Focusable {
     return this.renderFrame(title, lines, width, height);
   }
 
-  private renderListRow(task: BackgroundTaskInfo, selected: boolean, innerWidth: number): string {
+  private renderListRow(
+    task: BackgroundTaskInfo,
+    selected: boolean,
+    hovered: boolean,
+    innerWidth: number,
+  ): string {
     const pointer = selected ? `${SELECT_POINTER} ` : '  ';
     const pointerStyled = currentTheme.fg(selected ? 'primary' : 'textDim', pointer);
 
@@ -719,7 +802,9 @@ export class TasksBrowserApp extends VStack implements Focusable {
           : 'accent';
     const idText = selected
       ? currentTheme.boldFg(idColor, task.taskId)
-      : currentTheme.fg(idColor, task.taskId);
+      : hovered
+        ? currentTheme.underline(currentTheme.boldFg(idColor, task.taskId))
+        : currentTheme.fg(idColor, task.taskId);
     const idPad = ' '.repeat(Math.max(0, 17 - task.taskId.length));
 
     const status = STATUS_LABEL[task.status];
@@ -735,7 +820,10 @@ export class TasksBrowserApp extends VStack implements Focusable {
       (task.kind === 'process' ? singleLine(task.command) : '') ||
       '(no description)';
     const desc = truncateToWidth(description, descBudget, ELLIPSIS);
-    return fitExactly(`${prefix} ${currentTheme.fg('text', desc)}`, innerWidth);
+    return fitExactly(
+      `${prefix} ${currentTheme.fg(hovered && !selected ? 'textStrong' : 'text', desc)}`,
+      innerWidth,
+    );
   }
 
   private agentModelText(task: BackgroundTaskInfo): string | undefined {

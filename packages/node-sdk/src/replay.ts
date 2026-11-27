@@ -1,16 +1,15 @@
 import type {
+  AgentReplayRecordPayload as V2AgentReplayRecordPayload,
   ModelCapability,
   SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import type { LlmModelSpec } from '@moonshot-ai/core/llm/request';
-import type { GoalChange, GoalSnapshot } from '@moonshot-ai/agent-core-v2/features/goal/types';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import type { CompactionResult } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 
 import type { AgentContextData, ContextMessage } from '#/context';
 import type { ProviderConfig } from '#/model-provider';
-import type { PermissionApprovalResultRecord, PermissionData, PermissionMode } from '#/permission';
+import type { PermissionData } from '#/permission';
 import type { BackgroundTaskInfo } from '#/task';
 import type { ToolInfo } from '#/tool';
 
@@ -61,16 +60,8 @@ export interface SessionMeta {
 
 export type AgentReplayRecordPayload =
   | { type: 'message'; message: ContextMessage; turnId?: number }
-  | { type: 'compaction'; result?: CompactionResult | 'cancelled'; instruction?: string }
-  | {
-      type: 'goal_updated';
-      snapshot: GoalSnapshot;
-      change: GoalChange | { readonly kind: 'created' };
-    }
-  | { type: 'plan_updated'; enabled: boolean }
   | { type: 'config_updated'; config: AgentConfigUpdateData }
-  | { type: 'permission_updated'; mode: PermissionMode }
-  | { type: 'approval_result'; record: PermissionApprovalResultRecord };
+  | Exclude<V2AgentReplayRecordPayload, { type: 'message' | 'config_updated' }>;
 
 export type AgentReplayRecord = { readonly time: number } & AgentReplayRecordPayload;
 

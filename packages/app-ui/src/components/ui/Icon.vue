@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue';
-import { IconResolverKey, SIZE_PX, type IconSize } from '../../icons';
+import { IconResolverKey, SIZE_PX, type IconSize } from '../../iconResolver';
 
 const props = withDefaults(
   defineProps<{

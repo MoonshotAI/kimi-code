@@ -6,7 +6,6 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { sameDir } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEnvironmentService } from '#/app/environment/environment';
-import { IFlagService } from '#/app/flag/flag';
 import { IProjectService } from '#/app/project/project';
 import { LifecycleScope } from '#/app/scopes';
 import { ISessionPresence } from '#/app/sessionPresence/sessionPresence';
@@ -18,7 +17,6 @@ import type { IHostProcess } from '#/os/interface/hostProcess';
 
 import {
   IWorktreeService,
-  WORKTREE_FLAG_ID,
   type CreateWorktreeInput,
   type CreateWorktreeOptions,
   type CreatedWorktree,
@@ -31,7 +29,6 @@ import {
   type WorktreeLocation,
   type WorktreeRemovalCheck,
 } from './worktree';
-import { WORKTREE_FLAG_ENV } from './flag';
 import { canonicalPath, resolveWorktreeCheckout, worktreesDirFor } from './worktreeCheckout';
 import { copyIncludedFiles } from './worktreeInclude';
 import { generateWorktreeName, normalizeWorktreeName } from './worktreeName';
@@ -100,7 +97,6 @@ export class WorktreeService implements IWorktreeService {
     @IEnvironmentService private readonly environments: IEnvironmentService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IFlagService private readonly flags: IFlagService,
     @IProjectService private readonly projects: IProjectService,
     @ISessionPresence private readonly presence: ISessionPresence,
   ) {}
@@ -115,7 +111,7 @@ export class WorktreeService implements IWorktreeService {
       this.projects.peekImplicit(cwd),
     ]);
     const projectRoot = project.root;
-    if (!this.flags.enabled(WORKTREE_FLAG_ID) || checkout?.kind !== 'managed') {
+    if (checkout?.kind !== 'managed') {
       return { cwd, projectRoot, isGitRepo: checkout !== undefined };
     }
     return {
@@ -211,7 +207,6 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async remove(input: RemoveWorktreeInput): Promise<void> {
-    this.requireEnabled();
     const repo = await this.readRepository(input.repoRoot, input.repoRoot);
     const target = await this.findLinkedEntry(repo, input.path);
     const check = await this.measureRemoval(repo, target, input.deleteBranch, input.excludeSessionId);
@@ -259,18 +254,7 @@ export class WorktreeService implements IWorktreeService {
     }
   }
 
-  private requireEnabled(): void {
-    if (!this.flags.enabled(WORKTREE_FLAG_ID)) {
-      throw new Error2(
-        ErrorCodes.WORKTREE_DISABLED,
-        `Worktrees are experimental; set ${WORKTREE_FLAG_ENV}=1 or enable "${WORKTREE_FLAG_ID}" under [experimental] in config.toml.`,
-        { details: { flag: WORKTREE_FLAG_ID, env: WORKTREE_FLAG_ENV } },
-      );
-    }
-  }
-
   private async planCreation(input: CreateWorktreeInput, signal: AbortSignal | undefined): Promise<CreationPlan> {
-    this.requireEnabled();
     const checkout = await this.resolveCheckout(input.cwd);
     if (checkout === undefined) throw notGitRepo(input.cwd);
     const repo = await this.readRepository(checkout.checkoutRoot, checkout.repoRoot, signal);

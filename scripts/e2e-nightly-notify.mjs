@@ -4,7 +4,10 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import { commitsBetween, lastPassingRun } from './main-history.mjs';
+
 const MOST_CASES = 15;
+const MOST_COMMITS = 20;
 const LONGEST_NOTE = 120;
 const BEIJING_OFFSET = 8 * 60 * 60 * 1000;
 const TRIAGE_NAME = /^[\p{L}\p{N}_.-]+$/u;
@@ -18,6 +21,13 @@ const RUN_ID = /^\d+$/;
 const CONCLUSIONS = { failure: '失败', cancelled: '被取消', timed_out: '超时', action_required: '等人批准', neutral: '结果不明' };
 
 const CASE_STATUSES = { failed: '', timedOut: '（超时）', interrupted: '（被中断）' };
+
+const VERDICTS = ['每次都复现', '时有时无', '复跑都通过', '没有复跑'];
+const PLATFORMS_NOT_ON_PUSH = [
+  ['Windows', /windows/i],
+  ['macOS', /macos/i],
+];
+const PULL_REQUEST = /^(.*?)\s*\(#(\d+)\)$/;
 
 function settled(conclusion) {
   return conclusion === 'success' || conclusion === 'skipped';
@@ -69,9 +79,29 @@ function shortened(text) {
   return line.length > LONGEST_NOTE ? `${line.slice(0, LONGEST_NOTE)}…` : line;
 }
 
-function caseLine(title, status, note) {
+function rerunTag(rerun, policy) {
+  if (rerun === undefined) return policy === undefined ? '没有复跑' : `没有复跑：一个作业只复跑前 ${policy.most} 条`;
+  if (rerun.error !== undefined) return '复跑出错';
+  const done = rerun.failed + rerun.passed;
+  if (done === 0) return '复跑没跑完';
+  return `复现 ${rerun.failed}/${done}${rerun.unfinished > 0 ? `，另 ${rerun.unfinished} 次没跑完` : ''}`;
+}
+
+function verdict(rerun) {
+  if (rerun === undefined || rerun.error !== undefined || rerun.failed + rerun.passed === 0) return '没有复跑';
+  if (rerun.passed === 0) return '每次都复现';
+  return rerun.failed === 0 ? '复跑都通过' : '时有时无';
+}
+
+function verdictLine(failures) {
+  const counts = failures.map(failure => verdict(failure.rerun));
+  const parts = VERDICTS.map(name => [name, counts.filter(count => count === name).length]).filter(([, count]) => count > 0);
+  return `同一提交上复跑的结果（只用来判断能不能稳定复现，作业照样算失败）：${parts.map(([name, count]) => `${name} ${count} 条`).join('，')}`;
+}
+
+function caseLine({ title, status, note, rerun }, policy) {
   const said = shortened(note);
-  return `· ${title}${CASE_STATUSES[status] ?? `（${status}）`}${said === '' ? '' : `：${said}`}`;
+  return `· [${rerunTag(rerun, policy)}] ${title}${CASE_STATUSES[status] ?? `（${status}）`}${said === '' ? '' : `：${said}`}`;
 }
 
 function groupedCases(results) {
@@ -83,7 +113,7 @@ function groupedCases(results) {
       continue;
     }
     for (const error of result.errors) add(placeOf(result, '用例以外的错误'), `· ${shortened(error)}`);
-    for (const failure of result.failures) add(placeOf(result, failure.project), caseLine(failure.title, failure.status, failure.note));
+    for (const failure of result.failures) add(placeOf(result, failure.project), caseLine(failure, result.rerun));
   }
   return [...groups].toSorted(([left], [right]) => left.localeCompare(right));
 }
@@ -110,12 +140,46 @@ function beijingDate(timestamp) {
   return new Date(Date.parse(timestamp) + BEIJING_OFFSET).toISOString().slice(0, 10);
 }
 
+function lark(text) {
+  return { tag: 'div', text: { tag: 'lark_md', content: text } };
+}
+
 function heading(text) {
-  return { tag: 'div', text: { tag: 'lark_md', content: `**${text}**` } };
+  return lark(`**${text}**`);
 }
 
 function plain(lines) {
   return { tag: 'div', text: { tag: 'plain_text', content: lines.join('\n') } };
+}
+
+function button(text, url, type = 'default') {
+  return { tag: 'button', type, text: { tag: 'plain_text', content: text }, url };
+}
+
+function commitLine({ sha, subject }) {
+  const pull = PULL_REQUEST.exec(subject);
+  return pull === null ? `· ${sha.slice(0, 9)} ${shortened(subject)}` : `· #${pull[2]} ${shortened(pull[1])}`;
+}
+
+function runLink(base) {
+  return `[${EVENTS[base.event] ?? base.event} · ${base.sha.slice(0, 9)}](${base.url})`;
+}
+
+function candidateSection(run, candidates) {
+  const title = '上次全绿以来的提交';
+  if (candidates.error !== undefined) return { elements: [heading(title), plain([`没能读到候选提交：${shortened(candidates.error)}`])] };
+  const { notOnPush, base } = candidates;
+  if (base === undefined) return { elements: [heading(title), plain([`main 上找不到更早的全绿${notOnPush.length > 0 ? '每晚运行' : '运行'}，列不出候选提交`])] };
+  if (candidates.status === 'identical') return { elements: [heading(title), lark(`上次全绿的${runLink(base)}测的就是这个提交，之后没有新提交。`)] };
+  if (candidates.status === 'behind' || candidates.status === 'diverged') return { elements: [heading(title), lark(`上次全绿的${runLink(base)}不在这个提交之前，列不出候选提交。`)] };
+  const lines = candidates.commits.slice(0, MOST_COMMITS).map(commitLine);
+  if (candidates.total > lines.length) lines.push(`……另有 ${candidates.total - lines.length} 个提交，完整的列表点「查看这些提交」`);
+  const platforms = notOnPush.join('、');
+  const since = `从上次全绿的${runLink(base)}算起${notOnPush.length > 0 ? `。有 ${platforms} 作业没通过，合并后运行不跑 ${platforms}，所以只看每晚运行` : ''}`;
+  return {
+    elements: [heading(`${title}（${candidates.total} 个）`), lark(since), plain(lines)],
+    compare: `${run.repository.html_url}/compare/${base.sha}...${run.head_sha}`,
+  };
 }
 
 export function triageUser(value) {
@@ -133,22 +197,32 @@ function triageRequest(user, url) {
   };
 }
 
-export function failureCard({ run, jobs, results, triage, rehearsal = false }) {
+function somethingFailed(jobs, results) {
+  return jobReport(jobs).broken.length > 0 || groupedCases(results).length > 0;
+}
+
+export function failureCard({ run, jobs, results, triage, rehearsal = false, candidates }) {
+  if (!somethingFailed(jobs, results)) return undefined;
   const { broken, skipped } = jobReport(jobs);
   const groups = groupedCases(results);
-  if (broken.length === 0 && groups.length === 0) return undefined;
-  const failures = results.reduce((count, result) => count + (result.failures?.length ?? 0), 0);
+  const failures = results.flatMap(result => result.failures ?? []);
   const elements = [plain([`${run.head_branch}@${run.head_sha.slice(0, 9)} · ${EVENTS[run.event] ?? run.event}`])];
   if (broken.length > 0) {
     const lines = broken.map(jobLine);
     if (skipped > 0) lines.push(`另有 ${skipped} 个作业被跳过，没有运行`);
     elements.push(heading(`没通过的作业（${broken.length} 个）`), plain(lines));
   }
-  if (groups.length > 0) elements.push(heading(failures > 0 ? `没通过的用例（${failures} 条）` : '用例以外的错误'), plain(caseLines(groups)));
+  if (groups.length > 0) {
+    const lines = caseLines(groups);
+    const reran = failures.length > 0 && results.some(result => result.rerun !== undefined);
+    elements.push(heading(failures.length > 0 ? `没通过的用例（${failures.length} 条）` : '用例以外的错误'), plain(reran ? [verdictLine(failures), ...lines] : lines));
+  }
+  const range = candidates === undefined ? undefined : candidateSection(run, candidates);
+  if (range !== undefined) elements.push(...range.elements);
   elements.push(
     { tag: 'hr' },
     { tag: 'note', elements: [{ tag: 'plain_text', content: '每个面的报告和失败附件在运行页的 Artifacts 里' }] },
-    { tag: 'action', actions: [{ tag: 'button', type: 'primary', text: { tag: 'plain_text', content: '查看这次运行' }, url: run.html_url }] },
+    { tag: 'action', actions: [button('查看这次运行', run.html_url, 'primary'), ...(range?.compare === undefined ? [] : [button('查看这些提交', range.compare)])] },
   );
   if (triage !== undefined) elements.push(triageRequest(triage, run.html_url));
   return {
@@ -190,6 +264,8 @@ export function githubClient({ token, repo, apiUrl = 'https://api.github.com', f
   return {
     run: runId => get(`repos/${repo}/actions/runs/${runId}`),
     jobs: async (runId, attempt) => (await get(`repos/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`)).jobs,
+    lastPassingRun: options => lastPassingRun({ get, repo, ...options }),
+    commitsBetween: (base, head) => commitsBetween({ get, repo, base, head }),
   };
 }
 
@@ -197,10 +273,25 @@ export function unknownOutcomeCard({ runUrl, reason, triage, rehearsal = false }
   const elements = [
     plain(['通知作业没能读到这次运行的结果，不知道有没有作业没通过。', `原因：${shortened(reason)}`]),
     { tag: 'hr' },
-    { tag: 'action', actions: [{ tag: 'button', type: 'primary', text: { tag: 'plain_text', content: '查看这次运行' }, url: runUrl }] },
+    { tag: 'action', actions: [button('查看这次运行', runUrl, 'primary')] },
   ];
   if (triage !== undefined) elements.push(triageRequest(triage, runUrl));
   return { config: { wide_screen_mode: true }, header: { template: 'orange', title: { tag: 'plain_text', content: `${rehearsal ? REHEARSAL : ''}每晚 E2E：没能读到结果` } }, elements };
+}
+
+function failedPlatformsNotOnPush(jobs) {
+  const failed = jobs.filter(job => job.status === 'completed' && !settled(job.conclusion));
+  return PLATFORMS_NOT_ON_PUSH.filter(([, label]) => failed.some(job => (job.labels ?? []).some(name => label.test(name)))).map(([platform]) => platform);
+}
+
+async function candidatesFor(github, run, jobs) {
+  const notOnPush = failedPlatformsNotOnPush(jobs);
+  try {
+    const base = await github.lastPassingRun({ workflow: run.workflow_id, events: notOnPush.length > 0 ? ['schedule'] : ['push', 'schedule'], currentRunId: run.id, createdBefore: run.created_at });
+    return base === undefined ? { notOnPush } : { notOnPush, base, ...(await github.commitsBetween(base.sha, run.head_sha)) };
+  } catch (error) {
+    return { notOnPush, error: error.message };
+  }
 }
 
 export async function notify({ runId, runUrl, resultsDir, resultsDownloadFailed = false, triage, rehearsal = false, github, post }) {
@@ -209,12 +300,12 @@ export async function notify({ runId, runUrl, resultsDir, resultsDownloadFailed 
     const run = await github.run(runId);
     const jobs = await github.jobs(runId, run.run_attempt);
     const results = [...readResults(resultsDir), ...(resultsDownloadFailed ? [{ unreadable: '下载 e2e-results-* artifact 失败' }] : [])];
-    card = failureCard({ run, jobs, results, triage, rehearsal });
+    if (!somethingFailed(jobs, results)) return 'passed';
+    card = failureCard({ run, jobs, results, triage, rehearsal, candidates: await candidatesFor(github, run, jobs) });
   } catch (error) {
     await post(unknownOutcomeCard({ runUrl, reason: error.message, triage, rehearsal }));
     throw error;
   }
-  if (card === undefined) return 'passed';
   await post(card);
   return 'posted';
 }
