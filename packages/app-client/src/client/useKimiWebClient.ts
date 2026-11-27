@@ -985,6 +985,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string): vo
           title: warning.domain ?? 'config',
           message: warning.message,
           persistent: true,
+          position: 'top-right',
         })),
       );
     }

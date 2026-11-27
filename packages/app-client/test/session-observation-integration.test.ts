@@ -237,6 +237,7 @@ it('shows config warnings from the list the server sends, and forgets them when 
   h.event('', configEvent([permission]));
   h.event('', configEvent([permission]));
   expect(shownConfigWarnings()).toEqual([permission.message]);
+  expect(h.warningsStore().warnings.find((notice) => notice.persistent === true)?.position).toBe('top-right');
 
   h.connection(true);
   expect(shownConfigWarnings()).toEqual([permission.message]);
