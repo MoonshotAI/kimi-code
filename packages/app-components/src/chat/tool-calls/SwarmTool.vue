@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import { ModelDisplayKey, ResolveSwarmMembersKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { toolLabel } from '@moonshot-ai/app-components';
+import { toolLabel } from '../../lib/toolMeta';
 import { parseSwarmResult } from '@moonshot-ai/app-core/lib';
 import { buildSwarmCardRows, type SwarmCardRow } from '@moonshot-ai/app-core/client';
 import { Icon, ScrollArea, Spinner, Tooltip } from '@moonshot-ai/app-ui';

@@ -64,6 +64,7 @@ interface Outcome {
 
 interface FailedCase {
   readonly project: string;
+  readonly projectName: string;
   readonly file: string;
   readonly title: string;
   readonly status: TestStatus;
@@ -243,7 +244,7 @@ export default class RunSummary {
       errors: this.errors,
       failures: outcomes
         .filter(failed)
-        .map((outcome) => ({ project: view(outcome.surface).title, file: outcome.file, title: outcome.title, status: outcome.status, note: outcome.note })),
+        .map((outcome) => ({ project: view(outcome.surface).title, projectName: outcome.surface, file: outcome.file, title: outcome.title, status: outcome.status, note: outcome.note })),
     };
     return `${JSON.stringify(file, null, 2)}\n`;
   }
