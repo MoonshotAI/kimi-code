@@ -2,12 +2,7 @@ import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 
-import {
-  approvalDecisionSchema,
-  approvalDetailSchema,
-  approvalResponseSchema,
-  approvalScopeSchema,
-} from './approval';
+import { approvalDecisionSchema, approvalResponseSchema, approvalScopeSchema } from './approval';
 import { questionAnswerMethodSchema, questionAnswerSchema, questionItemSchema } from './question';
 
 export const interactionOutcomeSchema = z.enum([
@@ -35,7 +30,6 @@ const approvalInteractionRequestSchema = z.object({
   tool_name: z.string().min(1),
   action: z.string(),
   tool_input_display: z.unknown().optional(),
-  approval_detail: approvalDetailSchema.optional(),
   expires_at: isoDateTimeSchema,
 });
 
