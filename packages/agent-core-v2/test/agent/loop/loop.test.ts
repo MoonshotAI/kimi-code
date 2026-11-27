@@ -1353,6 +1353,7 @@ describe('Agent loop', () => {
   });
 
   testWithProvider('cancels a prompt while its turn is starting when the client cancels without naming the prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
     const agentLoop = agent.get(IAgentLoopService);
     const entered = deferred();
     const release = deferred();
@@ -1388,6 +1389,7 @@ describe('Agent loop', () => {
   });
 
   testWithProvider('cancels a submitted prompt before its turn starts when the client cancels without naming the prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
     const agentLoop = agent.get(IAgentLoopService);
     const firstPrompt = 'Cancel this prompt.';
     const nextPrompt = 'Keep this prompt.';
