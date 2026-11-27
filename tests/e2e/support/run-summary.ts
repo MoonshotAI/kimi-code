@@ -196,6 +196,14 @@ function section(name: string, view: ProjectView, outcomes: readonly Outcome[], 
   if (brokenSelfTests.length > 0) {
     lines.push('', '没通过的自测：', ...brokenSelfTests.map((outcome) => `- \`${outcome.title}\`：${cell(outcome.note)}`));
   }
+  const unitTests = outcomes.filter((outcome) => !scenarios.includes(outcome) && !selfTests.includes(outcome));
+  if (unitTests.length > 0) {
+    lines.push('', `驱动单测：共 ${unitTests.length} 条，通过 ${unitTests.filter((outcome) => outcome.status === 'passed').length} 条，没通过 ${unitTests.filter(failed).length} 条。`);
+  }
+  const brokenUnitTests = unitTests.filter(failed);
+  if (brokenUnitTests.length > 0) {
+    lines.push('', '没通过的驱动单测：', ...brokenUnitTests.map((outcome) => `- \`${outcome.file}\` \`${outcome.title}\`：${cell(outcome.note)}`));
+  }
   lines.push('', ...viewingHints(name, view.surface, shard), '');
   return lines;
 }

@@ -2,28 +2,6 @@
 
 A Git worktree (an extra, independent checkout linked to the same Git repository) lets you run parallel sessions in isolated directories without disturbing uncommitted changes in your main checkout or switching branches back and forth.
 
-::: info Note
-Git worktrees are experimental and disabled by default.
-:::
-
-## Enabling Git worktrees
-
-Turn the feature on using any of these options:
-
-- **In the TUI**: run `/experiments` and enable **Git worktrees** (takes effect immediately).
-- **In your config file**: add the following to `~/.kimi-code/config.toml`:
-
-```toml
-[experimental]
-worktree = true
-```
-
-- **For a single launch**: set the [environment variable](../configuration/env-vars.md#runtime-switches):
-
-```sh
-KIMI_CODE_EXPERIMENTAL_WORKTREE=1 kimi -w
-```
-
 ## Managing worktrees in the TUI with `/worktree`
 
 Run `/worktree` in a local Git repository to list, create, switch into, and delete worktrees for the current repository.

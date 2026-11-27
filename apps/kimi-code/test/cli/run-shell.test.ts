@@ -417,20 +417,8 @@ describe('runShell', () => {
     });
   });
 
-  it('rejects -w before starting the TUI while the worktree flag is off', async () => {
+  it('passes -w to the TUI and leaves runs without -w alone', async () => {
     stubTuiStartup();
-    mocks.harnessGetExperimentalFeatures.mockResolvedValueOnce([{ id: 'worktree', enabled: false }]);
-
-    await expect(runShell({ ...minimalCliOptions, worktree: 'fix-login' }, '1.2.3-test')).rejects.toThrow(
-      /^-w\/--worktree is experimental\. Turn it on with KIMI_CODE_EXPERIMENTAL_WORKTREE=1, with worktree = true under \[experimental\] in config\.toml, or from \/experiments\.$/,
-    );
-    expect(mocks.harnessClose).toHaveBeenCalledOnce();
-    expect(mocks.kimiTuiConstructor).not.toHaveBeenCalled();
-  });
-
-  it('passes -w to the TUI while the worktree flag is on and leaves runs without -w alone', async () => {
-    stubTuiStartup();
-    mocks.harnessGetExperimentalFeatures.mockResolvedValueOnce([{ id: 'worktree', enabled: true }]);
 
     await runShell({ ...minimalCliOptions, worktree: '', worktreeBase: 'v1.2.0' }, '1.2.3-test');
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
@@ -449,7 +437,6 @@ describe('runShell', () => {
       '---\nname: local-agent\ndescription: Local.\n---\n\nPrompt.\n',
     );
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(launchDir);
-    mocks.harnessGetExperimentalFeatures.mockResolvedValueOnce([{ id: 'worktree', enabled: true }]);
     try {
       await runShell(
         { ...minimalCliOptions, worktree: 'fix-login', agentFiles: ['./local.md'] },

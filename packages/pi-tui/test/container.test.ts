@@ -62,12 +62,29 @@ describe("container output reuse", () => {
 
 	it("reuses box output while its children are unchanged", () => {
 		const text = new Text("boxed", 0, 0);
-		const box = new Box(1, 0);
+		const box = new Box({ padding: { left: 1, right: 1 } });
 		box.addChild(text);
 		const first = box.render(20);
 		assert.strictEqual(box.render(20), first);
 		text.setText("next");
 		assert.notStrictEqual(box.render(20), first);
+	});
+
+	it("renders single and rounded box borders, titles, partial sides, and empty frames", () => {
+		const box = new Box({
+			border: { top: true, left: true, right: true },
+			borderStyle: "rounded",
+			title: " BTW ",
+			padding: { left: 1, right: 1 },
+		});
+		assert.deepStrictEqual(box.render(10), ["╭ BTW ───╮"]);
+
+		const child = new Text("hi", 0, 0);
+		box.addChild(child);
+		assert.deepStrictEqual(box.render(10), ["╭ BTW ───╮", "│ hi     │"]);
+
+		box.setTitle(" NEXT ");
+		assert.deepStrictEqual(box.render(10), ["╭ NEXT ──╮", "│ hi     │"]);
 	});
 
 	it("dispatches mouse events by the rendered child heights", () => {

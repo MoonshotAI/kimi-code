@@ -203,7 +203,6 @@ export type KimiErrorCode =
   | 'session.busy'
   | 'shell.git_bash_not_found'
   | 'workspace.not_found'
-  | 'worktree.disabled'
   | 'worktree.not_git_repo'
   | 'worktree.no_commits'
   | 'worktree.base_not_found'

@@ -332,7 +332,8 @@ describe('projector tool-exchange normalization', () => {
     const history = [assistant('', ['call_image']), result];
 
     expect(project(history)[1]?.content).toEqual([
-      { type: 'text', text: `image result\n${note}` },
+      { type: 'text', text: 'image result' },
+      { type: 'text', text: note },
     ]);
     expect(result.content).toEqual([{ type: 'text', text: 'image result' }]);
   });

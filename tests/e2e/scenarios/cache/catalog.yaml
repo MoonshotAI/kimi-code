@@ -77,9 +77,20 @@ entries:
     operation: A tool call ends without running, because a permission rule denies it or the user stops the turn before it starts, then the product restarts and the conversation goes on
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/tool-results-keep-the-prefix-across-a-restart-and-a-reload.spec.ts
       - kind: implicit
         test: tests/e2e/scenarios/config/permission-rules-from-the-config-file-apply.spec.ts
-    gap: No scenario stops a turn before its tool starts and then restarts, so the stopped half has no E2E coverage. The restored history once gave such a tool a duration it never had and broke the prefix after a restart.
+
+  - id: A9
+    operation: Restart the product or reload the session after tool calls of many kinds returned their results, then send the next message
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/tool-results-keep-the-prefix-across-a-restart-and-a-reload.spec.ts
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/loop/projection.test.ts
+        case: is sent the same after the session is restored as it was live
 
   - id: B1
     operation: Switch the permission mode between two turns

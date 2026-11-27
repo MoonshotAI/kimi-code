@@ -331,12 +331,6 @@ const PRIVACY_POLICY_URL = 'https://www.kimi.com/user/agreement/userPrivacy?vers
 function openAgreement(url: string): void {
   window.open(url, '_blank', 'noopener');
 }
-const permissionModes = ['manual', 'yolo', 'auto'] as const;
-const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {
-  manual: 'status.permissionManual',
-  auto: 'status.permissionAuto',
-  yolo: 'status.permissionYolo',
-};
 
 const dialogRef = ref<HTMLElement | null>(null);
 useDialogFocus(dialogRef);
@@ -536,21 +530,6 @@ const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>
     .map(([provider, options]) => ({ provider, options }));
 });
 
-const defaultModelSelectOptions = computed(() => {
-  const options: Array<{ value: string; label: string; group?: string; disabled?: boolean }> = modelGroups.value.flatMap((group) =>
-    group.options.map((model) => ({ value: model.id, label: model.label, group: providerDisplayName(group.provider, t) })),
-  );
-  if (!props.config?.defaultModel) {
-    options.unshift({ value: '', label: t('settings.noDefaultModel'), group: '', disabled: true });
-  }
-  return options;
-});
-
-const defaultPermissionMode = computed(() => {
-  const mode = props.config?.defaultPermissionMode;
-  return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
-});
-
 function extractConfigModelProvider(raw: unknown): string | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const source = raw as Record<string, unknown>;
@@ -566,20 +545,6 @@ function formatConfigModelLabel(id: string, raw: unknown, provider?: string): st
   if (model && resolvedProvider) return `${id} (${providerDisplayName(resolvedProvider, t)}/${model})`;
   if (model) return `${id} (${model})`;
   return id;
-}
-
-function configBool(value: boolean | undefined): boolean {
-  return value === true;
-}
-
-function setDefaultModel(value: string): void {
-  if (!value || value === props.config?.defaultModel) return;
-  emit('updateConfig', { defaultModel: value });
-}
-
-function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
-  if (mode === defaultPermissionMode.value) return;
-  emit('updateConfig', { defaultPermissionMode: mode });
 }
 
 const secondaryModel = computed(
@@ -613,11 +578,6 @@ async function setSecondaryModel(value: { model: string | null; effort?: string 
   emit('updateConfig', {
     secondaryModel: buildSecondaryModelPatch(props.config?.secondaryModel, { ...value, model }),
   });
-}
-
-function toggleConfigBoolean(key: 'defaultPlanMode'): void {
-  const current = props.config?.[key];
-  emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
 }
 
 const defaultModelInfo = computed(() =>
@@ -1108,34 +1068,6 @@ defineExpose({ confirmDiscard });
             <template v-if="config">
               <div class="row">
                 <span class="rlabel">
-                  {{ t('settings.defaultModel') }}
-                  <span class="hint">{{ t('settings.defaultModelHint') }}</span>
-                </span>
-                <div v-if="modelGroups.length > 0" class="select-wrap">
-                  <Select
-                    :model-value="config.defaultModel ?? ''"
-                    :options="defaultModelSelectOptions"
-                    :aria-label="t('settings.defaultModel')"
-                    @update:model-value="setDefaultModel"
-                  />
-                </div>
-                <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.defaultPermission') }}
-                  <span class="hint">{{ t('settings.defaultPermissionHint') }}</span>
-                </span>
-                <SegmentedControl
-                  :model-value="defaultPermissionMode"
-                  :options="permissionModes.map((m) => ({ value: m, label: t(permissionLabelKey[m]) }))"
-                  @update:model-value="setDefaultPermissionMode($event as 'manual' | 'auto' | 'yolo')"
-                />
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
                   {{ t('settings.defaultThinking') }}
                   <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
                 </span>
@@ -1155,18 +1087,6 @@ defineExpose({ confirmDiscard });
                   @update:model-value="setDefaultThinkingSegment"
                 />
                 <span v-else class="rvalue mono">{{ effortLabel(defaultThinkingSegments[0] ?? 'on') }}</span>
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.defaultPlanMode') }}
-                  <span class="hint">{{ t('settings.defaultPlanModeHint') }}</span>
-                </span>
-                <Switch
-                  :model-value="configBool(config.defaultPlanMode)"
-                  :label="t('settings.defaultPlanMode')"
-                  @update:model-value="toggleConfigBoolean('defaultPlanMode')"
-                />
               </div>
             </template>
 

@@ -741,10 +741,12 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     expect(filtered.profile?.tools?.map((tool) => tool.name)).toEqual(['Unchanged']);
   });
 
-  it('appends late MCP tools only to the loop baseline request and never to explicit tool overrides', async () => {
+  it('keeps out-of-baseline MCP tools out of the loop baseline request and explicit tool overrides', async () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool('Base'));
+    registerMcp(h, new StubMcpTool('mcp__docs__search'), 'inline');
     const baseline = h.contextMemory.baselineTools();
+    registerMcp(h, new StubMcpTool('mcp__docs__lookup'));
     registerMcp(h, new StubMcpTool('mcp__late__deferred'));
     disposables.add(h.registry.register(new StubMcpTool('mcp__late__inline'), { source: 'mcp', disclosure: 'inline' }));
     registerBuiltin(h, new EchoTool('LateBuiltin'));
@@ -756,11 +758,7 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
       tools: [...baseline],
       capabilities,
     });
-    expect(loopRequest.profile?.tools?.map((tool) => tool.name)).toEqual([
-      'Base',
-      'mcp__late__deferred',
-      'mcp__late__inline',
-    ]);
+    expect(loopRequest.profile?.tools?.map((tool) => tool.name)).toEqual(['Base', 'mcp__docs__search']);
     expect(loopRequest.profile?.tools?.every((tool) => tool.deferred === undefined)).toBe(true);
 
     const explicit = await resolveWith(h, {

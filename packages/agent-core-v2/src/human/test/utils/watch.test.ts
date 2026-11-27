@@ -183,8 +183,8 @@ describe('watch signal mode', () => {
     const rig = signalRig();
     const firstEvents: WatchChange[] = [];
     const secondEvents: WatchChange[] = [];
-    handle = rig.service.watch('/repo', { signal: true, ignored: (path) => path.includes('/first/') });
-    const second = rig.service.watch('/repo', { signal: true, ignored: (path) => path.includes('/second/') });
+    handle = rig.service.watch('/repo', { signal: true, ignored: (path) => path === join('/repo', 'first', 'SKILL.md') });
+    const second = rig.service.watch('/repo', { signal: true, ignored: (path) => path === join('/repo', 'second', 'SKILL.md') });
     try {
       handle.onDidChange((event) => firstEvents.push(event));
       second.onDidChange((event) => secondEvents.push(event));
