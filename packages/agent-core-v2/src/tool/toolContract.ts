@@ -252,7 +252,14 @@ function normalizePath(path: string): string {
 }
 
 const MCP_NAME_PREFIX = 'mcp__';
+const MCP_NAME_SEPARATOR = '__';
 
 export function isMcpToolName(name: string): boolean {
   return name.startsWith(MCP_NAME_PREFIX);
+}
+
+export function mcpServerPrefix(name: string): string | undefined {
+  if (!isMcpToolName(name)) return undefined;
+  const separator = name.indexOf(MCP_NAME_SEPARATOR, MCP_NAME_PREFIX.length);
+  return separator === -1 ? undefined : name.slice(0, separator + MCP_NAME_SEPARATOR.length);
 }

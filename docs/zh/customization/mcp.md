@@ -135,7 +135,7 @@ defaultCwd = "/srv/work"
 
 ## 按需加载工具
 
-默认情况下，所有 MCP server 的工具都按 deferred（按需加载）处理：在支持动态加载的模型上，工具名称先通过公告披露，模型按需加载后才进入顶层工具列表，避免大量工具定义持续占用上下文。支持动态加载时，ToolSelect Resolver 会从解析后的顶层工具列表中移除 deferred 项，将 baseline 中的 deferred 名称转换为初始 reminder，后续新增和移除（包括会话启动后才连接完成的 server 所发现的工具）通过 delta 公告。内置的 `select_tools` 再把选中的 schema 加载到 system message。不支持动态加载的模型不区分 deferred 与 inline，会将当前已连接的所有 MCP 工具按普通顶层声明发送（启动后才发现的工具会在后续请求中一并带上）。最终编码器自身不会仅凭这个标记删除工具；重复声明优先保留顶层列表。
+默认情况下，所有 MCP server 的工具都按 deferred（按需加载）处理：在支持动态加载的模型上，工具名称先通过公告披露，模型按需加载后才进入顶层工具列表，避免大量工具定义持续占用上下文。支持动态加载时，ToolSelect Resolver 会从解析后的顶层工具列表中移除 deferred 项，将 baseline 中的 deferred 名称转换为初始 reminder，后续新增和移除（包括会话启动后才连接完成的 server 所发现的工具）通过 delta 公告。内置的 `select_tools` 再把选中的 schema 加载到 system message。不支持动态加载的模型不区分 deferred 与 inline，会将 MCP 工具按普通顶层声明发送。会话启动后才连接完成的 server，其工具会在后续请求中一并带上。会话启动时已连接的 server 之后新增的工具（例如收到 `tools/list_changed` 通知后）只通过提醒告知模型，不加入顶层工具列表，以免已有的提示词缓存失效；要直接调用这些工具，请新开会话。最终编码器自身不会仅凭这个标记删除工具；重复声明优先保留顶层列表。
 
 如果同名 deferred 工具的 schema 发生更新，会话会在同一条公告中声明移除旧版本并加入新版本。模型必须再次调用 `select_tools` 加载当前 schema，然后才能调用该工具；重新加载前的调用会被拒绝，并提示重新选择。对于 Kimi Chat Completions，供应商会按旧声明、卸载消息、新声明的顺序发送请求，避免后端因无法解析的同名重复声明而拒绝请求。同名 inline 工具的更新仍在当前会话中固定使用原 schema，不进入上述重新加载流程。
 
