@@ -334,7 +334,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
       description:
-        'Replace a provider in one save (type + base_url + model list). `display_name` is tri-state: omitted keeps the stored name, "" clears it so clients show the key, any other value replaces it; renaming a provider in a client changes only this name. `new_id` still renames the provider key itself (the providers key and default_provider migrate; model alias keys never change, so sessions, default_model and other pointers that name them keep working). `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider\'s models are rebuilt from `models`: a model already configured keeps its alias key, a new one gets `<provider>/<model>`, aliases no longer listed disappear from config.toml, and other providers\' aliases are untouched. Apart from default_provider on a rename, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
+        'Replace a provider in one save (type + base_url + model list). `display_name` is tri-state: omitted keeps the stored name, "" clears it so clients show the key, any other value replaces it; clients rename a provider by changing this name. `new_id` is deprecated: it renames the provider key itself, and the providers key, its model aliases, default_provider and a default_model pointing at an old alias all migrate; sessions and other references to the old aliases are not migrated. `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider\'s models are rebuilt from `models`: without `new_id`, a model already configured keeps its alias key and a new one gets `<provider>/<model>`; with `new_id`, every alias becomes `<new_id>/<model>`. Aliases no longer listed disappear from config.toml, other providers\' aliases are untouched, and a rebuild that would reuse another provider\'s alias key or give two models the same key fails validation. Beyond the `new_id` migration, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
       tags: ['providers'],
       operationId: 'replaceProvider',
     },
@@ -400,7 +400,9 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
             .filter(([, record]) => record.provider === provider_id && record.model !== undefined)
             .map(([aliasId, record]) => [record.model as string, { aliasId, record }] as const),
         );
-        const aliasIdFor = (model: string): string => ownedByModel.get(model)?.aliasId ?? `${newId}/${model}`;
+        const renaming = newId !== provider_id;
+        const aliasIdFor = (model: string): string =>
+          renaming ? `${newId}/${model}` : ownedByModel.get(model)?.aliasId ?? `${newId}/${model}`;
         provider.defaultModel =
           req.body.default_model !== undefined ? aliasIdFor(req.body.default_model) : undefined;
         const nextProviders = Object.fromEntries(
@@ -475,8 +477,19 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           [PROVIDERS_SECTION]: nextProviders,
           [MODELS_SECTION]: nextModels,
         };
-        if (newId !== provider_id && config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue === provider_id) {
-          sections[DEFAULT_PROVIDER_SECTION] = newId;
+        if (renaming) {
+          if (config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue === provider_id) {
+            sections[DEFAULT_PROVIDER_SECTION] = newId;
+          }
+          const defaultModel = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
+          const defaultRecord = defaultModel === undefined ? undefined : models[defaultModel];
+          const renamedDefault =
+            defaultRecord?.provider === provider_id && defaultRecord.model !== undefined
+              ? `${newId}/${defaultRecord.model}`
+              : undefined;
+          if (renamedDefault !== undefined && nextModels[renamedDefault] !== undefined) {
+            sections[DEFAULT_MODEL_SECTION] = renamedDefault;
+          }
         }
         await config.replaceSections(sections);
 

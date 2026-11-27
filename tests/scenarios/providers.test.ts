@@ -115,7 +115,7 @@ describe('renaming a provider', () => {
   const renameBody = (baseUrl: string) => ({
     type: 'openai',
     base_url: baseUrl,
-    new_id: 'alt-renamed',
+    display_name: '我的网关',
     models: [{ model: 'model-a', max_context_size: 128_000 }],
   });
   const altConfig = (model: Parameters<typeof fakeModelConfig>[0]) => fakeModelConfig(model, {
@@ -129,7 +129,7 @@ describe('renaming a provider', () => {
   const isMainAgentFrame = (frame: KapFrame, sessionId: string): boolean =>
     frame.type === 'agent' && frame['session_id'] === sessionId && frame['agent_id'] === 'main';
 
-  test('keeps an open session on its model through the rename and keeps it answering', async ({ kap, model }) => {
+  test('keeps an open session on its model and answering when the provider is renamed by its display name', async ({ kap, model }) => {
     const config = altConfig(model);
     await kap.writeConfig(config);
     await kap.restart();
@@ -142,7 +142,11 @@ describe('renaming a provider', () => {
     await socket.waitFor((frame) => isMainAgentFrame(frame, session.id) && frame['model'] === 'alt/model-a');
 
     const beforeRename = socket.mark();
-    await kap.rest.put('/api/v1/providers/alt', renameBody(config.providers!['alt']!.baseUrl!));
+    const renamed = await kap.rest.put<{ provider: { id: string; display_name?: string } }>(
+      '/api/v1/providers/alt',
+      renameBody(config.providers!['alt']!.baseUrl!),
+    );
+    expect(renamed.provider).toMatchObject({ id: 'alt', display_name: '我的网关' });
 
     await kap.prompt(session.id, 'second question');
     await socket.waitFor((frame) => frame.type === 'turn.ended' && frame['session_id'] === session.id, { after: beforeRename });
@@ -155,24 +159,5 @@ describe('renaming a provider', () => {
     expect((await kap.turns(session.id)).map((turn) => turn['outcome'])).toEqual(['completed', 'completed']);
     expect(model.requests('main').at(-1)).toMatchObject({ authorization: 'Bearer alt-key', view: { model: 'model-a' } });
     await socket.close();
-  });
-
-  test('keeps a session that was closed during the rename answering, even after another restart', async ({ kap, model }) => {
-    const config = altConfig(model);
-    await kap.writeConfig(config);
-    await kap.restart();
-    model.script(say('before the rename'), say('after the rename'));
-    const session = await kap.createSession({ agentConfig: { model: 'alt/model-a' } });
-    await kap.prompt(session.id, 'first question');
-    await kap.waitIdle(session.id);
-    await kap.restart();
-
-    await kap.rest.put('/api/v1/providers/alt', renameBody(config.providers!['alt']!.baseUrl!));
-    await kap.restart();
-
-    await kap.prompt(session.id, 'second question');
-    await kap.waitIdle(session.id);
-    expect((await kap.turns(session.id)).map((turn) => turn['outcome'])).toEqual(['completed', 'completed']);
-    expect(model.requests('main').at(-1)).toMatchObject({ authorization: 'Bearer alt-key', view: { model: 'model-a' } });
   });
 });

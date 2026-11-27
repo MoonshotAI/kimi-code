@@ -725,7 +725,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     });
   });
 
-  it('renames a provider: the providers key and default_provider migrate while model alias keys stay', async () => {
+  it('renames a provider: providers key, aliases, default_provider and default_model all migrate', async () => {
     await boot(DEFAULTED_TOML);
     const { status, body } = await putJson<{
       provider: Record<string, unknown>;
@@ -753,11 +753,11 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     });
     expect(onDisk2['models']).toEqual({
       k2: { provider: 'kimi', model: 'kimi-k2', max_context_size: 131072 },
-      gpt4o: { provider: 'my-openai', model: 'gpt-4o', max_context_size: 128000 },
+      'my-openai/gpt-4o': { provider: 'my-openai', model: 'gpt-4o', max_context_size: 128000 },
       'my-openai/gpt-4.1': { provider: 'my-openai', model: 'gpt-4.1', max_context_size: 1047576 },
     });
     expect(onDisk2['default_provider']).toBe('my-openai');
-    expect(onDisk2['default_model']).toBe('gpt4o');
+    expect(onDisk2['default_model']).toBe('my-openai/gpt-4o');
   });
 
   it('stores a display name on create and returns it with the provider', async () => {
@@ -811,12 +811,11 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
 
   it('rejects an edit that would give two models the same alias key, leaving config.toml untouched', async () => {
     await boot(
-      `${DEFAULTED_TOML}\n[models."renamed/foo"]\nprovider = "openai"\nmodel = "bar"\nmax_context_size = 1000\n`,
+      `${DEFAULTED_TOML}\n[models."openai/foo"]\nprovider = "openai"\nmodel = "bar"\nmax_context_size = 1000\n`,
     );
     const before = await readConfigToml();
     const { body } = await putJson<unknown>('/api/v1/providers/openai', {
       ...REPLACE_BODY,
-      new_id: 'renamed',
       default_model: 'bar',
       models: [
         { model: 'bar', max_context_size: 1000 },
@@ -824,7 +823,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       ],
     });
     expect(body.code).toBe(40001);
-    expect(body.msg).toContain('renamed/foo');
+    expect(body.msg).toContain('openai/foo');
     expect(await readConfigToml()).toEqual(before);
   });
 
@@ -844,11 +843,11 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(await readConfigToml()).toEqual(before);
   });
 
-  it('keeps model upgrade targets when renaming a provider', async () => {
+  it('rewrites model upgrade targets when renaming a provider', async () => {
     await boot(
       `${DEFAULTED_TOML}\n[models."openai/replacement-key"]\nprovider = "openai"\nmodel = "gpt-4.1"\nmax_context_size = 1047576\n\n[models.gpt4o.upgrade]\nmodel = "openai/replacement-key"\nmigration_markdown = "Use next"\n`,
     );
-    const { status, body } = await putJson('/api/v1/providers/openai', {
+    const { status } = await putJson('/api/v1/providers/openai', {
       ...REPLACE_BODY,
       new_id: 'my-openai',
       models: [
@@ -857,30 +856,27 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       ],
     });
     expect(status).toBe(200);
-    expect(body.code).toBe(0);
 
     const onDisk = await readConfigToml();
     expect(onDisk['models']).toMatchObject({
-      gpt4o: {
-        provider: 'my-openai',
-        upgrade: { model: 'openai/replacement-key', migration_markdown: 'Use next' },
+      'my-openai/gpt-4o': {
+        upgrade: { model: 'my-openai/gpt-4.1', migration_markdown: 'Use next' },
       },
-      'openai/replacement-key': { provider: 'my-openai', model: 'gpt-4.1' },
     });
     const models = await getJson<{
       items: Array<{ model: string; upgrade?: { model: string } }>;
     }>('/api/v1/models');
-    expect(models.body.data.items.find((item) => item.model === 'gpt4o')?.upgrade).toEqual({
-      model: 'openai/replacement-key',
+    expect(models.body.data.items.find((item) => item.model === 'my-openai/gpt-4o')?.upgrade).toEqual({
+      model: 'my-openai/gpt-4.1',
       migration_markdown: 'Use next',
     });
   });
 
-  it('keeps bare model upgrade targets when renaming a provider', async () => {
+  it('rewrites bare model upgrade targets on provider edit', async () => {
     await boot(
       `${DEFAULTED_TOML}\n[models."gpt-4.1"]\nprovider = "openai"\nmodel = "gpt-4.1"\nmax_context_size = 1047576\n\n[models.gpt4o.upgrade]\nmodel = "gpt-4.1"\nmigration_markdown = "Use next"\n`,
     );
-    const { status, body } = await putJson('/api/v1/providers/openai', {
+    const { status } = await putJson('/api/v1/providers/openai', {
       ...REPLACE_BODY,
       new_id: 'my-openai',
       models: [
@@ -889,21 +885,18 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       ],
     });
     expect(status).toBe(200);
-    expect(body.code).toBe(0);
 
     const onDisk = await readConfigToml();
     expect(onDisk['models']).toMatchObject({
-      gpt4o: {
-        provider: 'my-openai',
-        upgrade: { model: 'gpt-4.1', migration_markdown: 'Use next' },
+      'my-openai/gpt-4o': {
+        upgrade: { model: 'my-openai/gpt-4.1', migration_markdown: 'Use next' },
       },
-      'gpt-4.1': { provider: 'my-openai', model: 'gpt-4.1' },
     });
     const models = await getJson<{
       items: Array<{ model: string; upgrade?: { model: string } }>;
     }>('/api/v1/models');
-    expect(models.body.data.items.find((item) => item.model === 'gpt4o')?.upgrade).toEqual({
-      model: 'gpt-4.1',
+    expect(models.body.data.items.find((item) => item.model === 'my-openai/gpt-4o')?.upgrade).toEqual({
+      model: 'my-openai/gpt-4.1',
       migration_markdown: 'Use next',
     });
   });
@@ -922,14 +915,14 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.code).toBe(0);
 
     const onDisk = await readConfigToml();
-    expect(onDisk['models']).toHaveProperty('gpt4o');
-    expect(onDisk['models']).not.toHaveProperty('gpt4o.upgrade');
+    expect(onDisk['models']).toHaveProperty(['my-openai/gpt-4o']);
+    expect(onDisk['models']).not.toHaveProperty(['my-openai/gpt-4o', 'upgrade']);
     const models = await getJson<{
       items: Array<{ model: string; upgrade?: unknown }>;
     }>('/api/v1/models');
-    const gpt4o = models.body.data.items.find((item) => item.model === 'gpt4o');
-    expect(gpt4o).toBeDefined();
-    expect(gpt4o?.upgrade).toBeUndefined();
+    const renamed = models.body.data.items.find((item) => item.model === 'my-openai/gpt-4o');
+    expect(renamed).toBeDefined();
+    expect(renamed?.upgrade).toBeUndefined();
   });
 
   it('migrates default_provider on rename but leaves default_model alone when its model was dropped', async () => {

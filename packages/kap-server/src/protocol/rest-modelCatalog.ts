@@ -102,7 +102,7 @@ export const createProviderResponseSchema = providerCatalogItemSchema;
 export type CreateProviderResponse = z.infer<typeof createProviderResponseSchema>;
 
 export const replaceProviderRequestSchema = z
-  .object({ new_id: providerIdSchema.optional(), ...providerFormFields })
+  .object({ new_id: providerIdSchema.optional().meta({ deprecated: true }), ...providerFormFields })
   .superRefine(refineProviderForm);
 export type ReplaceProviderRequest = z.infer<typeof replaceProviderRequestSchema>;
 
