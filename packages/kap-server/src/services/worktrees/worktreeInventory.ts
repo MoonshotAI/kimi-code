@@ -25,8 +25,8 @@ import type {
   WorktreeRemoveFailedDetails,
 } from '../../protocol/rest-worktree';
 import type { Worktree, WorktreeSessionRef } from '../../protocol/worktree';
-import { gitText, runCommand } from './command';
-import { headBranch, listWorktrees } from './gitRefs';
+import { runCommand } from './command';
+import { headBranch } from './gitRefs';
 import { publishSessionUpdated } from './sessionUpdates';
 import { forgetWorktreeFacts, storedSessionWorktree } from './sessionWorktreeState';
 import { WorktreeError } from './worktreeError';
@@ -338,14 +338,10 @@ export class WorktreeInventory {
     | undefined
   > {
     if (!(await isDirectory(path))) return undefined;
+    const checkout = await this.core.accessor.get(IWorktreeService).resolveCheckout(path);
+    if (checkout === undefined || checkout.relativePath !== '' || checkout.kind === 'main') return undefined;
     const key = await canonical(path);
-    const top = await gitText(path, ['rev-parse', '--show-toplevel']);
-    if (top === undefined || (await canonical(top)) !== key) return undefined;
-    const worktrees = await listWorktrees(path);
-    const main = worktrees[0];
-    if (main === undefined) return undefined;
-    const repoRoot = await canonical(main.path);
-    if (repoRoot === key) return undefined;
+    const repoRoot = await canonical(checkout.repoRoot);
     const workspaces = await this.core.accessor.get(IProjectService).list();
     let workspace: Project | undefined;
     for (const candidate of workspaces) {
@@ -364,10 +360,9 @@ export class WorktreeInventory {
 
   async enclosingRepoRoot(path: string): Promise<string | undefined> {
     if (!(await isDirectory(path))) return undefined;
-    const top = await gitText(path, ['rev-parse', '--show-toplevel']);
-    if (top === undefined || top.length === 0) return undefined;
-    const root = await canonical(top);
-    return root === (await canonical(path)) ? undefined : root;
+    const checkout = await this.core.accessor.get(IWorktreeService).resolveCheckout(path);
+    if (checkout === undefined || checkout.relativePath === '') return undefined;
+    return canonical(checkout.checkoutRoot);
   }
 }
 

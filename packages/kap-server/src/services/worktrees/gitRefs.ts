@@ -1,5 +1,3 @@
-import { realpath } from 'node:fs/promises';
-
 import { gitText, runGit } from './command';
 
 export type RemoteBranchSource = 'upstream' | 'same_name';
@@ -26,21 +24,6 @@ export interface RepoBranches {
 
 const HEADS_PREFIX = 'refs/heads/';
 const REMOTES_PREFIX = 'refs/remotes/';
-
-async function realpathOrSelf(path: string): Promise<string> {
-  return realpath(path).catch(() => path);
-}
-
-export async function repoTopLevel(directory: string): Promise<string | undefined> {
-  const top = await gitText(directory, ['rev-parse', '--show-toplevel']);
-  return top === undefined || top.length === 0 ? undefined : top;
-}
-
-export async function isRepoRoot(directory: string): Promise<boolean> {
-  const top = await repoTopLevel(directory);
-  if (top === undefined) return false;
-  return (await realpathOrSelf(top)) === (await realpathOrSelf(directory));
-}
 
 async function porcelainStatus(directory: string): Promise<string | undefined> {
   const status = await runGit(directory, ['status', '--porcelain', '--untracked-files=normal']);
@@ -199,32 +182,4 @@ export async function takenBranchNames(repoRoot: string): Promise<TakenBranchNam
     taken.add(remote === undefined ? rest.slice(rest.indexOf('/') + 1) : rest.slice(remote.length + 1));
   }
   return taken;
-}
-
-export interface LinkedWorktree {
-  readonly path: string;
-  readonly branch?: string;
-  readonly main: boolean;
-  readonly prunable: boolean;
-}
-
-export async function listWorktrees(repoRoot: string): Promise<readonly LinkedWorktree[]> {
-  const out = await gitText(repoRoot, ['worktree', 'list', '--porcelain']);
-  if (out === undefined) return [];
-  const worktrees: LinkedWorktree[] = [];
-  for (const block of out.split(/\n\n+/)) {
-    let path: string | undefined;
-    let branch: string | undefined;
-    let prunable = false;
-    for (const line of block.split('\n')) {
-      if (line.startsWith('worktree ')) path = line.slice('worktree '.length);
-      else if (line.startsWith('branch ')) {
-        const ref = line.slice('branch '.length);
-        branch = ref.startsWith(HEADS_PREFIX) ? ref.slice(HEADS_PREFIX.length) : ref;
-      } else if (line === 'prunable' || line.startsWith('prunable ')) prunable = true;
-    }
-    if (path === undefined) continue;
-    worktrees.push({ path, branch, main: worktrees.length === 0, prunable });
-  }
-  return worktrees;
 }

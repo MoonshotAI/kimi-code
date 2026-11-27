@@ -25,7 +25,7 @@ import type {
 } from '../../protocol/worktree';
 import { mapError } from '../../transport/errors';
 import type { ServerLogger } from '../pinoLoggerService';
-import { branchExists, isRepoRoot } from './gitRefs';
+import { branchExists } from './gitRefs';
 import { repointSession } from './sessionRepoint';
 import { publishSessionUpdated } from './sessionUpdates';
 import {
@@ -261,7 +261,8 @@ export class SessionWorktreeService {
         `worktrees are experimental; set ${WORKTREE_FLAG_ENV}=1 or enable "${WORKTREE_FLAG_ID}" under [experimental] in config.toml`,
       );
     }
-    if (!(await isRepoRoot(workspace.root))) {
+    const worktreeService = this.core.accessor.get(IWorktreeService);
+    if ((await worktreeService.resolveCheckout(workspace.root))?.relativePath !== '') {
       throw new WorktreeError(
         ErrorCode.WORKTREE_UNSUPPORTED,
         `workspace root ${workspace.root} is not the root of a git repository`,
@@ -273,7 +274,6 @@ export class SessionWorktreeService {
         `worktree.source_branch: branch ${request.source_branch} does not exist`,
       );
     }
-    const worktreeService = this.core.accessor.get(IWorktreeService);
     const creation = await WorktreeCreation.plan({
       repoRoot: workspace.root,
       copyIncludedFiles: (input, options) => worktreeService.copyIncludedFiles(input, options),

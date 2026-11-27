@@ -1,4 +1,4 @@
-import { IProjectService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IProjectService, IWorktreeService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -22,7 +22,7 @@ import {
   type SessionWorktreeAction,
 } from '../protocol/rest-worktree';
 import { sessionSchema } from '../protocol/session';
-import { isDirty, isRepoRoot, listLocalBranches } from '../services/worktrees/gitRefs';
+import { isDirty, listLocalBranches } from '../services/worktrees/gitRefs';
 import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
 import { sendMappedError, sessionConflictErrors } from './sessionErrors';
 import { readWireSession } from './sessions';
@@ -128,7 +128,7 @@ export function registerWorktreeRoutes(
         );
         return;
       }
-      if (!(await isRepoRoot(workspace.root))) {
+      if ((await core.accessor.get(IWorktreeService).resolveCheckout(workspace.root))?.relativePath !== '') {
         reply.send(okEnvelope({ is_repo: false, dirty: false, remotes: [], branches: [] }, req.id));
         return;
       }
