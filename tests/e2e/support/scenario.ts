@@ -640,10 +640,8 @@ class ScenarioSession {
     };
   }
 
-  private async workTreeSnapshot(root: string): Promise<DirectorySnapshot> {
-    const snapshot = await snapshotDirectory(root);
-    if (!this.gitWorkspace) return snapshot;
-    return Object.fromEntries(Object.entries(snapshot).filter(([path]) => !path.startsWith('.git/')));
+  private workTreeSnapshot(root: string): Promise<DirectorySnapshot> {
+    return snapshotDirectory(root, { skip: this.gitWorkspace ? ['.git'] : [] });
   }
 
   private async closingProblems(): Promise<string[]> {

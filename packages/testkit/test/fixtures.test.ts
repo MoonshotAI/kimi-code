@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -483,6 +483,20 @@ describe('snapshotDirectory', () => {
         { path: 'nested/removed.txt', kind: 'removed' },
       ]);
     } finally {
+      await home.remove();
+    }
+  });
+
+  it('leaves a skipped top-level directory unread, so files that git creates and removes there cannot break the snapshot', async () => {
+    const home = await createTestHome('testkit-snapshot');
+    const git = join(home.workspace, '.git');
+    try {
+      await mkdir(join(git, 'objects'), { recursive: true });
+      await Promise.all([writeFile(join(home.workspace, 'notes.txt'), 'kept\n'), writeFile(join(git, 'index.lock'), 'held\n')]);
+      await chmod(git, 0o000);
+      expect(await snapshotDirectory(home.workspace, { skip: ['.git'] })).toEqual({ 'notes.txt': contentDigest('kept\n') });
+    } finally {
+      await chmod(git, 0o755);
       await home.remove();
     }
   });

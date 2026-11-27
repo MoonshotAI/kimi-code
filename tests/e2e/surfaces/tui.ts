@@ -328,7 +328,10 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   }
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
-  return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
+  const belowGap = rows.slice(gap + 1, editor);
+  const transcriptReachesEditor = belowGap.some(startsEntry) && !belowGap.some((row) => ACTIVITY.test(row.trim()));
+  const statusStart = transcriptReachesEditor ? editor : gap + 1;
+  return { ...frame, input: 'editor', transcript: rows.slice(0, statusStart), status: lines.slice(statusStart, editor), panel: [] };
 }
 
 function composerText(screen: Screen): string | undefined {

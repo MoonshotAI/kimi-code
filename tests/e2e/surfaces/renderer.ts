@@ -34,6 +34,7 @@ const FOLDED = 'button[aria-expanded="false"]';
 const MARKDOWN = 'p, h1, h2, h3, h4, h5, h6, ul, ol, pre, blockquote, table';
 const BLOCK = `${ROW}${SHOWN}:not(:has(${LIST}))`;
 const REPLY = `:not(:has(${DISCLOSURE})):not(:has(${STATE})):has(${MARKDOWN})`;
+const SIDE_CHAT_REPLY = `:is(${MARKDOWN})${SHOWN}:not([role="combobox"] *)`;
 const ON_A_CARD = `${SHOWN}:not(:is(${MARKDOWN}), :is(${MARKDOWN}) *)`;
 const DESCRIBED_LINES = 80;
 const NEW_SESSION = 'New Session';
@@ -606,9 +607,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const panel = this.page.getByRole('complementary', { name: DETAIL_PANEL });
     const tab = panel.getByRole('tab', { name: SIDE_CHAT, selected: true });
     await this.wait('the side chat to open', async () => (await tab.isVisible()) || undefined);
-    const asking = this.page.getByText(question, { exact: true });
-    const asked = panel.locator(BLOCK).filter({ has: asking });
-    const replies = panel.locator(`${BLOCK}${REPLY}`).filter({ hasNot: asking });
+    const asked = panel.getByText(question, { exact: true });
+    const replies = panel.locator(SIDE_CHAT_REPLY);
     const working = panel.getByRole('button', { name: INTERRUPT });
     let previous: string | undefined;
     const outcome = await this.wait(`the side chat to finish answering ${JSON.stringify(question)}`, async () => {
