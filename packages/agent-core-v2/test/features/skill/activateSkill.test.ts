@@ -6,8 +6,9 @@ import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { PromptCompleted, PromptStarted, PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 
-import { say } from '@moonshot-ai/testkit/model';
+import { held, say } from '@moonshot-ai/testkit/model';
 
 import { stubSkill } from './catalog/stubs';
 import {
@@ -526,6 +527,20 @@ describe('skill session title metadata', () => {
       title: '/review src /security',
       lastPrompt: '/review src /security',
       titleKind: 'replaceable',
+    });
+  });
+
+  testWithSkills('preserves first-turn extraction when a skill steers into the opening text turn before any reply', async ({ agent, model }) => {
+    model.script(held('opening-request', say('never emitted')), say('Deployed and reviewed.'));
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'Deploy the service' }], promptId: 'msg_open' });
+    await model.hold('opening-request').reached();
+
+    await agent.rpc.activateSkill({ name: 'review', promptId: 'msg_skill' });
+    await agent.get(IAgentLoopService).settled();
+
+    await expect(agent.get(IAgentTitlePromptSource).firstTurnExcerpt()).resolves.toEqual({
+      user: 'Deploy the service',
+      assistant: 'Deployed and reviewed.',
     });
   });
 });

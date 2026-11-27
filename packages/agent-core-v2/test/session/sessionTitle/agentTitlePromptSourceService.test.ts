@@ -7,6 +7,8 @@ import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
+import { IWireService } from '#/wire/wire';
+import type { WireRecord } from '#/wire/record';
 
 const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 
@@ -45,10 +47,12 @@ describe('AgentTitlePromptSource', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let liveMessages: readonly ContextMessage[];
+  let liveWireRecords: readonly WireRecord[];
   let queue: MockQueueState;
 
   beforeEach(() => {
     liveMessages = [];
+    liveWireRecords = [];
     queue = { active: undefined, pending: [] };
     disposables = new DisposableStore();
     ix = createServices(disposables, {
@@ -76,6 +80,9 @@ describe('AgentTitlePromptSource', () => {
             activeTraceId: undefined,
           }),
           promptHandle: (id: string) => (queue.active?.id === id ? queue.active : undefined),
+        });
+        reg.definePartialInstance(IWireService, {
+          readLoopChain: () => liveWireRecords.map((record, line) => ({ record, line })),
         });
         reg.define(IAgentTitlePromptSource, AgentTitlePromptSourceService);
       },
@@ -191,6 +198,38 @@ describe('AgentTitlePromptSource', () => {
         { user: '/review src/app.ts', assistant: 'Reviewed src/app.ts and found two issues.' },
         { user: 'Fix the first one', assistant: 'Fixed.' },
       ],
+    });
+  });
+
+  it('keeps an in-turn skill steer inside the first turn while stopping at the next turn skill opener', async () => {
+    liveMessages = [
+      userMessage('msg_open', 'Deploy the service'),
+      userMessage('msg_skill', 'expanded review instructions', {
+        kind: 'skill_activation',
+        activationId: 'act-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+      }),
+      assistantMessage('a1', [{ type: 'text', text: 'Deployed and reviewed.' }]),
+      userMessage('msg_next', 'expanded security instructions', {
+        kind: 'skill_activation',
+        activationId: 'act-2',
+        skillName: 'security',
+        trigger: 'user-slash',
+      }),
+      assistantMessage('a2', [{ type: 'text', text: 'Security checked.' }]),
+    ];
+    liveWireRecords = [
+      { type: 'turn.prompt', promptId: 'msg_open', turnId: 0, trigger: 'normal' },
+      { type: 'turn.ended', turnId: 0, reason: 'completed', continuation: 'turn' },
+      { type: 'turn.prompt', promptId: 'msg_skill', turnId: 1, trigger: 'notify' },
+      { type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'none' },
+      { type: 'turn.prompt', promptId: 'msg_next', turnId: 2, trigger: 'normal' },
+    ];
+
+    await expect(ix.get(IAgentTitlePromptSource).firstTurnExcerpt()).resolves.toEqual({
+      user: 'Deploy the service',
+      assistant: 'Deployed and reviewed.',
     });
   });
 
