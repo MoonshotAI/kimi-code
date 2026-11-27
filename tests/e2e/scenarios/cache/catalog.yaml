@@ -81,6 +81,9 @@ entries:
         test: tests/e2e/scenarios/cache/tool-results-keep-the-prefix-across-a-restart-and-a-reload.spec.ts
       - kind: implicit
         test: tests/e2e/scenarios/config/permission-rules-from-the-config-file-apply.spec.ts
+      - kind: engine
+        test: packages/agent-core-v2/test/wire/resume.test.ts
+        case: carries every kind of tool result exactly as the live session sent it
 
   - id: A9
     operation: Restart the product or reload the session after tool calls of many kinds returned their results, then send the next message
@@ -91,6 +94,9 @@ entries:
       - kind: engine
         test: packages/agent-core-v2/test/agent/loop/projection.test.ts
         case: is sent the same after the session is restored as it was live
+      - kind: engine
+        test: packages/agent-core-v2/test/wire/resume.test.ts
+        case: carries every kind of tool result exactly as the live session sent it
 
   - id: B1
     operation: Switch the permission mode between two turns
