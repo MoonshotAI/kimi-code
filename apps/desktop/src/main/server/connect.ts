@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { app } from 'electron';
-import type { MainWindow } from '../window/main-window';
+import type { MainWindow } from '../window/window-registry';
 import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 import { serverTokenPath } from '@moonshot-ai/kap-server';
 

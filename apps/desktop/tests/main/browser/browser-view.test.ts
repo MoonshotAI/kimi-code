@@ -374,9 +374,9 @@ vi.mock('../../../src/main/browser/browser-sites', async importOriginal => {
   };
 });
 const overlayViews = vi.hoisted(() => new WeakSet<object>());
-vi.mock('../../../src/main/browser/browser-overlay', () => ({
+vi.mock('../../../src/main/browser/browser-overlay-state', () => ({
   isBrowserOverlayView: (view: object) => overlayViews.has(view),
-  refreshBrowserAnnotationOverlay: vi.fn(),
+  requestBrowserAnnotationOverlayRefresh: vi.fn(),
   observeBrowserOverlayOutsidePointer: mocks.observeBrowserOverlayOutsidePointer,
 }));
 vi.mock('../../../src/main/diagnostics/log', () => ({

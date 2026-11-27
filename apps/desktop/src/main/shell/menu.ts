@@ -1,7 +1,9 @@
 import { app, dialog, Menu, shell, webContents } from 'electron';
 import type { BrowserWindow, MenuItemConstructorOptions } from 'electron';
 
-import { getMainWindow, createWindow, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
+import { createWindow, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
+import { getMainWindow, sendToRenderer } from '../window/window-registry';
+import { getTerminalMenuFocus, onTerminalMenuFocus } from './terminal-menu-focus';
 import { connect } from '../server/connect';
 import { getTraceRecorder } from '../diagnostics/trace';
 import { exportDiagnostics, openLogsFolder } from '../diagnostics/diagnostics-export';
@@ -261,13 +263,12 @@ export function setMenuShortcuts(bindings: Record<string, string | null>): void 
 }
 
 let recordingSuspended = false;
-let terminalFocused = false;
 
 export type MenuSuspension = 'recording' | 'terminal' | false;
 
 function currentSuspension(): MenuSuspension {
   if (recordingSuspended) return 'recording';
-  if (terminalFocused) return 'terminal';
+  if (getTerminalMenuFocus()) return 'terminal';
   return false;
 }
 
@@ -277,25 +278,6 @@ export function setMenuSuspended(suspended: boolean): void {
   }
   recordingSuspended = suspended;
   buildMenu();
-}
-
-let terminalFocusListener: ((focused: boolean) => void) | null = null;
-
-export function onTerminalMenuFocus(listener: (focused: boolean) => void): void {
-  terminalFocusListener = listener;
-}
-
-export function setTerminalMenuFocus(focused: boolean): void {
-  if (focused === terminalFocused) {
-    return;
-  }
-  terminalFocused = focused;
-  buildMenu();
-  terminalFocusListener?.(focused);
-}
-
-export function getTerminalMenuFocus(): boolean {
-  return terminalFocused;
 }
 
 const ACCELERATOR_KEYS: Record<string, string> = {
@@ -944,6 +926,8 @@ export function buildMenu(): void {
     getMainWindow()?.setMenuBarVisibility(false);
   }
 }
+
+onTerminalMenuFocus(() => buildMenu());
 
 export function setMenuLocale(locale: TrayLocale): void {
   if (locale === menuLocale) {

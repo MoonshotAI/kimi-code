@@ -12,13 +12,13 @@ vi.mock('electron', () => ({
   net: { fetch: netFetchMock },
 }));
 vi.mock('electron-updater', () => ({ autoUpdater: {} }));
-vi.mock('../../../src/main/window/main-window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
+vi.mock('../../../src/main/window/window-registry', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: trackMock, trySendDesktopEvent: vi.fn() }));
 
 import { fetchReleaseNotes, startAutoUpdater, updateChannelFromVersion, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type RestartDecision, type UpdateController, type UpdateStatus } from '../../../src/main/release/updater';
 import { log } from '../../../src/main/diagnostics/log';
 import { setServerRegionSource } from '../../../src/main/server/region';
-import { markQuitting } from '../../../src/main/window/main-window';
+import { markQuitting } from '../../../src/main/window/window-registry';
 import { isUpdateRolloutEligible, UNCOVERED_ROLLOUT_DELAY_SECONDS, rolloutBucket, rolloutDelayForBucket, type UpdateRolloutInfo } from '../../../src/main/release/update-rollout';
 
 const confirmRestartMock = vi.fn<() => Promise<RestartDecision>>();

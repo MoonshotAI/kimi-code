@@ -57,13 +57,15 @@ vi.mock('../../../src/main/app/ui-state', () => ({
   setRemoteControlPreviousEnabled: mocks.setRemoteControlPreviousEnabled,
 }));
 
-vi.mock('../../../src/main/window/main-window', () => ({
-  isRendererReady: mocks.isRendererReady,
+vi.mock('../../../src/main/window/window-registry', () => ({
   isQuitConfirmSkipped: mocks.isQuitConfirmSkipped,
   sendToRenderer: mocks.sendToRenderer,
-  showMainWindow: mocks.showMainWindow,
   onMainWindowGone: mocks.onMainWindowGone,
   addMainWindowCloseInterceptor: mocks.addMainWindowCloseInterceptor,
+}));
+vi.mock('../../../src/main/window/main-window', () => ({
+  isRendererReady: mocks.isRendererReady,
+  showMainWindow: mocks.showMainWindow,
 }));
 
 import {

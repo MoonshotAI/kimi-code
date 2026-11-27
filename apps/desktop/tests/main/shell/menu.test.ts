@@ -51,10 +51,12 @@ vi.mock('electron', () => ({
   shell: { openExternal: mocks.openExternal },
 }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent, trySendDesktopEvent: vi.fn() }));
-vi.mock('../../../src/main/window/main-window', () => ({
+vi.mock('../../../src/main/window/window-registry', () => ({
   getMainWindow: mocks.getMainWindow,
-  createWindow: mocks.createWindow,
   sendToRenderer: mocks.sendToRenderer,
+}));
+vi.mock('../../../src/main/window/main-window', () => ({
+  createWindow: mocks.createWindow,
   showMainWindow: mocks.showMainWindow,
   devToolsMode: mocks.devToolsMode,
   usesCustomTitleBar: (platform: NodeJS.Platform, linuxNativeTitleBar: boolean) =>

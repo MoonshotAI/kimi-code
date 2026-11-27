@@ -22,7 +22,8 @@ import { createLocalPagesPolicy } from '../browser/local-pages-policy';
 import { asBrowserAnnotationPickRequest } from '../../shared/browser-annotation';
 import { collectBrowserAnnotationAssets, completeBrowserAnnotationCapture, cancelBrowserAnnotationPick, hideBrowserAnnotation, pickBrowserAnnotation, readBrowserAnnotationAsset, showBrowserAnnotation } from '../browser/browser-annotations';
 
-import { getMainWindow, showMainWindow, applyWindowVibrancy, markQuitting, markRendererUiMounted, sendToRenderer, windowForWebContents } from '../window/main-window';
+import { showMainWindow, applyWindowVibrancy, markRendererUiMounted } from '../window/main-window';
+import { getMainWindow, markQuitting, sendToRenderer, windowForWebContents } from '../window/window-registry';
 import { listAvailableOpenInApps, openInApp } from '../system/open-in';
 import { getTerminalManager, initTerminalManager, type NativeTerminalCreateOptions } from '../terminal/manager';
 import { normalizeTerminalSshTarget } from '../../shared/terminal-activity';
@@ -41,7 +42,8 @@ import { effectiveContextMenuLocale, setContextMenuLocale, showSelectionContextM
 import { browserEn, browserZh } from '@moonshot-ai/app-i18n/browser';
 import { resolveQuitConfirmResponse, setQuitConfirmLocale, shouldBlockQuit } from '../app/quit-confirm';
 import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from '../shell/jump-list';
-import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended, setTerminalMenuFocus, onTerminalMenuFocus } from '../shell/menu';
+import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended } from '../shell/menu';
+import { onTerminalMenuFocus, setTerminalMenuFocus } from '../shell/terminal-menu-focus';
 import { setGlobalShortcutForAction, setGlobalShortcutSuspended, setGlobalShortcutTerminalFocus } from '../shell/shortcuts';
 import { getRemoteControlRestoreState, isLinuxNativeTitleBar, isVibrancyEnabled, markOnboarded, setColorScheme, setLinuxNativeTitleBar, setRemoteControlPreviousEnabled, setRemoteControlRestoreEnabled, setVibrancyEnabled } from '../app/ui-state';
 import { isPowerSaveBlockerEnabled } from '../system/power-save-blocker';
