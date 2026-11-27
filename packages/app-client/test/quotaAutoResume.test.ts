@@ -11,7 +11,7 @@ import type {
 } from '@moonshot-ai/app-core/api';
 import { DaemonApiError, MANAGED_KIMI_CODE_PROVIDER_ID } from '@moonshot-ai/app-core/api';
 import type { ConversationError, ConversationTurnHeader } from '@moonshot-ai/app-core/conversation';
-import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
+import { STORAGE_KEYS, safeSetJson } from '@moonshot-ai/app-core/lib';
 import {
   createQuotaAutoResume,
   isManagedQuotaError,
@@ -19,6 +19,7 @@ import {
   QUOTA_AUTO_RESUME_GRACE_MS,
   QUOTA_AUTO_RESUME_MAX_WAIT_MS,
   QUOTA_AUTO_RESUME_MIN_JITTER_MS,
+  QUOTA_AUTO_RESUME_RESERVATION_LEASE_MS,
   QUOTA_AUTO_RESUME_RETRY_DELAYS_MS,
 } from '../src/client/quotaAutoResume';
 import { isLocalPromptId, stablePromptId } from '../src/client/promptId';
@@ -1231,5 +1232,192 @@ describe('useQuotaAutoResume auto-continue preference storage sync', () => {
 
     for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoContinue, newValue: 'not-json' });
     expect(quotaAutoContinueEnabled.value).toBe(true);
+  });
+});
+
+describe('createQuotaAutoResume cross-window reservation', () => {
+  type WindowListener = (event: { key?: string | null; newValue?: string | null }) => void;
+  let listeners: Map<string, Set<WindowListener>>;
+  let lockTail: Promise<unknown>;
+
+  function emitWindow(type: string, event: { key?: string | null; newValue?: string | null } = {}): void {
+    for (const listener of listeners.get(type) ?? []) listener(event);
+  }
+
+  function windowRig(resetAt: string) {
+    const submitResume = vi.fn(async (_sessionId: string, _input: { turnId: string; resetAt: string | null; promptId: string }) => {});
+    const makeTab = (sessionId: string, turnId: string) => {
+      let eligible = true;
+      const onReservationAvailable = vi.fn(() => {
+        if (eligible) controller.handleTurnFailed(sessionId, turnId, QUOTA_403);
+      });
+      const controller = createQuotaAutoResume({
+        enabled: () => true,
+        isManagedKimiSession: () => true,
+        getUsage: async () => quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+        checkSessionReady: async () => true,
+        submitResume,
+        onReservationAvailable,
+        random: () => 0,
+      });
+      return {
+        controller,
+        onReservationAvailable,
+        arm: () => controller.handleTurnFailed(sessionId, turnId, QUOTA_403),
+        setEligible: (value: boolean) => {
+          eligible = value;
+        },
+      };
+    };
+    return { makeTab, submitResume };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE_MS);
+    stubStorage();
+    listeners = new Map();
+    lockTail = Promise.resolve();
+    vi.stubGlobal('window', {
+      addEventListener: (type: string, listener: WindowListener) => {
+        const set = listeners.get(type) ?? new Set<WindowListener>();
+        set.add(listener);
+        listeners.set(type, set);
+      },
+      removeEventListener: (type: string, listener: WindowListener) => {
+        listeners.get(type)?.delete(listener);
+      },
+    });
+    vi.stubGlobal('navigator', {
+      locks: {
+        request: <T,>(_name: string, _opts: { mode: string }, fn: () => Promise<T>): Promise<T> => {
+          const run = lockTail.then(fn, fn);
+          lockTail = run.catch(() => undefined);
+          return run;
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('shows the scheduled time only on the window holding the reservation and fires only that session', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const { makeTab, submitResume } = windowRig(resetAt);
+    const tabA = makeTab('s1', 't1');
+    const tabB = makeTab('s2', 't2');
+
+    tabA.arm();
+    await flushAsync();
+    tabB.arm();
+    await flushAsync();
+
+    expect(tabA.controller.pendingFor('s1', 't1')?.resetAt).toBe(resetAt);
+    expect(tabB.controller.pendingFor('s2', 't2')).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    await flushAsync();
+    expect(submitResume).toHaveBeenCalledTimes(1);
+    expect(submitResume.mock.calls[0]![0]).toBe('s1');
+    expect(tabA.controller.pendingFor('s1', 't1')).toBeNull();
+    expect(tabB.controller.pendingFor('s2', 't2')).toBeNull();
+  });
+
+  it('hands the reservation to a standby window on holder cancellation or pagehide and fires the successor', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const { makeTab, submitResume } = windowRig(resetAt);
+    const tabA = makeTab('s1', 't1');
+    const tabB = makeTab('s2', 't2');
+
+    tabA.arm();
+    await flushAsync();
+    tabB.arm();
+    await flushAsync();
+    expect(tabA.controller.pendingFor('s1', 't1')?.resetAt).toBe(resetAt);
+    expect(tabB.controller.pendingFor('s2', 't2')).toBeNull();
+
+    tabA.setEligible(false);
+    tabA.controller.cancelSession('s1');
+    expect(tabA.controller.pendingFor('s1', 't1')).toBeNull();
+    emitWindow('storage', { key: STORAGE_KEYS.quotaAutoResumeReservation, newValue: null });
+    await flushAsync();
+
+    expect(tabB.onReservationAvailable).toHaveBeenCalled();
+    expect(tabB.controller.pendingFor('s2', 't2')?.resetAt).toBe(resetAt);
+
+    const tabC = makeTab('s3', 't3');
+    tabC.arm();
+    await flushAsync();
+    expect(tabC.controller.pendingFor('s3', 't3')).toBeNull();
+
+    tabB.setEligible(false);
+    emitWindow('pagehide');
+    emitWindow('storage', { key: STORAGE_KEYS.quotaAutoResumeReservation, newValue: null });
+    await flushAsync();
+    expect(tabB.controller.pendingFor('s2', 't2')).toBeNull();
+    expect(tabC.controller.pendingFor('s3', 't3')?.resetAt).toBe(resetAt);
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    await flushAsync();
+    expect(submitResume).toHaveBeenCalledTimes(1);
+    expect(submitResume.mock.calls[0]![0]).toBe('s3');
+  });
+
+  it('takes over an expired lease from a crashed window without firing the dead session', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    safeSetJson(STORAGE_KEYS.quotaAutoResumeReservation, {
+      ownerId: 'crashed-window',
+      sessionId: 's-dead',
+      failedTurnId: 't-dead',
+      resetAt,
+      expiresAt: BASE_MS + QUOTA_AUTO_RESUME_RESERVATION_LEASE_MS,
+    });
+    const { makeTab, submitResume } = windowRig(resetAt);
+    const tabB = makeTab('s2', 't2');
+
+    tabB.arm();
+    await flushAsync();
+    expect(tabB.controller.pendingFor('s2', 't2')).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(QUOTA_AUTO_RESUME_RESERVATION_LEASE_MS + 1_000);
+    await flushAsync();
+    expect(tabB.onReservationAvailable).toHaveBeenCalled();
+    expect(tabB.controller.pendingFor('s2', 't2')?.resetAt).toBe(resetAt);
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    await flushAsync();
+    expect(submitResume).toHaveBeenCalledTimes(1);
+    expect(submitResume.mock.calls[0]![0]).toBe('s2');
+  });
+
+  it('drops a stale holder display when another window claimed the lease during sleep', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const { makeTab, submitResume } = windowRig(resetAt);
+    const tabA = makeTab('s1', 't1');
+    tabA.arm();
+    await flushAsync();
+    expect(tabA.controller.pendingFor('s1', 't1')?.resetAt).toBe(resetAt);
+
+    safeSetJson(STORAGE_KEYS.quotaAutoResumeReservation, {
+      ownerId: 'other-window',
+      sessionId: 's2',
+      failedTurnId: 't2',
+      resetAt,
+      expiresAt: BASE_MS + 2 * 60 * 60 * 1000,
+    });
+    emitWindow('storage', {
+      key: STORAGE_KEYS.quotaAutoResumeReservation,
+      newValue: globalThis.localStorage.getItem(STORAGE_KEYS.quotaAutoResumeReservation),
+    });
+    await flushAsync();
+    expect(tabA.controller.pendingFor('s1', 't1')).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    await flushAsync();
+    expect(submitResume).not.toHaveBeenCalled();
   });
 });

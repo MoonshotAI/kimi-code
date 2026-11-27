@@ -871,6 +871,7 @@ const quotaAutoResumeController = createQuotaAutoResume({
   getUsage: getUsageForSession,
   checkSessionReady: canAutoResumeSession,
   submitResume: submitQuotaAutoResume,
+  onReservationAvailable: () => armLoadedQuotaFailures(),
   onGiveUp: (sessionId, err) => {
     warningsStore().pushOperationFailure('quotaAutoResume', err, {
       sessionId,
@@ -897,7 +898,13 @@ function isQuotaFailedTurn(turn: ConversationTurn | undefined): turn is Conversa
 function armLoadedQuotaFailures(preferredSessionId?: string): void {
   const preferred = preferredSessionId ?? rawState.activeSessionId;
   const candidates = [...mainConversations.entries.values()]
-    .filter((entry) => entry.agentId === MAIN_AGENT_ID && entry.loaded && isQuotaFailedTurn(entry.view.turns.at(-1)))
+    .filter(
+      (entry) =>
+        entry.agentId === MAIN_AGENT_ID &&
+        entry.loaded &&
+        isManagedKimiSessionModelLoaded(entry.sessionId) &&
+        isQuotaFailedTurn(entry.view.turns.at(-1)),
+    )
     .toSorted((a, b) => {
       const aPreferred = a.sessionId === preferred ? 1 : 0;
       const bPreferred = b.sessionId === preferred ? 1 : 0;

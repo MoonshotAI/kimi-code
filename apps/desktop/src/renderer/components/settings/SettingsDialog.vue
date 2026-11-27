@@ -1185,18 +1185,22 @@ defineExpose({ confirmDiscard });
             <div v-else class="empty-config">
               {{ t('settings.configUnavailable') }}
             </div>
-
-            <div v-if="quotaAutoResumeEnabled" class="row" data-testid="quota-auto-continue-setting">
-              <span class="rlabel">
-                {{ t('settings.quotaAutoContinue') }}
-                <span class="hint">{{ t('settings.quotaAutoContinueHint') }}</span>
-              </span>
-              <Switch
-                :model-value="quotaAutoContinueEnabled"
-                :label="t('settings.quotaAutoContinue')"
-                @update:model-value="onQuotaAutoContinueChange"
-              />
             </div>
+          </section>
+
+          <section v-if="quotaAutoResumeEnabled" class="sec">
+            <div class="settings-group">
+              <div class="row" data-testid="quota-auto-continue-setting">
+                <span class="rlabel">
+                  {{ t('settings.quotaAutoContinue') }}
+                  <span class="hint">{{ t('settings.quotaAutoContinueHint') }}</span>
+                </span>
+                <Switch
+                  :model-value="quotaAutoContinueEnabled"
+                  :label="t('settings.quotaAutoContinue')"
+                  @update:model-value="onQuotaAutoContinueChange"
+                />
+              </div>
             </div>
           </section>
           </div>
