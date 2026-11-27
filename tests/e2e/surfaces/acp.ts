@@ -18,6 +18,7 @@ import {
   type RequestPermissionResponse,
   type SessionConfigOption,
   type SessionConfigSelectOption,
+  type SessionInfo,
   type SessionUpdate,
   type StopReason,
   type TerminalExitStatus,
@@ -32,11 +33,16 @@ import {
   APPROVAL_PENDING,
   describeApproval,
   describeTool,
+  firstPromptOf,
   namesFile,
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
+  waitOutcome,
   wantedOutput,
+  describeChanges,
+  missingChanges,
   type ApprovalExpectation,
+  type ChangedLines,
   type ApproveOptions,
   type Diagnostic,
   type Frame,
@@ -47,8 +53,10 @@ import {
   StartupFailure,
   type EditorMcpServer,
   type SurfaceLaunch,
+  type TargetedToolExpectation,
   type ToolExpectation,
   type ToolStatus,
+  type WaitOutcome,
 } from '../support/verbs';
 import { editorServedFile, type WireEvent } from './acp-evidence';
 import { productEnv } from './environment';
@@ -213,6 +221,9 @@ function entriesOf(updates: readonly SessionUpdate[]): Entry[] {
   return entries;
 }
 
+const WAIT_STATUS = 'wait_status: ';
+const ACP_WAIT_STATUS: { readonly [O in WaitOutcome]: string } = { finished: 'completed', interrupted: 'interrupted', 'timed out': 'timed_out' };
+
 function repliesOf(updates: readonly SessionUpdate[]): string[] {
   return entriesOf(updates).flatMap((entry) => (entry.kind === 'reply' ? [entry.text] : []));
 }
@@ -253,6 +264,14 @@ function approvalShows(toolCall: ToolCallUpdate, { name, target }: ApprovalExpec
   const texts = approvalTexts(toolCall);
   if (name !== 'Bash') return [...texts, ...approvalPaths(toolCall)].some((shown) => namesFile(shown, target, workspace));
   return property(toolCall.rawInput, 'command') === target || texts.some((text) => text === target || text.endsWith(`: ${target}`));
+}
+
+function approvalChanges(toolCall: ToolCallUpdate): ChangedLines {
+  const diffs = (toolCall.content ?? []).flatMap((part) => (part.type === 'diff' ? [part] : []));
+  const linesOf = (text: string | null | undefined): string[] => (text ?? '').split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  const before = diffs.flatMap((diff) => linesOf(diff.oldText));
+  const after = diffs.flatMap((diff) => linesOf(diff.newText));
+  return { added: after.filter((line) => !before.includes(line)), removed: before.filter((line) => !after.includes(line)) };
 }
 
 function choicesOf(option: SessionConfigOption): SessionConfigSelectOption[] {
@@ -301,7 +320,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private openedConfig: readonly SessionConfigOption[] = [];
   private modeBeforePlan: string | undefined;
   private restored = false;
-  private reopens: { readonly list: boolean; readonly load: boolean } = { list: false, load: false };
+  private reopens: { readonly list: boolean; readonly load: boolean; readonly fork: boolean; readonly delete: boolean } = { list: false, load: false, fork: false, delete: false };
   private readonly leftSessions = new Set<string>();
   private leftSessionUpdates = 0;
   private turn: Turn | undefined;
@@ -357,7 +376,13 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       throw new Error(`kimi acp answered initialize with protocol version ${String(initialized.protocolVersion)}; the editor speaks ${String(PROTOCOL_VERSION)}.`);
     }
     const offered = initialized.agentCapabilities;
-    this.reopens = { list: (offered?.sessionCapabilities?.list ?? undefined) !== undefined, load: offered?.loadSession === true };
+    const sessions = offered?.sessionCapabilities;
+    this.reopens = {
+      list: (sessions?.list ?? undefined) !== undefined,
+      load: offered?.loadSession === true,
+      fork: (sessions?.fork ?? undefined) !== undefined,
+      delete: (sessions?.delete ?? undefined) !== undefined,
+    };
     if (resume === undefined) {
       const session = await this.response(
         'the agent to create a session',
@@ -448,9 +473,15 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     if (asksQuestion(pending)) throw new Error(`expectApproval() found no approval for ${wanted}: ${QUESTION_PENDING}.\n${this.describe()}`);
     const { toolCall } = pending.params;
-    if (approvalShows(toolCall, expectation, this.home.workspace)) return;
-    const shown = { title: toolCall.title, content: toolCall.content, rawInput: toolCall.rawInput, locations: toolCall.locations };
-    throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval request shows:\n${JSON.stringify(shown, null, 2)}\n${this.describe()}`);
+    if (!approvalShows(toolCall, expectation, this.home.workspace)) {
+      const shown = { title: toolCall.title, content: toolCall.content, rawInput: toolCall.rawInput, locations: toolCall.locations };
+      throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval request shows:\n${JSON.stringify(shown, null, 2)}\n${this.describe()}`);
+    }
+    const changes = approvalChanges(toolCall);
+    const missing = missingChanges(expectation, changes);
+    if (missing.length > 0) {
+      throw new Error(`expectApproval() found the approval, but its change does not show ${missing.join(', ')}. The change shows:\n${describeChanges(changes)}\n${this.describe()}`);
+    }
   }
 
   async answer(option: string): Promise<void> {
@@ -549,6 +580,88 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (outcome === 'failed') throw new Error(`compact() saw the compaction cancelled or blocked.\n${this.describe()}`);
   }
 
+  async fork(): Promise<void> {
+    await this.settledForSessions('fork()');
+    if (!this.reopens.fork || !this.reopens.load) throw new Error(`fork() needs session/fork and session/load, but kimi acp does not offer both.\n${this.describe()}`);
+    if (this.conversation().length === 0) throw new Error(`fork() needs a session with messages, but the editor holds none.\n${this.describe()}`);
+    const forked = await this.response(
+      `the agent to fork session ${this.sessionId}`,
+      this.connection.agent.request(methods.agent.session.fork, { sessionId: this.sessionId, cwd: this.home.workspace, mcpServers: this.mcpServers }),
+    );
+    if (forked.sessionId === this.sessionId) throw new Error(`fork() asked for a fork, but the agent answered with the current session, ${forked.sessionId}.\n${this.describe()}`);
+    await this.load(forked.sessionId);
+  }
+
+  async deleteSession(title: string): Promise<void> {
+    await this.settledForSessions('deleteSession()');
+    if (!this.reopens.delete) throw new Error(`deleteSession() needs session/delete, but kimi acp does not advertise it.\n${this.describe()}`);
+    const sessions = await this.listedSessions('deleteSession()');
+    const matching = sessions.filter((session) => session.title === title);
+    if (matching.length !== 1 || matching[0]!.sessionId === this.sessionId) {
+      const reason =
+        matching.length === 0 ? 'no session has that title' : matching.length > 1 ? `${matching.length} sessions have that title` : 'it is the open session; open another one first';
+      throw new Error(`deleteSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. session/list returns ${this.describeSessions(sessions)}.\n${this.describe()}`);
+    }
+    const target = matching[0]!.sessionId;
+    await this.response(`the agent to delete session ${target}`, this.connection.agent.request(methods.agent.session.delete, { sessionId: target }));
+    const after = await this.listedSessions('deleteSession()');
+    if (after.some((session) => session.sessionId === target)) {
+      throw new Error(`deleteSession() deleted ${JSON.stringify(title)}, but session/list still returns it: ${this.describeSessions(after)}.\n${this.describe()}`);
+    }
+  }
+
+  async expectSessions(titles: readonly string[]): Promise<void> {
+    await this.settledForSessions('expectSessions()');
+    const sessions = await this.listedSessions('expectSessions()');
+    const listed = sessions.map((session) => session.title ?? '').toSorted();
+    const wanted = titles.toSorted();
+    if (JSON.stringify(listed) !== JSON.stringify(wanted)) {
+      throw new Error(`expectSessions() wanted session/list to return ${JSON.stringify(wanted)}, but it returns ${JSON.stringify(listed)}.\n${this.describe()}`);
+    }
+  }
+
+  private async settledForSessions(verb: string): Promise<void> {
+    const state = await this.wait('the turn to end', () => {
+      if (this.permissions.length > 0) return 'waiting' as const;
+      return this.turnOver() && this.handledUpdates() >= this.receivedUpdates ? ('idle' as const) : undefined;
+    });
+    if (state === 'waiting') throw new Error(`${verb} needs an idle product, but an approval or a question is pending.\n${this.describe()}`);
+  }
+
+  private async listedSessions(verb: string): Promise<SessionInfo[]> {
+    if (!this.reopens.list) throw new Error(`${verb} needs session/list, but kimi acp does not advertise it.\n${this.describe()}`);
+    const sessions: SessionInfo[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.response('the agent to list the sessions', this.connection.agent.request(methods.agent.session.list, { cwd: this.home.workspace, cursor }));
+      sessions.push(...page.sessions);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    return sessions;
+  }
+
+  private describeSessions(sessions: readonly SessionInfo[]): string {
+    if (sessions.length === 0) return 'no sessions';
+    return sessions.map((session) => `${JSON.stringify(session.title ?? null)}${session.sessionId === this.sessionId ? ' (open)' : ''}`).join(', ');
+  }
+
+  private async load(sessionId: string): Promise<void> {
+    this.leftSessions.add(this.sessionId);
+    this.leftSessions.delete(sessionId);
+    const start = this.updates.length;
+    const loaded = await this.response(
+      `the agent to load session ${sessionId}`,
+      this.connection.agent.request(methods.agent.session.load, { sessionId, cwd: this.home.workspace, mcpServers: this.mcpServers }),
+    );
+    this.sessionId = sessionId;
+    this.sessionStart = start;
+    this.restored = true;
+    this.prompts = [];
+    this.turn = undefined;
+    this.openedMode = loaded.modes?.currentModeId;
+    this.openedConfig = loaded.configOptions ?? [];
+  }
+
   async useSkill(name: string): Promise<void> {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`useSkill() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
@@ -617,7 +730,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.openedMode = loaded.modes?.currentModeId;
     this.openedConfig = loaded.configOptions ?? [];
     await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
-    if (!userTextsOf(this.sessionUpdates()).some((text) => text.trim() === title)) {
+    if (!userTextsOf(this.sessionUpdates()).some((text) => text.trim() === firstPromptOf(title))) {
       throw new Error(`openSession() loaded session ${target.sessionId}, but its replay shows no user message ${JSON.stringify(title)}:\n${this.conversation().join('\n')}\n${this.describe()}`);
     }
   }
@@ -1037,7 +1150,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private missingEditorEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
-    if (expectation.status === 'rejected' || this.replayedTurn() || this.bare) return undefined;
+    if (expectation.name === 'WaitFor' || expectation.status === 'rejected' || this.replayedTurn() || this.bare) return undefined;
     if (expectation.name === 'AskUserQuestion') {
       const reply = this.questionReplies.get(tool.id);
       return reply !== undefined && this.served.has(reply) ? undefined : 'the editor never answered a question for it';
@@ -1053,7 +1166,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       : 'the agent did not send the file to the editor with fs/write_text_file in this turn before that tool finished';
   }
 
-  private missingTerminalEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
+  private missingTerminalEvidence(tool: ToolView, expectation: TargetedToolExpectation): string | undefined {
     const foreign = tool.terminals.filter((id) => !this.spawned.has(id));
     if (foreign.length > 0) return `it refers to terminal(s) the editor never created: ${foreign.join(', ')}`;
     if (expectation.status !== 'done') return undefined;
@@ -1067,6 +1180,10 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     const output = wantedOutput(expectation);
     return toolsOf(this.turnUpdates()).filter((tool) => {
       if (tool.name !== expectation.name || tool.status !== expectation.status) return false;
+      if (expectation.name === 'WaitFor') {
+        const outcome = waitOutcome(expectation);
+        return outcome === undefined || tool.shownText.split('\n').some((line) => line.trim() === `${WAIT_STATUS}${ACP_WAIT_STATUS[outcome]}`);
+      }
       if (expectation.name === 'AskUserQuestion') return tool.questions.includes(expectation.target);
       if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
       if (tool.command !== expectation.target || output === undefined) return tool.command === expectation.target;

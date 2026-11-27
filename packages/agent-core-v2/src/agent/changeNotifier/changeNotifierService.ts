@@ -11,6 +11,8 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IEventBus } from '#/app/event/eventBus';
+import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -26,7 +28,16 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { loadAgentsMdForRoots, splitAgentsMdFiles, type LoadedAgentsMd } from '#/agent/profile/context';
+import {
+  extractAgentsMdPathsFromSystemPrompt,
+  loadAgentsMdForRoots,
+  splitAgentsMdFiles,
+  type LoadedAgentsMd,
+} from '#/agent/profile/context';
+import {
+  globalAgentsMdPaths,
+  isGlobalAgentsMdPath,
+} from '#/agent/workdirMove/workdirMoveReminder';
 import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -51,6 +62,7 @@ const SUBAGENTS_CHANGE_VARIANT = 'subagents_change';
 const WORKSPACE_DIRS_CHANGE_VARIANT = 'workspace_dirs_change';
 
 const SKILL_LISTING_MARKER = 'DISREGARD any earlier skill listings';
+const RESTORED_CHANGES_VARIANT = 'restored_changes';
 
 interface AgentsMdChanges {
   readonly modified: readonly string[];
@@ -74,6 +86,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   declare readonly _serviceBrand: undefined;
 
   private muted = false;
+  private restoredChangesPending = false;
   private workspaceDirsNotificationTail: Promise<void> = Promise.resolve();
 
   private legacySubagentBaseline: { readonly names: readonly string[] } | undefined;
@@ -97,10 +110,30 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
   ) {
     super();
     this.states.contributeState(changeNotifierSnapshotKey);
+    this._register(
+      this.dispatcher.hooks.onDidRestore.register('changeNotifier', async (_ctx, next) => {
+        await next();
+        this.armRestoredChangesCheck();
+      }),
+    );
+    this._register(
+      this.eventBus.subscribe(ContextUndone, (event) => {
+        if (event.agentId === this.scopeContext.agentId) this.armRestoredChangesCheck();
+      }),
+    );
+    this._register(
+      this.reminder.register(RESTORED_CHANGES_VARIANT, async () => {
+        if (!this.restoredChangesPending) return undefined;
+        this.restoredChangesPending = false;
+        await this.notifyAllChanges();
+        return undefined;
+      }),
+    );
     this._register(
       this.instructions.onDidChange(() => {
         void this.notifyAgentsMdChanges();
@@ -128,6 +161,11 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         names: this.agentCatalog.list().map((profile) => profile.name),
       };
     });
+  }
+
+  private armRestoredChangesCheck(): void {
+    this.restoredChangesPending =
+      this.scopeContext.agentId === MAIN_AGENT_ID && this.profile.data().profileName !== undefined;
   }
 
   private get snapshot(): ChangeNotifierSnapshotState {
@@ -386,6 +424,29 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   seedBeliefs(seed: BeliefsSeed): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return Promise.resolve();
     return this.enqueueWorkspaceDirsNotification(() => this.seedBeliefsNow(seed));
+  }
+
+  async syncAgentsMdSnapshot(loaded: LoadedAgentsMd): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    const globals = globalAgentsMdPaths(this.localEnvironment.homeDir, this.bootstrap.homeDir);
+    const profileData = this.profile.data();
+    const promptPaths =
+      profileData.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profileData.systemPrompt);
+    const previousFiles =
+      this.snapshot.agentsMdFiles ??
+      hashAgentsMdContents(splitAgentsMdFiles(profileData.systemPrompt, promptPaths));
+    const agentsMdFiles: Record<string, string> = {};
+    for (const [path, fileHash] of Object.entries(previousFiles)) {
+      if (isGlobalAgentsMdPath(path, globals)) {
+        agentsMdFiles[path] = fileHash;
+      }
+    }
+    for (const [path, content] of loaded.files) {
+      if (!isGlobalAgentsMdPath(path, globals)) {
+        agentsMdFiles[path] = hashText(content);
+      }
+    }
+    await this.recordSnapshot({ agentsMdHash: undefined, agentsMdFiles });
   }
 
   private async seedBeliefsNow(seed: BeliefsSeed): Promise<void> {

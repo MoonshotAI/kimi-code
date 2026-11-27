@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, escapeRegExp, highlightHtml, snippet } from '../src/lib/searchHighlight';
+import { escapeHtml, escapeRegExp, highlightHtml, pathSearchKey, snippet } from '../src/lib/searchHighlight';
 
 describe('escapeHtml', () => {
   it('escapes the five HTML-significant characters', () => {
@@ -77,5 +77,18 @@ describe('highlightHtml', () => {
 
   it('returns the escaped text unchanged when the query is empty', () => {
     expect(highlightHtml('<b>hi</b>', '')).toBe('&lt;b&gt;hi&lt;/b&gt;');
+  });
+
+  it('matches either path separator for a slash or a backslash in the query', () => {
+    expect(highlightHtml('C:\\Users\\me\\app', 'me/app')).toBe('C:\\Users\\<mark>me\\app</mark>');
+    expect(highlightHtml('/home/me/app', 'me\\app')).toBe('/home/<mark>me/app</mark>');
+    expect(highlightHtml('a\\.b', '\\.')).toBe('a<mark>\\.</mark>b');
+  });
+});
+
+describe('pathSearchKey', () => {
+  it('folds backslashes into slashes and ignores letter case', () => {
+    expect(pathSearchKey('C:\\Users\\Me\\App')).toBe('c:/users/me/app');
+    expect(pathSearchKey('/home/Me/app')).toBe('/home/me/app');
   });
 });

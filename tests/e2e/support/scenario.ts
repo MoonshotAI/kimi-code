@@ -40,6 +40,7 @@ import {
   VERB_NAMES,
   verbOn,
   verbSpec,
+  wantedChanges,
   wantedOutput,
   type Actions,
   type Platform,
@@ -219,6 +220,7 @@ function promptCheck(verb: 'send' | 'queue' | 'steer' | 'openSession' | 'btw'): 
 }
 
 function assertToolExpectation(expectation: ToolExpectation): void {
+  if (expectation.name === 'WaitFor') return;
   const asked: { readonly name: string; readonly status: string; readonly output?: unknown } = expectation;
   if (asked.name !== 'Bash' && (asked.status === 'running' || asked.output !== undefined)) {
     throw new Error(`expectTool() can expect a running tool, or the output of a tool, only for Bash, not for ${asked.name}.`);
@@ -263,12 +265,19 @@ function assertEffort(effort: string): void {
   }
 }
 
-function assertApprovalExpectation({ name, target }: ApprovalExpectation): void {
+function assertApprovalExpectation(expectation: ApprovalExpectation): void {
+  const { name, target } = expectation;
   if (!/^[ -~]+$/.test(target) || target !== target.trim()) {
     throw new Error(`expectApproval() takes the target as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(target)}`);
   }
   if (name !== 'Bash' && workspaceKey(target) !== target) {
     throw new Error(`expectApproval() takes the file as a normalized path relative to the workspace, like "notes/a.txt", got ${JSON.stringify(target)}`);
+  }
+  const { added, removed } = wantedChanges(expectation);
+  for (const line of [...added, ...removed]) {
+    if (!/^[ -~]+$/.test(line) || line !== line.trim()) {
+      throw new Error(`expectApproval() takes each changed line as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(line)}`);
+    }
   }
 }
 
@@ -514,8 +523,14 @@ class ScenarioSession {
       this.conversation.lastPrompt = prompt;
     }
     if (verb === 'undo') this.conversation.lastPrompt = undefined;
-    if (verb === 'newSession') {
+    if (verb === 'newSession' || verb === 'addWorkspace') {
       this.conversation = {};
+      this.conversations.push(this.conversation);
+    }
+    if (verb === 'removeWorkspace') this.conversation = {};
+    if (verb === 'fork') {
+      const { title, lastPrompt } = this.conversation;
+      this.conversation = { ...(title === undefined ? {} : { title: `Fork: ${title}` }), ...(lastPrompt === undefined ? {} : { lastPrompt }) };
       this.conversations.push(this.conversation);
     }
     if (verb === 'openSession') {

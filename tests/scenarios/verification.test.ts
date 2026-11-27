@@ -1,4 +1,4 @@
-import { held, say } from '@moonshot-ai/testkit/model';
+import { bash, held, say } from '@moonshot-ai/testkit/model';
 import { expect, test, vi } from 'vitest';
 
 import { scenarioFixtures } from './support/scenario';
@@ -6,7 +6,7 @@ import { scenarioFixtures } from './support/scenario';
 test('fails a scenario that leaves a reached hold unreleased', async (context) => {
   const fixtures = scenarioFixtures();
   const run = fixtures.model(context, async (model) => {
-    await fixtures.kap({ model }, async (kap) => {
+    await fixtures.kap({ ...context, model }, async (kap) => {
       model.script(held('forgotten', say('late')));
       const session = await kap.createSession();
       await kap.prompt(session.id, 'go');
@@ -19,7 +19,7 @@ test('fails a scenario that leaves a reached hold unreleased', async (context) =
 test('passes the same scenario once it releases the hold', async (context) => {
   const fixtures = scenarioFixtures();
   const run = fixtures.model(context, async (model) => {
-    await fixtures.kap({ model }, async (kap) => {
+    await fixtures.kap({ ...context, model }, async (kap) => {
       model.script(held('released', say('late')));
       const session = await kap.createSession();
       await kap.prompt(session.id, 'go');
@@ -31,11 +31,27 @@ test('passes the same scenario once it releases the hold', async (context) => {
   await expect(run).resolves.toBeUndefined();
 });
 
+test('fails a scenario that ends while a background command it started is still running', { timeout: 60_000 }, async (context) => {
+  const fixtures = scenarioFixtures();
+  const run = fixtures.model(context, async (model) => {
+    await fixtures.kap({ ...context, model }, async (kap) => {
+      model.script(bash({ command: 'sleep 60', description: 'long sleep', run_in_background: true }), say('started it'));
+      const socket = await kap.connect();
+      const session = await kap.createSession();
+      await socket.subscribe(session.id);
+      await kap.prompt(session.id, 'start a long command in the background');
+      await socket.waitFor((frame) => frame.type === 'task' && frame['status'] === 'running' && frame['detached'] === true);
+      await socket.waitFor((frame) => frame.type === 'turn.ended' && frame['session_id'] === session.id);
+    });
+  });
+  await expect(run).rejects.toMatchObject({ name: 'KapInvariantError', message: expect.stringMatching(/is still busy when the test ends \(activity background/) });
+});
+
 test('reports model requests, WebSocket frames and server logs when teardown fails', async (context) => {
   const fixtures = scenarioFixtures();
   const failureHooks: Parameters<typeof context.onTestFailed>[0][] = [];
   const run = fixtures.model({ ...context, onTestFailed: (hook) => { failureHooks.push(hook); } }, async (model) => {
-    await fixtures.kap({ model }, async (kap) => {
+    await fixtures.kap({ ...context, model }, async (kap) => {
       model.script(held('unfinished', say('later')));
       const session = await kap.createSession();
       const socket = await kap.connect();
@@ -64,7 +80,7 @@ test('reports model requests, WebSocket frames and server logs when teardown fai
 test('subscribes to an existing KAP session twice and reports which requested agent failed', async (context) => {
   const fixtures = scenarioFixtures();
   await fixtures.model(context, async (model) => {
-    await fixtures.kap({ model }, async (kap) => {
+    await fixtures.kap({ ...context, model }, async (kap) => {
       const socket = await kap.connect();
       const session = await kap.createSession();
       await socket.subscribe(session.id);

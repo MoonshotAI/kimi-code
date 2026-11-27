@@ -29,6 +29,7 @@ export class ProjectSkillCatalogService extends Disposable implements IProjectSk
 
   private readonly sources: readonly ISkillSource[];
   private readonly sourceLoadTails = new Map<ISkillSource, Promise<void>>();
+  private readonly changedSources: ISkillSource[] = [];
   readonly ready: Promise<void>;
   private readonly onDidChangeEmitter = this._register(new Emitter<string>());
   readonly onDidChange: Event<string> = this.onDidChangeEmitter.event;
@@ -50,14 +51,7 @@ export class ProjectSkillCatalogService extends Disposable implements IProjectSk
       (a, b) => a.priority - b.priority,
     );
     for (const s of this.sources) {
-      if (s.onDidChange)
-        this._register(
-          s.onDidChange(() => {
-            void this.reloadSource(s.id).catch((error: unknown) => {
-              this.log?.warn(`skill source "${s.id}" reload failed: ${String(error)}`);
-            });
-          }),
-        );
+      if (s.onDidChange) this._register(s.onDidChange(() => this.queueSourceChange(s)));
     }
     this.ready = this.loadAll();
     void this.ready.catch(() => undefined);
@@ -112,6 +106,29 @@ export class ProjectSkillCatalogService extends Disposable implements IProjectSk
       await this.loadSource(s);
     }
     this.remerge();
+  }
+
+  private queueSourceChange(source: ISkillSource): void {
+    if (this.changedSources.length === 0) queueMicrotask(() => void this.reloadChangedSources());
+    this.changedSources.push(source);
+  }
+
+  private async reloadChangedSources(): Promise<void> {
+    const changed = this.changedSources.splice(0);
+    const loaded = new Set<ISkillSource>();
+    await Promise.all([...new Set(changed)].map(async (source) => {
+      try {
+        await this.loadSource(source);
+        loaded.add(source);
+      } catch (error) {
+        this.log?.warn(`skill source "${source.id}" reload failed: ${String(error)}`);
+      }
+    }));
+    if (loaded.size === 0) return;
+    this.remerge();
+    for (const source of changed) {
+      if (loaded.has(source)) this.onDidChangeEmitter.fire(source.id);
+    }
   }
 
   private async reloadSource(id: string): Promise<void> {

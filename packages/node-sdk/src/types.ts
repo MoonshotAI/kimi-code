@@ -429,6 +429,11 @@ export interface ReloadSessionInput extends ResumeSessionInput {
   readonly forcePluginSessionStartReminder?: boolean;
 }
 
+export interface MoveSessionInput {
+  readonly id: string;
+  readonly workDir: string;
+}
+
 export interface AddAdditionalDirInput {
   readonly id: string;
   readonly path: string;

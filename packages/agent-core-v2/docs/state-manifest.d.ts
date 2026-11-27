@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 60 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 61 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/project/projectDirs/projectDirsService.ts
@@ -109,6 +109,7 @@
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
+//     workdirMove                                     src/agent/workdirMove/workdirMoveOps.ts
 
 /** App-scope keys registered into IAppStateService. */
 export interface AppStateSnapshot {
@@ -1208,6 +1209,20 @@ export interface AgentStateSnapshot {
     readonly parameters: Record<string, unknown>;
     readonly disclosure?: 'inline' | 'deferred';
   }>;
+  // src/agent/workdirMove/workdirMoveOps.ts
+  // replayable · durable — folds: EnvironmentSetBinding
+  'workdirMove': /* WorkdirMoveState — packages/agent-core-v2/src/agent/workdirMove/workdirMoveOps.ts */ {
+    readonly originCwd?: string;
+    readonly pendingBaseline?: /* WorkdirMoveBaseline — packages/agent-core-v2/src/agent/environmentBinding/environmentBindingOps.ts */ {
+      readonly cwd: string;
+      readonly checkoutRoot: string;
+      readonly projectAgentsMd: readonly /* ProjectAgentsMdBelief — packages/agent-core-v2/src/agent/environmentBinding/environmentBindingOps.ts */ {
+        readonly relativePath: string;
+        readonly path: string;
+        readonly hash: string;
+      }[];
+    };
+  };
   // src/features/fileHistory/fileHistoryOps.ts
   // replayable · durable — folds: FileHistoryCheckpointed, FileHistoryTracked
   'fileHistory': /* FileHistoryState — packages/agent-core-v2/src/features/fileHistory/fileHistory.ts */ {

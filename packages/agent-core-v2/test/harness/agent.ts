@@ -1436,6 +1436,7 @@ export class AgentTestContext {
                 return harnessBinding;
               },
               bind: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              rebindLocalWorkDir: async ({ cwd }) => ({ environmentId: 'local', cwd }),
             });
             const environment = new LocalEnvironment(this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
@@ -2186,7 +2187,23 @@ export class AgentTestContext {
     }));
   }
 
-  async expectResumeMatches(): Promise<void> {
+  expectResumeMatches(): Promise<void> {
+    return this.checkResume((resumed) => {
+      // oxlint-disable-next-line jest/no-standalone-expect
+      expect(resumeStateSnapshot(resumed)).toEqual(resumeStateSnapshot(this));
+    });
+  }
+
+  expectResumeSendsTheSameHistory(): Promise<void> {
+    return this.checkResume((resumed) => {
+      // oxlint-disable-next-line jest/no-standalone-expect -- the harness checks the resume for the test that awaits it
+      expect(resumeStateSnapshot(resumed)).toEqual(resumeStateSnapshot(this));
+      // oxlint-disable-next-line jest/no-standalone-expect -- the harness checks the resume for the test that awaits it
+      expect(nextRequestMessages(resumed)).toEqual(nextRequestMessages(this));
+    });
+  }
+
+  private async checkResume(check: (resumed: AgentTestContext) => void): Promise<void> {
     await this.waitForSessionMetadata();
     await this.drainWirePersistence();
     const configSnapshot = structuredClone(this.get(IConfigService).getAll() as KimiConfig);
@@ -2214,8 +2231,7 @@ export class AgentTestContext {
         await resumed.dispatchRecordsOnly(nextRecords);
       }
 
-      // oxlint-disable-next-line jest/no-standalone-expect
-      expect(resumeStateSnapshot(resumed)).toEqual(resumeStateSnapshot(this));
+      check(resumed);
     } finally {
       await resumed.waitForSessionMetadata();
       await resumed.dispose();
@@ -2625,6 +2641,11 @@ function stripUndefinedFields<T extends object>(value: T): T {
   return Object.fromEntries(
     Object.entries(value).filter(([, nested]) => nested !== undefined),
   ) as T;
+}
+
+function nextRequestMessages(ctx: AgentTestContext): readonly unknown[] {
+  const { messages } = ctx.get(IAgentLoopService).previewRequestContent();
+  return projectContext(messages as readonly ContextMessage[]).map(({ attributes: _attributes, ...message }) => message);
 }
 
 function resumeContextSnapshot(ctx: AgentTestContext) {

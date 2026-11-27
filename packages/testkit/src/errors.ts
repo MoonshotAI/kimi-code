@@ -19,6 +19,26 @@ export class FakeModelClosedError extends TestkitError {
   }
 }
 
+export class KapInvariantError extends TestkitError {
+  readonly problems: readonly string[];
+
+  constructor(problems: readonly string[]) {
+    super([`The KAP conversation broke ${problems.length} protocol invariant(s) by the end of the test:`, ...problems.map((problem) => `- ${problem}`)].join('\n'));
+    this.name = 'KapInvariantError';
+    this.problems = problems;
+  }
+}
+
+export class KapSchemaError extends TestkitError {
+  readonly problems: readonly string[];
+
+  constructor(problems: readonly string[]) {
+    super([`The KAP server sent ${problems.length} kind(s) of message that do not match its published schema (/openapi.json, /asyncapi.json):`, ...problems.map((problem) => `- ${problem}`)].join('\n'));
+    this.name = 'KapSchemaError';
+    this.problems = problems;
+  }
+}
+
 export class FakeModelVerificationError extends TestkitError {
   readonly problems: readonly string[];
 

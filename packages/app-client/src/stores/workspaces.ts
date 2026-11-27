@@ -20,6 +20,7 @@ import {
   logWarn,
   mergeWorkspaces,
   migrateWorkspaceLocalOverrides,
+  nativePath,
   panelRoots,
   pruneRecencyFloor,
   pinnedWorkspaceKey,
@@ -152,13 +153,16 @@ export interface SessionGroupsMapping {
 }
 
 function shortenHome(path: string, home: string | null): string {
-  if (home && path.startsWith(home)) {
-    const rest = path.slice(home.length);
-    return rest ? `~${rest}` : '~';
+  const display = nativePath(path);
+  if (!home) {
+    const m = path.match(/^\/(?:Users|home)\/[^/]+(\/.*)?$/);
+    return m ? `~${m[1] ?? ''}` : display;
   }
-  const m = path.match(/^\/(?:Users|home)\/[^/]+(\/.*)?$/);
-  if (m) return `~${m[1] ?? ''}`;
-  return path;
+  const homeKey = workspaceRootKey(home);
+  const pathKey = workspaceRootKey(path);
+  if (pathKey === homeKey) return '~';
+  if (!pathKey.startsWith(`${homeKey}/`)) return display;
+  return `~${display.slice(home.replace(/[\\/]+$/, '').length)}`;
 }
 
 function applyWorkspaceNameOverrides(workspaces: AppWorkspace[]): AppWorkspace[] {
@@ -291,7 +295,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
       name: w.name,
       root: w.root,
       hostId: w.hostId,
-      shortPath: w.hostId === undefined ? shortenHome(w.root, fsHome.value) : w.root,
+      shortPath: w.hostId === undefined ? shortenHome(w.root, fsHome.value) : nativePath(w.root),
       additionalDirs: w.additionalDirs,
       sessionCount: w.sessionCount,
     }));
@@ -872,8 +876,9 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   }): Promise<boolean> {
     const current = workspaces.value.find((w) => w.id === input.id);
     const primary = input.primary;
-    if (primary !== undefined && current !== undefined && primary !== current.root) {
-      if (!current.additionalDirs.includes(primary)) {
+    const primaryKey = primary === undefined ? undefined : workspaceRootKey(primary);
+    if (primary !== undefined && current !== undefined && primaryKey !== workspaceRootKey(current.root)) {
+      if (!current.additionalDirs.some((dir) => workspaceRootKey(dir) === primaryKey)) {
         const added = await saveWorkspace({
           id: input.id,
           additionalDirs: [...current.additionalDirs, primary],
@@ -889,8 +894,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     if (input.name !== undefined) patch.name = input.name;
     if (input.additionalDirs !== undefined) patch.additionalDirs = input.additionalDirs;
     const previousWorkspace = workspaces.value.find((w) => w.id === input.id);
-    const previousDirs = new Set(previousWorkspace?.additionalDirs ?? []);
-    const projectConfigDirs = new Set(input.projectConfigDirs ?? []);
+    const previousDirs = new Set((previousWorkspace?.additionalDirs ?? []).map(workspaceRootKey));
+    const projectConfigDirs = new Set((input.projectConfigDirs ?? []).map(workspaceRootKey));
     try {
       const ws = await getKimiWebApi().updateWorkspace(input.id, patch);
       const overrides = loadWorkspaceNameOverridesById();
@@ -900,7 +905,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
       }
       upsertWorkspacePreserveOrder(ws);
       if (input.additionalDirs !== undefined) {
-        const nextDirs = new Set(ws.additionalDirs);
+        const nextDirs = new Set(ws.additionalDirs.map(workspaceRootKey));
         for (const dir of nextDirs) {
           if (!previousDirs.has(dir)) {
             track('workspace_dir_added', {

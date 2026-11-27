@@ -85,4 +85,16 @@ test('取消正在准备的回复后，同一会话仍能继续', async ({ kap, 
 - **测试重启时**，`await kap.restart()` 会关闭当前 WebSocket 和服务，再用同一份 home 和 token 启动。重启后重新读取 `kap.turns(session.id)` 可以检验历史是否恢复。要继续观察实时事件，重新 `connect()` 并订阅。用例使用进程级 `HOME`，同一 worker 内的 KAP 场景应顺序运行。[重启后继续会话](../../../tests/scenarios/conversation.test.ts#L203)
 - **需要全新进程时**，例如验证冷启动、崩溃恢复或旧版本数据，用 `await KapProcess.start({ home: testHome })` 以 `kimi web --port 0 --json` 启动 CLI 子进程。它从标准输出的就绪行读取地址和 token，只接受回环地址。返回的对象和 `kap` 一样提供 `prompt`、`waitIdle`、`turns`、`connect` 等会话操作。`close()` 通过认证的 `/api/v1/shutdown` 正常退出，要求退出码为 0；`crash()` 强杀整个进程树。两者都会检查子进程有没有访问回环以外的地址。进程内的 `kap.restart()` 复用同一个 Node 进程，模块级状态会保留，验证冷启动时用子进程。`await server.restart()` 正常退出后、`restart('crash')` 强杀后，用同一数据目录和同一端口起新进程，同一个对象继续使用；已打开的客户端按原地址重连。`--json` 模式的 token 只在单个进程内有效，重启后 `server.token` 会换成新值。见[重启后自动重连](../../app-core/test/reconnect/server-restart.test.ts)。[冷恢复与发布版数据](../../../tests/scenarios/cold-recovery.test.ts) · [子进程驱动](../src/kap/process.ts)
 - **使用场景夹具时**，夹具在停止服务前验证脚本，因此能报告仍未放行的命名挂起点。随后关闭连接与服务、还原 `HOME`、删除自建的临时 home，并由模型夹具关闭模型。如果直接调用 `startKap()`，要自行验证并关闭传入的模型。调用方提供的 home 也由调用方清理。[驱动的资源管理](../src/kap/harness.ts) · [Vitest 夹具](../src/vitest/index.ts)
+- **打开 `verifyInvariants` 时**，用例通过后夹具再调用 `verifyKapInvariants(kap)`，按客户端能看到的协议状态检查每个会话，之后再验证一次模型，会话落定期间发出的请求也会被检查。检查的会话包括用 `kap.createSession()`、`kap.fork()` 创建的，和任一 WebSocket 上出现过的。`tests/scenarios` 的每个场景都打开了这项检查。出现下面任一情况，用例失败，错误里逐条列出：
+  - 到截止时间，会话还没回到空闲：`activity` 不是 `idle`、还有待回答的交互，或提示队列不空。截止时间是整次检查共用的 `TIMEOUTS.wait`，可用 `timeoutMs` 改。后台命令也算，场景结束前要等它结束，或用 `kap.cancel(id, { includeBackground: true })` 停掉。
+  - 会话空闲后，还有回合或条目的 `status` 是 `running`。查的范围是主 agent、客户端订阅过的 agent，以及工具调用的 `agent_refs` 指向的子 agent。
+  - 订阅了某个 agent 的客户端，把帧折叠出的回合和 REST 返回的不一样。agent 结束、帧流随之结束的也照样比较，客户端主动取消订阅的不比较。订阅快照分了页（`has_more`）时，这一页之前的回合不比较，但快照之后才开始的回合（例如撤销之后重发的）照样比较。
+  - 客户端最后收到的 `session` 帧，在 `activity`、`pending_interaction`、`last_turn_outcome`、`archived` 上和 REST 不一致。帧里没有 `pending_interaction`（例如 `archived` 帧）时按 `none` 算。
+  - 客户端收到某条交互的 `pending` 帧之后、结束帧之前，又收到同一会话说没有待处理交互的 `session` 帧。相信这一帧的客户端会把还开着的审批或提问清掉。客户端不再接收这个会话之后（主动取消订阅，或它订阅的最后一个子 agent 结束了），以及收到会话的 `archived`、`deleted` 帧之后，不再按之前的交互判断。
+
+  REST 已经不认识的会话和 agent（HTTP 404 或 `404xx` 错误码），例如删掉的会话、关掉的 side agent，直接跳过。
+
+  随后夹具调用 `verifyKapSchemas(kap)`，用 Ajv 按被测服务自己发布的 `/openapi.json` 和 `/asyncapi.json` 校验：用例和不变量检查通过 `kap.rest` 请求到的每个 `/api/` 路由的 JSON 响应，以及 `kap` 的客户端收到的每一帧。响应的路由、方法或 HTTP 状态码没有声明，或者响应体不合声明的 schema，就算违规；帧的 `type` 不是服务端消息、帧不合该消息的 payload，或者帧不是 JSON 对象，也算违规。同一类问题只列一次，附上出现次数和第一个违规值。发布的 schema 由服务端的 zod schema 生成，zod 用 refine 表达的约束（例如 ISO 时间格式）不在检查范围内。[帧与响应的 schema 检查](../src/kap/schemas.ts)
+
+  自己用 `startKap()` 时可以直接调用这两个检查。直接调用 `kap` 夹具函数的测试，要把测试上下文和模型一起传进去：`fixtures.kap({ ...context, model }, run)`。[协议不变量](../src/kap/invariants.ts) · [接线自测](../../../tests/scenarios/verification.test.ts)
 - **定位失败时**，先看失败输出里的请求编号、通道、状态和步骤。若模型已响应但客户端卡住，再结合最近的 WebSocket 帧和服务日志判断停在哪个回合。夹具各保留最近 32 条帧与日志摘要，客户端连接后才有帧可看。`scenarioFixtures()` 默认采集服务日志，自定义 logger 或 logLevel 时，夹具会提示其诊断日志不可用。[失败诊断与快照错误示例](../../../tests/scenarios/verification.test.ts)

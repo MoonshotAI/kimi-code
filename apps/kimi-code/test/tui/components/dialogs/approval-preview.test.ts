@@ -1,5 +1,6 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { TuiAltScreen, type Terminal } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   ApprovalPreviewViewer,
@@ -162,5 +163,74 @@ describe('ApprovalPreviewViewer', () => {
     const first = viewer.render(80).join('\n');
     const second = viewer.render(80).join('\n');
     expect(first).toBe(second);
+  });
+
+  it('supports fullscreen mouse wheel on body and chrome edges, footer hover, clean diff copy, and cancel click', async () => {
+    const prevChalkLevel = (await import('chalk')).default.level;
+    (await import('chalk')).default.level = 3;
+    let copied = '';
+    const onClose = vi.fn();
+    const vt = new VirtualTerminal(90, 12);
+    const ui = new TuiAltScreen(vt, undefined, undefined, {
+      copySelection: async (text) => {
+        copied = text;
+        return true;
+      },
+    });
+    const content = Array.from({ length: 40 }, (_, i) => `preview-line-${String(i + 1)}`).join('\n');
+    const viewer = new ApprovalPreviewViewer(
+      {
+        block: { type: 'file_content', path: 'src/demo.ts', content },
+        onClose,
+        requestRender: () => {
+          ui.requestRender();
+        },
+      },
+      vt,
+    );
+    ui.setLayoutRoot(viewer);
+    ui.start();
+    ui.setFocus(viewer);
+    await vt.waitForRender();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 500);
+    try {
+      let screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('preview-line-1');
+      expect(screen.at(-1)).toContain('1-8 / 40');
+
+      vt.sendInput('\u001B[<65;10;1M');
+      vt.sendInput('\u001B[<65;10;2M');
+      vt.sendInput('\u001B[<65;10;12M');
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('preview-line-4');
+      expect(screen.at(-1)).toContain('4-11 / 40');
+
+      vt.sendInput('\u001B[<0;4;3M');
+      vt.sendInput('\u001B[<32;25;4M');
+      vt.sendInput('\u001B[<0;25;4m');
+      await vt.waitForRender();
+      expect(copied).not.toContain('│');
+      expect(copied).toContain('preview-line-4');
+
+      const footerLine = screen.at(-1)!;
+      const cancelCol = footerLine.indexOf('cancel') + 2;
+      vt.sendInput(`\u001B[<35;${String(cancelCol)};12M`);
+      await vt.waitForRender();
+      expect(viewer.render(90).at(-1)).toContain('\u001B[4m');
+
+      vt.sendInput('\u001B[<35;10;5M');
+      await vt.waitForRender();
+      expect(viewer.render(90).at(-1)).not.toContain('\u001B[4m');
+
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};12M`);
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};12m`);
+      await vt.waitForRender();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+      ui.stop();
+      (await import('chalk')).default.level = prevChalkLevel;
+    }
   });
 });

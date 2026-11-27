@@ -64,6 +64,10 @@ class WebDriver extends PageDriver {
     this.size = size;
   }
 
+  reloadPage(): Promise<void> {
+    return this.reloadWindow();
+  }
+
   async ready(address: string): Promise<void> {
     let starting = true;
     const crashed = this.server.closed.then(() => {

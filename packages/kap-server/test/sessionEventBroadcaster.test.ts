@@ -104,9 +104,15 @@ class FakeAgentBus {
   }
 }
 
+interface FakeCoreEvent {
+  type: string;
+  payload: unknown;
+  time?: number;
+}
+
 class FakeEventBus {
-  private handlers: Array<(e: { type: string; payload: unknown }) => void> = [];
-  subscribe(handler: (e: { type: string; payload: unknown }) => void) {
+  private handlers: Array<(e: FakeCoreEvent) => void> = [];
+  subscribe(handler: (e: FakeCoreEvent) => void) {
     this.handlers.push(handler);
     return {
       dispose: () => {
@@ -115,7 +121,7 @@ class FakeEventBus {
       },
     };
   }
-  emit(e: { type: string; payload: unknown }): void {
+  emit(e: FakeCoreEvent): void {
     for (const h of [...this.handlers]) h(e);
   }
 }
@@ -807,6 +813,29 @@ describe('SessionEventBroadcaster', () => {
       session: { id: 'cold-1', workspace_id: 'wd_cold_000000000000' },
     });
     expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
+  it('reports the archive in its frame when the session summary predates it', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+    const archivedAt = Date.parse('2026-02-01T00:00:00.000Z');
+
+    eventBus.emit({
+      type: 'event.session.archived',
+      time: archivedAt,
+      payload: {
+        sessionId: 'cold-1',
+        workspaceId: 'wd_cold_000000000000',
+        session: { ...sessionInfo('cold-1', 'wd_cold_000000000000'), activity: 'turn', pending_interaction: 'approval' },
+      },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'session',
+      change: 'archived',
+      session: { id: 'cold-1', archived: true, archived_at: '2026-02-01T00:00:00.000Z', activity: 'idle', pending_interaction: undefined },
+    });
   });
 
   it('fans out event.session.restored to every connection, including for cold sessions', async () => {
