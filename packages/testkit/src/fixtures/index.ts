@@ -75,7 +75,7 @@ export {
   type StartTestProcessOptions,
 } from '#/fixtures/process';
 export { repoPath } from '#/fixtures/repo';
-export { createNormalizer, FIXED_TIME, normalize, type NormalizeOptions, type Normalizer } from '#/fixtures/normalize';
+export { createNormalizer, FIXED_TIME, normalize, slashPathOf, type NormalizeOptions, type Normalizer } from '#/fixtures/normalize';
 export { contentDigest, directoryChanges, snapshotDirectory, type DirectoryChange, type DirectorySnapshot } from '#/fixtures/snapshot';
 export { TIMEOUTS } from '#/fixtures/timeouts';
 export {

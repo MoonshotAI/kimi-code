@@ -194,17 +194,7 @@ export async function runLlmRequest(
     const started: LlmRunEvent = llmStartedEvent(request);
     log.info({ ...started }, 'llm event');
     control.onEvent?.(started);
-    const sizedRequest: LlmRequest =
-      request.content.usedTokens === undefined
-        ? {
-            ...request,
-            content: {
-              ...request.content,
-              usedTokens: estimateUsedContextTokens(request.content.messages, request.profile),
-            },
-          }
-        : request;
-    outcome = await runAttempts(sizedRequest, control, execution.recoveries);
+    outcome = await runAttempts(request, control, execution.recoveries);
   } catch (error) {
     if (control.signal.aborted || isAbortError(error)) {
       outcome = { type: 'aborted', message: null, usage: undefined };
@@ -299,6 +289,16 @@ async function runAttempts(
       if (signal.aborted) {
         return { type: 'aborted', message: null, usage: undefined };
       }
+    }
+
+    if (resolvedRequest.content.usedTokens === undefined) {
+      resolvedRequest = {
+        ...resolvedRequest,
+        content: {
+          ...resolvedRequest.content,
+          usedTokens: estimateUsedContextTokens(resolvedRequest.content.messages, resolvedRequest.profile),
+        },
+      };
     }
 
     control.onAttempt?.(resolvedRequest, { appliedRecoveries: ledger.applied });

@@ -13,9 +13,14 @@ on:
 permissions:
   contents: read
 
+# Only a newer push to a pull request cancels the run in progress. Pushes to
+# main and manual runs never cancel one, so every merged commit gets a
+# finished result and main's state is always known. A newer run on the same
+# branch waits, and GitHub keeps only the latest waiting run. Release branches
+# group by commit, so their runs never wait on each other.
 concurrency:
   group: ci-${{ github.ref }}-${{ startsWith(github.ref, 'refs/heads/release/') && github.sha || '' }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -177,7 +182,7 @@ jobs:
       - name: Release workflow tests
         if: ${{ !cancelled() }}
         run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
-      - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
+      - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs scripts/e2e-nightly-notify.test.mjs
       - run: pnpm run sherif
       - name: Check new code duplication
         id: duplication

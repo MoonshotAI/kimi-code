@@ -27,7 +27,7 @@ import { fakeMcpServer, readMcpCalls, readMcpStarts, writeMcpConfig, type McpSer
 import { startFakeMcpHttpServer } from '#/fixtures/mcp-http';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
-import { createNormalizer, FIXED_TIME, normalize } from '#/fixtures/normalize';
+import { createNormalizer, FIXED_TIME, normalize, slashPathOf } from '#/fixtures/normalize';
 import { killProcessTree, readNetworkViolations, TestProcess, type StartTestProcessOptions } from '#/fixtures/process';
 import { repoPath } from '#/fixtures/repo';
 import { contentDigest, directoryChanges, snapshotDirectory } from '#/fixtures/snapshot';
@@ -52,6 +52,18 @@ describe('bashPathOf', () => {
   it('keeps a POSIX path as it is', () => {
     expect(bashPathOf('/tmp/app', 'linux')).toBe('/tmp/app');
     expect(bashPathOf('/private/var/app', 'darwin')).toBe('/private/var/app');
+  });
+});
+
+describe('slashPathOf', () => {
+  it('spells a Windows path with forward slashes, the form the engine reports host paths in', () => {
+    expect(slashPathOf('C:\\Users\\me\\app')).toBe('C:/Users/me/app');
+    expect(slashPathOf('\\\\server\\share\\app')).toBe('//server/share/app');
+  });
+
+  it('keeps a path that already uses forward slashes as it is', () => {
+    expect(slashPathOf('/tmp/app')).toBe('/tmp/app');
+    expect(slashPathOf('D:/work/app')).toBe('D:/work/app');
   });
 });
 
