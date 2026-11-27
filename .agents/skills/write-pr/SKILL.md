@@ -31,8 +31,10 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
    - **Requirement or Bug**：两三句话讲清谁遇到了什么问题、这个 PR 之后能做到什么；有 issue 的写 `Resolve #<number>`，再补一句背景。解决办法留给 Code Changes。
    - **Bug Reproduction Steps**：只有 bug 类 PR 需要；feature 写 `N/A`。步骤已在 issue 里的写 `See linked issue`。
    - **Root Cause**：只有 bug 类 PR 需要；feature 写 `N/A`。说明根因，以及这是根本修复还是绕过。机制要靠时序或状态才说得清的，用图，见"代码变更的可视化大纲"。
+   - **Regression Guard**：只有 bug 类 PR 需要；feature 写 `N/A`。按 `tests/AGENTS.md` 的分流表选主守卫和追加守卫，一行一个，写明修复前是红的证据。
    - **Code Changes**：先判断要不要先建立整体理解，再讲具体变化，见"讲清楚改动"。
-   - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与受影响人群"。验证只写结论：覆盖了哪些场景、哪些没验证；测试文件清单、全量运行结果和修复过程放进折叠块。
+   - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与受影响人群"。覆盖只写结论：哪些场景有测试、哪些没验证。
+   - **How This Was Verified**：只写实际跑过的命令和结果，没跑的写 `Not verified` 和原因。测试文件清单、全量运行结果和修复过程放进折叠块。
    - **Checklist**：勾上所有适用的项。
 
 5. 发布描述：

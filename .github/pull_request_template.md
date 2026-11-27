@@ -24,6 +24,14 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 <!-- Required for bug PRs only. Explain the root cause.
      State whether this is a fundamental fix or a workaround. -->
 
+## Regression Guard
+
+<!-- Required for bug PRs only; write N/A for feature PRs.
+     One row per guard, the primary guard first. Pick each row from the routing table in tests/AGENTS.md.
+     | Routing row (for example 7 or A1) | Where (test file and title, rule, or checklist entry) | Red before the fix |
+     Red before the fix: the command you ran with the fix reverted and the failing lines,
+     or why no runnable proof exists. -->
+
 ## Code Changes
 
 <!-- Help the reviewer understand the change without reading the diff.
@@ -40,6 +48,13 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
      by older versions, external scripts); see .agents/skills/review-pr/surfaces.md.
      Write "None" with evidence if nothing observable changes.
      Then list affected modules and the test coverage for each row. -->
+
+## How This Was Verified
+
+<!-- List the commands you actually ran and what each reported (exit code, passed and failed counts).
+     For each check you did not run, write "Not verified" and why; never report an existing failure as a pass.
+     If the change touches paths, subprocesses, shells or terminal input, name the platforms you
+     checked and how. -->
 
 ## Checklist
 

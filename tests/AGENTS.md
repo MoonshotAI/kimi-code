@@ -6,7 +6,7 @@
 
 ## 测试今天写在哪
 
-回归用例优先补到已有的同层测试文件。用户通过窗口、终端或 ACP 编辑器操作的端到端场景写在 [`tests/e2e`](e2e/AGENTS.md)，也在这里补旧旅程缺失的断言。`apps/desktop/e2e/` 和 `apps/kimi-code/test/e2e/tui/` 是待迁移的旧目录，只为迁移或移除已有用例而改。迁移时保留原用例覆盖的行为，并使用新 E2E 的驱动。`pnpm lint` 里的 `scripts/checks/legacy-e2e.mjs` 按文件冻结这两个目录的用例数，新增会失败。
+回归用例优先补到已有的同层测试文件，修过的 bug 放哪一层按下一节的分流表选。用户通过窗口、终端或 ACP 编辑器操作的端到端场景写在 [`tests/e2e`](e2e/AGENTS.md)，也在这里补旧旅程缺失的断言。`apps/desktop/e2e/` 是待迁移的旧 Desktop 旅程，只为迁移或移除已有用例而改；旧 TUI 旅程的用例已经全部迁走或删除。迁移时先列出原用例覆盖的行为，用新 E2E 的驱动写，确认移除旧用例后这些行为仍有覆盖。`pnpm lint` 里的 `scripts/checks/legacy-e2e.mjs` 按文件冻结旧 E2E 目录的用例数，新增会失败。
 
 | 要观察的行为 | 现有入口 |
 |---|---|
@@ -17,23 +17,57 @@
 | 无界面 CLI 的输出和退出码 | [CLI 测试](../apps/kimi-code/test/cli/)验证命令行入口。 |
 | 客户端如何从协议事件还原会话 | 找到负责消费事件的包，在 [app-core](../packages/app-core/test/) 或 [app-client](../packages/app-client/test/) 的相应测试旁补断言。 |
 
-## 计划中的目录布局
+新开一个测试目录时，在同一改动中更新上表的入口、运行命令和 CI 选测范围。
 
-端到端场景已经接入 [`tests/e2e`](e2e/AGENTS.md)。下列目录是后续迁移的目标布局，当前写新用例以入口表和各包指南为准。
+## 修过的 bug，回归用例放哪
 
-```text
-packages/<包>/test/unit/<模块>/                   模块单测
-apps/<应用>/test/unit/<模块>/                     应用内模块单测
-packages/core/test/integration/<领域>/            纯 core 运行时集成
-packages/agent-core-v2/test/integration/<领域>/   引擎会话集成
-packages/kap-server/test/contract/                KAP 公开契约
-tests/kap/<领域>/                                 从外部驱动的 KAP 场景
-tests/e2e/scenarios/<业务>/                       新 E2E：各个面共用的用户场景
-packages/app-core/test/replay/                    KAP 客户端回放
-packages/app-client/test/replay/                  渲染端状态回放
-```
+修 bug 的 PR 在模板的 Regression Guard 一节写出守卫：一个主守卫，加零到几个追加守卫。守卫不一定是测试，也可以是 lint、类型、收尾检查或评审清单条目。测试标题写用户行为，不写 bug 编号；它守的是哪个 bug，靠 PR 的这一节和 git 历史追溯。
 
-迁移用例时，先列出原用例覆盖的行为，再用新 runner 枚举并运行相应用例，确认移除旧用例后这些行为仍有覆盖。接入一个目录时，在同一改动中更新本指南的入口、运行命令和 CI 选测范围。
+主守卫按下表从上往下取第一个命中的行。测试要跨过修复改动的那段代码，在用户或调用方依赖的边界上观察，不往更高的层放。
+
+| # | 命中条件 | 主守卫放哪 |
+|---|---|---|
+| 1 | 测试、夹具或驱动自己报了假绿或漏报 | 修测试工具，再补一个反例：旧工具上它假绿，新工具上它报错。`tests/e2e/self-test/`、`packages/testkit/test/` |
+| 2 | 确定性测试造不出来：要真实模型、真实的第三方服务或人的判断；或者根因在流程上 | 不写测试。写成评审清单条目，放进根 `AGENTS.md`「改行为之前」的情形清单或 `.agents/skills/review-pr/surfaces.md`；流程问题就改流程。PR 里写明为什么造不出来 |
+| 3 | 权限和安全：某种模式、工具、目标的组合该问没问、该拒没拒，或者鉴权被绕过 | 走真实规则和策略链的测试，表驱动列出对抗变体：`packages/agent-core-v2/test/agent/` 下的 `permissionRules/`、`permissionPolicy/`、`toolApproval/`；服务端鉴权在 `packages/kap-server/test/` |
+| 4 | 触发要已发布版本写的数据、迁移，或者进程崩溃、被强杀 | 冷恢复语料 `tests/scenarios/cold-recovery.test.ts`，新语料用 `pnpm qa:capture-released <版本>` 生成；或者用 `KapProcess` 起真进程的 KAP 场景 |
+| 5 | 触发要多个客户端、断线重连，或者要比较实时和回放 | KAP 场景、录制回放、重连测试：`tests/scenarios/replay.test.ts`、`packages/app-core/test/replay/`、`packages/app-core/test/reconnect/` |
+| 6 | 坏在宿主的接线：配置怎么读进来、agent 按什么顺序建起来、恢复时先做什么。TUI（经 SDK）、Desktop 和 Web（经 kap-server）、ACP（经 acp-server）各有一份 | 满足下面进新 E2E 的第 2 到 4 条时放新 E2E，用场景选项 `config`、`mcp` 写出用户会写的配置。进不了的（例如只在 `kimi -p` 上出现，或者缺动作），放那个宿主自己的测试：`apps/kimi-code/test/cli/`、`packages/node-sdk/test/`、`packages/kap-server/test/`、`packages/acp-server/test/`。不放第 10 行：引擎会话测试用 testkit 自己的引导，恰好绕过了宿主的接线 |
+| 7 | 满足下面「进新 E2E 的条件」 | 新 E2E：`tests/e2e/scenarios/<业务>/<行为>.spec.ts` |
+| 8 | 用户看得到，但只有一个面有这个功能，或只在一个面上出错（渲染、布局、按键）；也包括四个面之外的入口：VS Code 扩展、`kimi -p`、SDK | 那个面上看得到问题的最低一层：TUI 在 `apps/kimi-code/test/tui/`；客户端状态和组件在 `packages/app-core/test/`、`packages/app-client/test/`、`packages/app-components/test/`；Desktop 主进程和渲染端在 `apps/desktop/tests/`；VS Code 扩展在 `apps/vscode/test/`；`kimi -p` 在 `apps/kimi-code/test/cli/`；SDK 在 `packages/node-sdk/test/`。必须经过真窗口或真终端才看得到的，写新 E2E 的 `onlyOn` 场景 |
+| 9 | 协议客户端直接看到的：KAP 的字段、错误码、帧，ACP 的消息 | `packages/kap-server/test/apiSurface.test.ts`、`tests/scenarios/`、`packages/acp-server/test/` |
+| 10 | 坏在引擎的回合编排或工具里，看得到的结果是模型收到的请求或回合的结局 | 引擎会话测试，放在 `packages/agent-core-v2/test/integration/conversation/`：经会话 RPC 驱动（`testkitAgentFixtures()`），断言下一次模型请求和回合结果，不断言内部事件名；要精确交错时用 `held` 等待点先卡住。对引擎来说，「模块公开接口」就是会话 RPC，内部服务的单测只用来列变体；时序只有在模块边界上才能稳定制造的，按第 11 行 |
+| 11 | 时序交错只有在某个模块的边界上才能稳定制造 | 这个模块公开接口的单测，状态空间大的再加属性测试，例如 `apps/desktop/tests/main/browser/browser-overlay.test.ts` |
+| 12 | 规模、长时间运行 | 确定性的计数或预算，不用墙钟时间，例如 `pnpm qa:history-perf` |
+| 13 | 纯视觉、文案 | 组件测试或截图，不进 E2E：`packages/app-components/test/` |
+| 14 | 其余：引擎之外的独立模块，用它的公开接口就能复现（解析、映射、边界值） | 模块公开接口的单测，表驱动列出变体，例如 `packages/pi-tui/test/` |
+
+进新 E2E 要四条同时满足，第 7 行和下面的 A3 都按这四条判断：
+
+1. 坏在各个面各自实现的那一层：ACP 的事件映射、TUI 的事件处理和渲染、客户端状态，或者宿主的接线（第 6 行）。只坏在引擎里的不进，放进来等于把引擎测四遍。
+2. 用户自己就能触发，现有动作就看得到。触发靠提示词、场景选项、testkit 剧本里的故障步骤（`httpError`、`disconnect`、`held` 等）和 `restart()`；观察靠 `tests/e2e/support/verbs.ts` 里已有的动作。缺动作的不在修复 PR 里顺手加：每加一个动作，每个面都要补正例和反例，要单独提。
+3. 能确定地造出来：时序靠 `held` 等待点、门控文件或 hook 卡住，不靠运气。
+4. 现有场景里还没有同类行为。已经有了，就在那个场景旁边加变体，或者下沉到低层。
+
+追加守卫，在主守卫之外逐条看：
+
+| # | 条件 | 追加什么 |
+|---|---|---|
+| A1 | 根因是一种写法，换个地方还会再犯 | lint、类型或代码生成，报错里写清怎么修。只有这个写法就是全部根因、用户看到的后果也没有别的来路时，它才能代替主守卫 |
+| A2 | 这类问题任何旅程都可能踩到 | 收尾检查：新 E2E 加在 `tests/e2e/support/scenario.ts` 的收尾里，KAP 场景加在 `packages/testkit/src/vitest/index.ts` 的 `kapFixtures` 收尾里 |
+| A3 | 用户的核心回路坏了，主守卫不在新 E2E，新 E2E 里也还没有这类行为的场景 | 满足进新 E2E 的条件时，补一个体验场景，只放代表性的一例，变体留在主守卫那一层 |
+| A4 | 坏的是改写时丢掉的旧行为 | 主守卫必须在公开边界上（会话 RPC、KAP、ACP、界面），不能在引擎内部；原来只有内部测试守着的，搬上来 |
+| A5 | 只在 macOS 或 Windows 上出现 | 层照上表选，再确认这一层在这个平台上真的跑：主 CI 只跑 Linux；新 E2E 另在 Windows 上跑，但不是每个 PR 都跑，也不跑 macOS。不跑的写进 PR，交给负责人定 |
+
+Regression Guard 一节按守卫类型写出修复前是红的证明；测试类守卫没有这个证明就不算数：
+
+| 守卫 | 怎么证明 |
+|---|---|
+| 测试 | 撤回修复改的源码、保留测试，跑这条测试，把失败的几行贴进 PR。新 E2E 撤回后要重新构建，因为 Desktop 和 Web 跑的是构建产物。撤回后仍然是绿的，说明它没复现原来的故障 |
+| lint、类型 | 在修复前的代码上跑检查，贴出报错 |
+| 收尾检查 | 在修复前的代码上，至少有一个现有场景因它变红 |
+| 测试工具的反例 | 旧工具上反例通过，即复现了假绿；新工具上它报错 |
+| 评审清单条目 | 没有能运行的证明。写明从原来那个 PR 的 diff 里，能不能读出触发条件 |
 
 ## 什么时候用 testkit
 
