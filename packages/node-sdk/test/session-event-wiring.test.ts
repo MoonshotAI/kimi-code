@@ -196,6 +196,30 @@ describe('SessionEventWiring status snapshot fold', () => {
     });
   });
 
+  it('forwards prompt.submitted and prompt.aborted so hosts can settle a prompt cancelled before its turn', () => {
+    const sub = new FakeAgentHandle('agent-1');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      sub.bus.emit({
+        type: 'prompt.submitted',
+        promptId: 'prompt-1',
+        userMessageId: 'prompt-1',
+        status: 'running',
+        content: [{ type: 'text', text: 'hello' }],
+        origin: { kind: 'user' },
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+      sub.bus.emit({ type: 'prompt.aborted', promptId: 'prompt-1', abortedAt: '2026-01-01T00:00:01.000Z' });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: 'prompt.submitted', sessionId: 's1', agentId: 'agent-1', promptId: 'prompt-1', status: 'running' });
+    expect(events[1]).toMatchObject({ type: 'prompt.aborted', sessionId: 's1', agentId: 'agent-1', promptId: 'prompt-1' });
+  });
+
   it('keeps prompt.completed(completed) on the internal bus', () => {
     const reason = 'completed';
     const sub = new FakeAgentHandle('agent-1');
