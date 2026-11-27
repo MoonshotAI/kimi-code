@@ -10,7 +10,6 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { Error2 } from '#/_base/errors/errors';
-import { ILogService } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
@@ -25,7 +24,6 @@ import {
   type ProviderConfig,
 } from '#/provider-catalog/provider/provider';
 import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import {
   DEFAULT_MODEL_SECTION,
@@ -50,8 +48,6 @@ interface StaticExclusion {
 }
 
 const EMPTY_EXCLUSION: StaticExclusion = { providers: {}, models: {} };
-const RETIRED_MODELS_SCOPE = 'model-redirects';
-const RETIRED_MODELS_KEY = 'retired';
 
 export class ProviderDiscoveryService extends Disposable implements IProviderDiscoveryService {
   declare readonly _serviceBrand: undefined;
@@ -61,9 +57,6 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
 
   private refreshChain: Promise<unknown> = Promise.resolve();
   private readonly retiredModels = new Map<string, string>();
-  private retiredModelsSaved: Promise<void> = Promise.resolve();
-  private configuredAliases: ReadonlySet<string>;
-  readonly ready: Promise<void>;
 
   constructor(
     @IProviderCatalogService private readonly providerService: IProviderCatalogService,
@@ -71,17 +64,8 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
-    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
-    @ILogService private readonly log: ILogService,
   ) {
     super();
-    this.configuredAliases = this.modelAliases();
-    this._register(
-      this.config.onDidSectionChange(({ domain }) => {
-        if (domain === MODELS_SECTION) this.forgetReusedAliases();
-      }),
-    );
-    this.ready = this.loadRetiredModels();
   }
 
   refreshProviderModels(
@@ -100,68 +84,6 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
     if (alias in models) return undefined;
     const replacement = this.retiredModels.get(alias);
     return replacement !== undefined && replacement in models ? replacement : undefined;
-  }
-
-  async retireModels(retired: readonly RetiredModel[]): Promise<void> {
-    if (retired.length === 0) return;
-    await this.ready;
-    for (const { from, to } of retired) {
-      for (const [alias, replacement] of this.retiredModels) {
-        if (replacement !== from) continue;
-        if (alias === to) this.retiredModels.delete(alias);
-        else this.retiredModels.set(alias, to);
-      }
-      this.retiredModels.delete(to);
-      this.retiredModels.set(from, to);
-    }
-    await this.saveRetiredModels();
-    for (const event of retired) this._onDidRetireModel.fire(event);
-  }
-
-  private async loadRetiredModels(): Promise<void> {
-    let stored: Readonly<Record<string, unknown>> | undefined;
-    try {
-      stored = await this.docs.get<Readonly<Record<string, unknown>>>(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY);
-    } catch (error) {
-      this.log.warn('failed to read retired model redirects', { error: String(error) });
-      return;
-    }
-    const configured = this.modelAliases();
-    let dropped = false;
-    for (const [from, to] of Object.entries(stored ?? {})) {
-      if (typeof to !== 'string' || this.retiredModels.has(from)) continue;
-      if (configured.has(from)) dropped = true;
-      else this.retiredModels.set(from, to);
-    }
-    if (dropped) await this.saveRetiredModels();
-  }
-
-  private forgetReusedAliases(): void {
-    const previous = this.configuredAliases;
-    const configured = this.modelAliases();
-    this.configuredAliases = configured;
-    let forgotten = false;
-    for (const alias of this.retiredModels.keys()) {
-      if (previous.has(alias) || !configured.has(alias)) continue;
-      this.retiredModels.delete(alias);
-      forgotten = true;
-    }
-    if (forgotten) void this.saveRetiredModels();
-  }
-
-  private saveRetiredModels(): Promise<void> {
-    this.retiredModelsSaved = this.retiredModelsSaved.then(async () => {
-      try {
-        await this.docs.set(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY, Object.fromEntries(this.retiredModels));
-      } catch (error) {
-        this.log.warn('failed to persist retired model redirects', { error: String(error) });
-      }
-    });
-    return this.retiredModelsSaved;
-  }
-
-  private modelAliases(): ReadonlySet<string> {
-    return new Set(Object.keys(this.config.get<Readonly<Record<string, ModelRecord>>>(MODELS_SECTION) ?? {}));
   }
 
   private async doRefreshProviderModels(
@@ -188,7 +110,13 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
       providerId: options.providerId,
     });
     const retired = result.retiredDefault;
-    if (retired !== undefined) await this.retireModels([{ from: retired.from, to: retired.to }]);
+    if (retired !== undefined) {
+      for (const [alias, replacement] of this.retiredModels) {
+        if (replacement === retired.from) this.retiredModels.set(alias, retired.to);
+      }
+      this.retiredModels.set(retired.from, retired.to);
+      this._onDidRetireModel.fire({ from: retired.from, to: retired.to });
+    }
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
       this.events.publish(new ModelCatalogChanged({ payload: response }));

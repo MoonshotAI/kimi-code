@@ -70,15 +70,11 @@ export interface IProviderDiscoveryService {
 
   readonly onDidRetireModel: Event<RetiredModel>;
 
-  readonly ready: Promise<void>;
-
   refreshProviderModels(
     options?: RefreshProviderModelsOptions,
   ): Promise<RefreshProviderModelsResponse>;
 
   retiredModelReplacement(alias: string): string | undefined;
-
-  retireModels(retired: readonly RetiredModel[]): Promise<void>;
 }
 
 export const IProviderDiscoveryService: ServiceIdentifier<IProviderDiscoveryService> =

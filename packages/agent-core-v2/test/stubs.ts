@@ -150,14 +150,7 @@ export function stubProviderDiscovery(): StubProviderDiscovery {
     retired,
     onDidRetireModel: retirements.event,
     refreshProviderModels: () => Promise.reject(new Error('not implemented')),
-    ready: Promise.resolve(),
     retiredModelReplacement: (alias) => retired[alias],
-    retireModels: async (events) => {
-      for (const event of events) {
-        retired[event.from] = event.to;
-        retirements.fire(event);
-      }
-    },
     retire: (event) => {
       retired[event.from] = event.to;
       retirements.fire(event);

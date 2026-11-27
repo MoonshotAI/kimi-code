@@ -233,7 +233,6 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
 
   async afterRestore(): Promise<void> {
     const modelAlias = this.state.profile?.modelAlias;
-    await this.discovery.ready;
     const replacement = modelAlias === undefined ? undefined : this.discovery.retiredModelReplacement(modelAlias);
     if (replacement !== undefined) await this.setModel(replacement).catch(() => {});
     this.profile.afterConfigDispatch({ modelAlias: this.state.profile?.modelAlias }, this.snapshot());

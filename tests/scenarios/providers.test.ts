@@ -129,7 +129,7 @@ describe('renaming a provider', () => {
   const isMainAgentFrame = (frame: KapFrame, sessionId: string): boolean =>
     frame.type === 'agent' && frame['session_id'] === sessionId && frame['agent_id'] === 'main';
 
-  test('moves an open session to the new model name in one step and keeps it answering', async ({ kap, model }) => {
+  test('keeps an open session on its model through the rename and keeps it answering', async ({ kap, model }) => {
     const config = altConfig(model);
     await kap.writeConfig(config);
     await kap.restart();
@@ -141,18 +141,23 @@ describe('renaming a provider', () => {
     await socket.subscribe(session.id);
     await socket.waitFor((frame) => isMainAgentFrame(frame, session.id) && frame['model'] === 'alt/model-a');
 
+    const beforeRename = socket.mark();
     await kap.rest.put('/api/v1/providers/alt', renameBody(config.providers!['alt']!.baseUrl!));
 
-    await socket.waitFor((frame) => isMainAgentFrame(frame, session.id) && frame['model'] === 'alt-renamed/model-a');
-    expect(socket.frames.filter((frame) => isMainAgentFrame(frame, session.id) && frame['missing_model'] !== undefined)).toEqual([]);
     await kap.prompt(session.id, 'second question');
+    await socket.waitFor((frame) => frame.type === 'turn.ended' && frame['session_id'] === session.id, { after: beforeRename });
+    const afterRename = socket.frames.slice(beforeRename).filter((frame) => isMainAgentFrame(frame, session.id));
+    expect(afterRename.filter((frame) => frame['missing_model'] !== undefined)).toEqual([]);
+    expect(new Set(afterRename.flatMap((frame) => (frame['model'] === undefined ? [] : [frame['model']])))).toEqual(
+      new Set(['alt/model-a']),
+    );
     await kap.waitIdle(session.id);
     expect((await kap.turns(session.id)).map((turn) => turn['outcome'])).toEqual(['completed', 'completed']);
     expect(model.requests('main').at(-1)).toMatchObject({ authorization: 'Bearer alt-key', view: { model: 'model-a' } });
     await socket.close();
   });
 
-  test('moves a session that was closed during the rename, even after another restart', async ({ kap, model }) => {
+  test('keeps a session that was closed during the rename answering, even after another restart', async ({ kap, model }) => {
     const config = altConfig(model);
     await kap.writeConfig(config);
     await kap.restart();

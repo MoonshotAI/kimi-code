@@ -338,9 +338,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       _serviceBrand: undefined,
       onDidRetireModel: () => ({ dispose: () => {} }),
       refreshProviderModels,
-      ready: Promise.resolve(),
       retiredModelReplacement: () => undefined,
-      retireModels: async () => {},
     };
   }
 

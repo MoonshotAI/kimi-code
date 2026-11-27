@@ -50,7 +50,6 @@ import {
   IEnvironmentService,
   IConfigService,
   IFileSystemStorageService,
-  IProviderDiscoveryService,
   ISessionActivityView,
   ISessionIndexMirror,
   ISessionManager,
@@ -4838,29 +4837,6 @@ kapTest('reports missing_model instead of failing when the saved model points at
 
   const orphaned = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['missing_model'] === 'old');
   expect(orphaned['model']).toBeUndefined();
-  const main = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, session.id))!);
-  expect(readAgentState(main, false).missing_model).toBe('old');
-  await socket.close();
-});
-
-kapTest('reports missing_model when the saved model redirects to a model whose provider is gone', { timeout: 30_000 }, async ({ kap, model }) => {
-  const baseConfig = fakeModelConfig(model);
-  const [workingAlias, working] = Object.entries(baseConfig.models ?? {})[0]!;
-  await kap.writeConfig({ ...baseConfig, models: { ...baseConfig.models, old: working } });
-  await kap.server.core.accessor.get(IConfigService).reload();
-  const session = await kap.createSession({ agentConfig: { model: 'old' } });
-  const isMainAgentFrame = (frame: Record<string, unknown>): boolean =>
-    frame['type'] === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
-  const socket = await kap.connect();
-  await socket.subscribe(session.id);
-  await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['model'] === 'old');
-
-  await kap.server.core.accessor.get(IProviderDiscoveryService).retireModels([{ from: 'old', to: 'next' }]);
-  const unusable = { provider: 'gone', model: 'next-model', maxContextSize: 100000 };
-  await kap.writeConfig({ ...baseConfig, models: { [workingAlias]: working, next: unusable } });
-  await kap.server.core.accessor.get(IConfigService).reload();
-
-  await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['missing_model'] === 'old');
   const main = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, session.id))!);
   expect(readAgentState(main, false).missing_model).toBe('old');
   await socket.close();
