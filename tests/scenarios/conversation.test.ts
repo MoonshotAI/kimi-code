@@ -25,6 +25,20 @@ const visionTest = base.extend<ScenarioFixtures>(
     },
   }),
 );
+const thinkingTest = base.extend<ScenarioFixtures>(
+  scenarioFixtures({
+    config: {
+      models: {
+        testkit: {
+          provider: 'testkit',
+          model: 'testkit-model',
+          maxContextSize: 262_144,
+          capabilities: ['thinking'],
+        },
+      },
+    },
+  }),
+);
 
 describe('conversation over KAP', () => {
   test('streams a reply live and persists the same turns', async ({ kap, model }) => {
@@ -907,6 +921,34 @@ describe('conversation over KAP', () => {
     const wsUserItems = socket.frames.filter((frame) => itemOf(frame)?.type === 'user_message');
     expect(JSON.stringify(wsUserItems)).not.toContain(firstPath);
     expect(JSON.stringify(wsUserItems)).not.toContain(secondPath);
+  });
+
+  thinkingTest('aligns compaction tokens_after with the context summary when compaction thinks', async ({ kap, model }) => {
+    model.script(withUsage({ input: 80_000, output: 100 }, say('first reply')));
+    model.lane('compaction').script(
+      withUsage(
+        { input: 80_000, output: 9_000 },
+        think('long internal reasoning discarded from summary', say('Concise session summary.')),
+      ),
+    );
+    const session = await kap.createSession();
+    await kap.rest.post(`/api/v1/sessions/${session.id}/profile`, { thinking_effort: 'high' });
+
+    await kap.prompt(session.id, 'build the feature');
+    await kap.waitIdle(session.id);
+    await kap.compact(session.id);
+    await kap.waitIdle(session.id);
+
+    const turns = await kap.turns(session.id);
+    const compactionItem = turns
+      .flatMap((turn) => turn.items)
+      .find((item) => item.type === 'system' && item['kind'] === 'compaction');
+    const contextSummary = await kap.rest.get<{ readonly tokens: { readonly used: number } }>(
+      `/api/v1/sessions/${session.id}/context/summary`,
+    );
+    const tokensAfter = compactionItem?.['tokens_after'] as number | undefined;
+    expect(tokensAfter).toBeDefined();
+    expect(Math.abs((tokensAfter ?? 0) - contextSummary.tokens.used)).toBeLessThan(500);
   });
 });
 

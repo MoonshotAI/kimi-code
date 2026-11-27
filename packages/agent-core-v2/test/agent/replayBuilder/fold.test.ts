@@ -491,6 +491,29 @@ describe('foldWireRecords', () => {
     expect(messageRecords(windowed.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([3, 4]);
   });
 
+  it('pairs notify and originless prompts without letting injections claim their inputs', () => {
+    for (const [inputOrigin, messageOrigin] of [
+      [{ kind: 'system_trigger', name: 'goal_continuation' }, { kind: 'system_trigger', name: 'goal_continuation' }],
+      [{ kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'notice-1' },
+        { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'notice-1' }],
+      [undefined, { kind: 'user' }],
+      [{ kind: 'user' }, undefined],
+      [undefined, undefined],
+    ] as const) {
+      const folded = fold([
+        { type: 'turn.prompt', turnId: 7, trigger: 'notify', input: [{ type: 'text', text: 'next' }], origin: inputOrigin },
+        appendMessage(userMessage('reminder', { kind: 'injection', variant: 'date_change' })),
+        appendMessage(userMessage('next', messageOrigin)),
+      ]);
+      expect(messageRecords(folded.replay).map((record) => record.turnId)).toEqual([undefined, 7]);
+    }
+    const linked = fold([
+      { type: 'turn.prompt', turnId: 8, promptId: 'linked', input: [{ type: 'text', text: 'original' }], origin: { kind: 'user' } },
+      appendMessage({ ...userMessage('transformed', { kind: 'injection', variant: 'date_change' }), id: 'linked' }),
+    ]);
+    expect(messageRecords(linked.replay).map((record) => record.turnId)).toEqual([8]);
+  });
+
   it('validates reader compatibility and migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },

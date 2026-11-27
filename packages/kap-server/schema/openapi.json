@@ -3398,34 +3398,6 @@
                     "action": {
                       "type": "string"
                     },
-                    "approval_detail": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "outcome": {
-                          "enum": [
-                            "denied",
-                            "failed"
-                          ],
-                          "type": "string"
-                        },
-                        "reason": {
-                          "type": "string"
-                        },
-                        "risk": {
-                          "enum": [
-                            "low",
-                            "medium",
-                            "high"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "outcome",
-                        "reason"
-                      ],
-                      "type": "object"
-                    },
                     "expires_at": {},
                     "tool_input_display": {},
                     "tool_name": {
@@ -14160,9 +14132,6 @@
                                                 "type": "object"
                                               },
                                               "type": "array"
-                                            },
-                                            "auto_review": {
-                                              "type": "boolean"
                                             },
                                             "created_at": {},
                                             "debug": {

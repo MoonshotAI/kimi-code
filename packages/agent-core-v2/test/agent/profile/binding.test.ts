@@ -1605,6 +1605,7 @@ describe('change-notifier belief seeding', () => {
           restoreAfterFailure: async () => {},
         }),
         seedBeliefs,
+        syncAgentsMdSnapshot: async () => {},
         mute: () => {},
         unmute: () => {},
       }),

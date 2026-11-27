@@ -1,5 +1,6 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { ScrollView, Text, TuiAltScreen, visibleWidth, VStack } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -537,15 +538,69 @@ describe('ModelSelectorComponent effort descriptions', () => {
     });
 
     expect(text(picker)).toContain('Deeper reasoning.');
+    const initialLineCount = picker.render(100).length;
     picker.handleInput(RIGHT);
     expect(text(picker)).toContain('Maximum reasoning.');
+    expect(picker.render(100).length).toBe(initialLineCount);
     picker.handleInput(LEFT);
     picker.handleInput(LEFT);
     expect(text(picker)).toContain('Light reasoning.');
     picker.handleInput(LEFT);
     expect(text(picker)).not.toContain('Light reasoning.');
+    expect(picker.render(100).length).toBe(initialLineCount);
     picker.handleInput(DOWN);
     expect(text(picker)).not.toContain('Deeper reasoning.');
+    expect(picker.render(100).length).toBe(initialLineCount);
+  });
+
+  it('keeps docked model row screen positions stable when hovering between effort and binary thinking models', async () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        k27: model('K2.7 Code Highspeed'),
+        k3: effortModel('K3-256k', ['low', 'high', 'max'], 'high'),
+      },
+      currentValue: 'k3',
+      currentThinkingEffort: 'high',
+      layout: { maxBodyRows: 6 },
+      effortDescriptions: {
+        low: 'Light reasoning.',
+        high: 'Deeper reasoning for complex tasks.',
+        max: 'Maximum reasoning.',
+      },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const transcript = new ScrollView(new Text('chat-1\nchat-2\nchat-3', 0, 0), {
+      follow: 'end',
+      primary: true,
+    });
+    const vt = new VirtualTerminal(90, 18);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(
+      new VStack([
+        { component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+        { component: picker, shrink: 1, minSize: 3 },
+      ]),
+    );
+    ui.start();
+    ui.setFocus(picker);
+    await vt.waitForRender();
+    try {
+      const before = vt.getViewport().map(strip);
+      const k27RowBefore = before.findIndex((line) => line.includes('K2.7 Code Highspeed'));
+      const k3RowBefore = before.findIndex((line) => line.includes('K3-256k'));
+      expect(k27RowBefore).toBeGreaterThan(0);
+      expect(before.join('\n')).toContain('Deeper reasoning for complex tasks.');
+
+      vt.sendInput(`\u001B[<35;10;${String(k27RowBefore + 1)}M`);
+      await vt.waitForRender();
+      const after = vt.getViewport().map(strip);
+      expect(after.findIndex((line) => line.includes('K2.7 Code Highspeed'))).toBe(k27RowBefore);
+      expect(after.findIndex((line) => line.includes('K3-256k'))).toBe(k3RowBefore);
+      expect(after[k27RowBefore]).toContain('❯ K2.7 Code Highspeed');
+    } finally {
+      ui.stop();
+    }
   });
 });
 
@@ -568,5 +623,94 @@ describe('ModelSelectorComponent overrides', () => {
     expect(out).toContain('Low');
     expect(out).toContain('High');
     expect(out).not.toContain('Max');
+  });
+
+  it('previews hovered model thinking on mouse move, contains wheel across footer and body, and supports Alt+click session-only model selection', async () => {
+    let now = 40_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const onSelect = vi.fn();
+    const onSessionOnlySelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        m1: effortModel('Model One', ['low', 'high'], 'low'),
+        m2: effortModel('Model Two', ['low', 'high'], 'high'),
+        m3: effortModel('Model Three', ['low', 'high'], 'low'),
+        m4: effortModel('Model Four', ['low', 'high'], 'low'),
+        m5: effortModel('Model Five', ['low', 'high'], 'low'),
+      },
+      currentValue: 'm1',
+      currentThinkingEffort: 'low',
+      layout: { maxBodyRows: 3 },
+      onSelect,
+      onSessionOnlySelect,
+      onCancel: vi.fn(),
+    });
+    const transcript = new ScrollView(
+      new Text(Array.from({ length: 12 }, (_, i) => `chat-${String(i + 1)}`).join('\n'), 0, 0),
+      { follow: 'end', primary: true },
+    );
+    const vt = new VirtualTerminal(90, 20);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(
+      new VStack([
+        { component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+        { component: picker, shrink: 1, minSize: 3 },
+      ]),
+    );
+    ui.start();
+    ui.setFocus(picker);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      let screen = vt.getViewport().map(strip);
+      const segRow = screen.findIndex((line) => line.includes('[ Low ]') && line.includes('High'));
+      expect(segRow).toBeGreaterThan(0);
+
+      const m2Row = screen.findIndex((line) => line.includes('Model Two'));
+      expect(m2Row).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<35;10;${String(m2Row + 1)}M`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen[m2Row]).toContain('❯ Model Two');
+      expect(screen[segRow]).toContain('[ High ]');
+      expect(onSelect).not.toHaveBeenCalled();
+
+      const m1Row = screen.findIndex((line) => line.includes('Model One'));
+      vt.sendInput(`\u001B[<35;10;${String(m1Row + 1)}M`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen[segRow]).toContain('[ Low ]');
+
+      const highCol = screen[segRow]!.indexOf('High') + 1;
+
+      vt.sendInput(`\u001B[<0;${String(highCol)};${String(segRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(highCol)};${String(segRow + 1)}m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen[segRow]).toContain('[ High ]');
+
+      vt.sendInput(`\u001B[<0;10;${String(m1Row + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(m1Row + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith({ alias: 'm1', thinking: 'high' });
+
+      const initialTop = transcript.scrollTop;
+      for (let i = 0; i < 8; i++) {
+        vt.sendInput(`\u001B[<65;10;${String(segRow + 1)}M`);
+      }
+      await vt.waitForRender();
+      expect(transcript.scrollTop).toBe(initialTop);
+
+      screen = vt.getViewport().map(strip);
+      const m5Row = screen.findIndex((line) => line.includes('Model Five'));
+      expect(m5Row).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<8;10;${String(m5Row + 1)}M`);
+      vt.sendInput(`\u001B[<8;10;${String(m5Row + 1)}m`);
+      await vt.waitForRender();
+      expect(onSessionOnlySelect).toHaveBeenCalledExactlyOnceWith({ alias: 'm5', thinking: 'low' });
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
   });
 });

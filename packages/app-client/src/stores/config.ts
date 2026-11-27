@@ -1,13 +1,9 @@
 import { nextTick, ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { AppConfig } from '@moonshot-ai/app-core/api';
-import { isDaemonApiError } from '@moonshot-ai/app-core/api';
-import { permissionModeFromConfig } from '@moonshot-ai/app-core/lib';
-import type { PermissionMode } from '@moonshot-ai/app-core/client/types';
 import { getKimiWebApi } from '../client/deps';
 import { clientPinia } from './pinia';
 import { modelsStore } from './models';
-import { permissionsStore } from './permissions';
 
 export interface ConfigHooks {
   pushOperationFailure: (
@@ -61,13 +57,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
   }
 
   async function updateConfig(patch: Partial<AppConfig>): Promise<boolean> {
-    const defaultWriteStamp =
-      patch.defaultPermissionMode !== undefined
-        ? permissionsStore().noteDaemonDefaultWriteInitiated(
-            patch.defaultPermissionMode as PermissionMode,
-          )
-        : 0;
-    const run = configWriteQueue.then(() => updateConfigNow(patch, defaultWriteStamp));
+    const run = configWriteQueue.then(() => updateConfigNow(patch));
     configWriteQueue = run.then(
       () => undefined,
       () => undefined,
@@ -75,10 +65,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     return run;
   }
 
-  async function updateConfigNow(
-    patch: Partial<AppConfig>,
-    defaultWriteStamp: number,
-  ): Promise<boolean> {
+  async function updateConfigNow(patch: Partial<AppConfig>): Promise<boolean> {
     const generation = ++configWriteGeneration;
     try {
       const api = getKimiWebApi();
@@ -90,28 +77,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
         modelsStore().setDefaultModel(next.defaultModel ?? null);
       }
       await nextTick();
-      if (defaultWriteStamp !== 0) {
-        permissionsStore().consumeDaemonDefaultWriteStamp(defaultWriteStamp);
-      }
       return true;
     } catch (err) {
-      if (defaultWriteStamp !== 0) {
-        if (isDaemonApiError(err)) {
-          permissionsStore().clearDaemonDefaultWriteInitiated(defaultWriteStamp);
-        } else {
-          void configWriteQueue.then(async () => {
-            let delivered = (await loadConfig()) !== 'failed';
-            if (!delivered) {
-              await new Promise((resolve) => setTimeout(resolve, 2_000));
-              delivered = (await loadConfig()) !== 'failed';
-            }
-            if (!delivered) return;
-            permissionsStore().reconcileDaemonDefaultWriteStamps(
-              permissionModeFromConfig(config.value?.defaultPermissionMode),
-            );
-          });
-        }
-      }
       configHooks?.pushOperationFailure('setConfig', err);
       return false;
     }

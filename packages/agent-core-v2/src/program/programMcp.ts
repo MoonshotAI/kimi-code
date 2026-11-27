@@ -63,9 +63,9 @@ export class ProgramMcp {
   }
 
   private open(): McpSet {
-    const { bootstrap, config, configStore, identity, log, oauth, plugins, sessionManager, telemetry } = this.dependencies;
+    const { bootstrap, config, configStore, identity, log, oauth, plugins, telemetry } = this.dependencies;
     const mcpConfig = new ProjectMcpConfigService(this.dirs, bootstrap, plugins, log, config, this.hostFs, this.trust, configStore, oauth);
-    const service = new ProjectMcpService(this.dirs, this.environments, mcpConfig, oauth, log, telemetry, identity, sessionManager);
+    const service = new ProjectMcpService(this.dirs, this.environments, mcpConfig, oauth, log, telemetry, identity);
     return { config: mcpConfig, service, references: 0 };
   }
 

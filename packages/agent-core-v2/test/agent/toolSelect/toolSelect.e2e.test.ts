@@ -317,7 +317,7 @@ describe('progressive tool disclosure end-to-end', () => {
   });
 
   it.for(['deferred', 'inline'] as const)(
-    'exposes late-connected %s MCP tools inline on the next request when dynamic loading is unsupported',
+    'keeps late-connected %s MCP tools out of top-level tools when dynamic loading is unsupported',
     async (disclosure, context) => {
       const ready = createControlledPromise<void>();
       const waiting = createControlledPromise<void>();
@@ -341,25 +341,23 @@ describe('progressive tool disclosure end-to-end', () => {
         model.script(say('first reply'));
         await agent.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
         await agent.untilTurnEnd();
-        expect(toolNames(model.requests('main')[0]!.view.tools)).not.toContain(MCP_ALPHA);
+        const firstTools = model.requests('main')[0]!.view.tools;
+        expect(toolNames(firstTools)).not.toContain(MCP_ALPHA);
 
         registration = agent.get(IAgentToolRegistryService)
           .register(alpha, { source: 'mcp', disclosure });
         ready.resolve();
 
-        model.expectCacheBreak(
-          'late-connected MCP tools are appended to top-level tools when dynamic loading is unsupported',
-        );
-        model.script(call(MCP_ALPHA, { query: 'moon' }, { id: 'call_alpha_plain' }), say('done'));
-        await agent.rpc.prompt({ input: [{ type: 'text', text: 'use the late server tool directly' }] });
+        model.script(say('done'));
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'check the late server tool' }] });
         await agent.untilTurnEnd();
 
         const secondWire = model.requests('main')[1]!;
-        const exposed = secondWire.view.tools.find((tool) => tool.name === MCP_ALPHA);
-        expect(exposed?.parameters).toEqual(alpha.parameters);
-        expect(exposed).not.toHaveProperty('deferred', true);
+        expect(secondWire.view.tools).toEqual(firstTools);
         expect(toolNames(secondWire.view.tools)).not.toContain('select_tools');
-        expect(alpha.calls).toBe(1);
+        expect(viewText(secondWire)).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+        expect(viewText(secondWire)).toContain('The available tools changed during this session.');
+        expect(viewText(secondWire)).not.toContain('Use the select_tools tool');
       });
     },
   );
@@ -527,11 +525,8 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.get(IAgentLoopService).data().activeToolNames).toBeUndefined();
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
       .toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).toContain(MCP_ALPHA);
-    expect(switchWire.tools.find((tool) => tool.name === MCP_ALPHA)).not.toHaveProperty('deferred', true);
-    expect(switchWire.tools.find((tool) => tool.name === inlineName)).toMatchObject({
-      description: `${inlineName} desc`,
-    });
+    expect(toolNames(switchWire.tools)).not.toContain(MCP_ALPHA);
+    expect(toolNames(switchWire.tools)).not.toContain(inlineName);
     expect(toolNames(switchWire.tools)).not.toContain(runtimeTool);
     expect(toolNames(switchWire.tools)).not.toContain('select_tools');
     expect(historyText(switchWire.history)).toContain(runtimeTool);

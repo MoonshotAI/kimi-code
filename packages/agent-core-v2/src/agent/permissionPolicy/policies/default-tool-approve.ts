@@ -4,7 +4,7 @@ import type {
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
 
-export const DEFAULT_APPROVE_TOOLS: ReadonlySet<string> = new Set([
+const DEFAULT_APPROVE_TOOLS = new Set([
   'Read',
   'Grep',
   'Glob',

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 
 interface SignalDriver {
@@ -240,7 +239,6 @@ describe('KimiTUI signal handlers', () => {
 
   it('SIGTERM stops without asking about the Kimi worktree it runs in', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-    setExperimentalFeatures([{ id: 'worktree', enabled: true }]);
     const harness = { ...makeHarness(), inspectWorktreeRemoval: vi.fn(), removeWorktree: vi.fn() };
     const tui = new KimiTUI(harness as never, {
       ...makeStartupInput(),
@@ -262,7 +260,6 @@ describe('KimiTUI signal handlers', () => {
     expect(harness.removeWorktree).not.toHaveBeenCalled();
     expect(tui.worktreeExit.outcome).toBeUndefined();
 
-    setExperimentalFeatures([]);
     stopSpy.mockRestore();
     captured.restore();
     driver.unregisterSignalHandlers();

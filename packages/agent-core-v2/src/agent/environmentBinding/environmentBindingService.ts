@@ -21,7 +21,11 @@ import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/works
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
-import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from './environmentBinding';
+import {
+  IAgentEnvironmentBindingSeed,
+  IAgentEnvironmentBindingService,
+  type LocalWorkDirRebindInput,
+} from './environmentBinding';
 import { EnvironmentSetBinding, environmentBindingKey } from './environmentBindingOps';
 
 export const ENVIRONMENT_BINDING_REMINDER_VARIANT = 'environment_binding';
@@ -131,6 +135,26 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     const lease = this.resolver.acquire(binding, []);
     lease.dispose();
     return this.commit(binding);
+  }
+
+  async rebindLocalWorkDir(input: LocalWorkDirRebindInput): Promise<EnvironmentBinding> {
+    const next: EnvironmentBinding = {
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      cwd: input.cwd,
+    };
+    await this.dispatcher.dispatch(
+      new EnvironmentSetBinding({
+        agentId: this.scopeContext.agentId,
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        cwd: input.cwd,
+        originCwd: input.originCwd,
+        pendingBaseline: input.pendingBaseline,
+      }),
+    );
+    this.state.set(environmentBindingKey, next);
+    this.applySessionWorkDir(next);
+    this.changeEmitter.fire(next);
+    return next;
   }
 
   private commit(binding: EnvironmentBinding): EnvironmentBinding {

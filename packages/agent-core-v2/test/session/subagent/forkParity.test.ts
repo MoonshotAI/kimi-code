@@ -35,7 +35,6 @@ import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionBtwService } from '#/features/btw/btw';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
@@ -200,10 +199,7 @@ describe('subagent task reminders and btw request parity', () => {
     ctx = testAgent(
       requester === undefined ? [] : llmGenerateServices(requester),
       appService(IAppendLogStore, store),
-      appService(IFlagService, {
-        ...flags,
-        enabled: (id) => id !== AUTO_REVIEW_FLAG_ID && flags.enabled(id),
-      }),
+      appService(IFlagService, flags),
       appService(IWebSearchProviderService, {
         _serviceBrand: undefined,
         hasWebSearchProvider: () => true,
@@ -496,7 +492,7 @@ describe('subagent task reminders and btw request parity', () => {
           await agent.untilTurnEnd();
 
           const parentTools = model.requests('main')[1]!.view.tools.map((tool) => tool.name);
-          expect(parentTools).toEqual(timing === 'startup' ? ['mcp__srv__echo', 'Read'] : ['Read', 'mcp__srv__echo']);
+          expect(parentTools).toEqual(timing === 'startup' ? ['mcp__srv__echo', 'Read'] : ['Read']);
           expect(model.requests('main')[0]!.view.tools.map((tool) => tool.name)).toEqual(parentTools);
           expect(model.requests('subagent')[0]!.view.tools.map((tool) => tool.name)).toEqual(parentTools);
         });

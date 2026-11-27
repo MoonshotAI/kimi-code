@@ -1,29 +1,53 @@
-import type { Component, MarkdownTheme } from '@moonshot-ai/pi-tui';
-import { Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
-import chalk from 'chalk';
+import {
+  Box,
+  HStack,
+  Spacer,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  VStack,
+  type Component,
+  type MarkdownTheme,
+  type StackEntryOptions,
+  type TuiMouseDispatchResult,
+  type TuiMouseEvent,
+} from '@moonshot-ai/pi-tui';
 
+import { CHROME_GUTTER, THINKING_PREVIEW_LINES } from '#/tui/constant/rendering';
+import { currentTheme } from '#/tui/theme';
+import type { ColorPalette } from '#/tui/theme/colors';
+import type { KimiMarkdownTheme } from '#/tui/theme/pi-tui-theme';
+import type { InlineSkillActivation } from '#/tui/types';
+import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+
+import { mouseTarget, OverflowScrollView } from '../chrome/dock-section';
 import { Markdown } from '../markdown/markdown';
-import { THINKING_PREVIEW_LINES } from '../../constant/rendering';
-import { currentTheme } from '../../theme';
-import type { KimiMarkdownTheme } from '../../theme/pi-tui-theme';
-import type { InlineSkillActivation } from '../../types';
-import { createMarkdownOptions } from '../../utils/markdown-options';
 
 type BtwPanelPhase = 'running' | 'done' | 'failed';
 
 const MIN_COLLAPSED_PANEL_LINES = 3;
+const CLOSE_LABEL = 'Esc close';
+
+const paintBorder = (text: string): string => currentTheme.fg('border', text);
 
 interface BtwTurn {
   readonly prompt: string;
   answer: string;
   thinking: string;
-  error?: string | undefined;
+  error?: string;
   phase: BtwPanelPhase;
 }
 
 interface BtwBodyRender {
-  readonly lines: string[];
+  readonly lines: readonly string[];
   readonly truncated: boolean;
+}
+
+interface TurnLinesCache {
+  readonly revision: number;
+  readonly width: number;
+  readonly palette: ColorPalette;
+  readonly lines: readonly string[];
 }
 
 export interface BtwPanelOptions {
@@ -34,17 +58,106 @@ export interface BtwPanelOptions {
     inlineSkillActivations?: readonly InlineSkillActivation[],
   ) => void;
   readonly terminalRows: () => number;
+  readonly fullscreen?: boolean;
+  readonly onClose?: () => void;
 }
 
-export class BtwPanelComponent implements Component {
+function padLines(lines: readonly string[], targetRows: number): readonly string[] {
+  if (lines.length >= targetRows) return lines;
+  const padded = [...lines];
+  while (padded.length < targetRows) padded.push('');
+  return padded;
+}
+
+class BtwFrameBox extends Box {
+  private closeRange: { readonly start: number; readonly end: number } | undefined;
+
+  constructor(private readonly onClose: (() => void) | undefined) {
+    super({
+      border: { top: true, left: true, right: true },
+      borderStyle: 'rounded',
+      borderColor: paintBorder,
+      padding: { left: 1 },
+    });
+  }
+
+  updateHeader(title: string, closeStart: number, closeEnd: number): void {
+    this.setTitle(title);
+    this.closeRange = { start: closeStart, end: closeEnd };
+  }
+
+  override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+    if (
+      this.onClose !== undefined &&
+      event.y === 0 &&
+      event.button === 'left' &&
+      this.closeRange !== undefined &&
+      event.x >= this.closeRange.start &&
+      event.x < this.closeRange.end &&
+      event.x < event.width - 1 &&
+      (event.type === 'press' || event.type === 'release' || event.type === 'click')
+    ) {
+      if (event.type === 'click') this.onClose();
+      return { handled: true, target: mouseTarget(this, event) };
+    }
+    return undefined;
+  }
+}
+
+export class BtwPanelComponent extends VStack {
   private readonly turns: BtwTurn[] = [];
   private readonly transientNotices: string[] = [];
   private minBodyLines = 0;
   private followTail = true;
   private scrollTop = 0;
   private maxScrollTop = 0;
+  private contentRevision = 0;
+  private turnLinesCache: TurnLinesCache | undefined;
+  private readonly frameBox: BtwFrameBox | undefined;
+  private readonly bodyScroll: OverflowScrollView | undefined;
+  private readonly rowEntryOptions: { maxSize?: number } | undefined;
 
-  constructor(private readonly options: BtwPanelOptions) {}
+  constructor(private readonly options: BtwPanelOptions) {
+    super();
+    if (options.fullscreen === true) {
+      const bodyComponent: Component = {
+        render: (width) => {
+          this.syncFullscreenHeader();
+          return this.renderUnclippedBody(width);
+        },
+        invalidate: () => {},
+      };
+      this.bodyScroll = new OverflowScrollView(bodyComponent, {
+        follow: 'end',
+        onScroll: (top) => {
+          this.scrollTop = top;
+          if (this.bodyScroll !== undefined && this.bodyScroll.viewportHeight > 0) {
+            this.followTail = this.bodyScroll.isFollowingEnd;
+          }
+        },
+      });
+      this.frameBox = new BtwFrameBox(options.onClose);
+      this.frameBox.addChild(this.bodyScroll);
+      const row = new HStack([
+        { component: new Spacer(0), basis: CHROME_GUTTER, shrink: 0 },
+        { component: this.frameBox, basis: 0, grow: 1, shrink: 1 },
+        { component: new Spacer(0), basis: CHROME_GUTTER, shrink: 0 },
+      ]);
+      const entryOpts: StackEntryOptions = {
+        shrink: 1,
+        minSize: 0,
+        maxSize: this.maxFullscreenPanelRows(),
+      };
+      this.addChild(row, entryOpts);
+      this.rowEntryOptions = this.entries[0];
+      this.syncFullscreenHeader();
+    }
+  }
+
+  override invalidate(): void {
+    this.turnLinesCache = undefined;
+    super.invalidate();
+  }
 
   submit(prompt: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
     const normalized = prompt.trim();
@@ -58,24 +171,30 @@ export class BtwPanelComponent implements Component {
       thinking: '',
       phase: 'running',
     });
+    this.contentRevision += 1;
+    this.bodyScroll?.scrollToEnd();
     this.options.onPrompt(normalized, inlineSkillActivations);
   }
 
   addTransientNotice(message: string): void {
     this.transientNotices.push(message);
+    this.contentRevision += 1;
     this.followTail = true;
+    this.bodyScroll?.scrollToEnd();
   }
 
   appendAnswer(delta: string): void {
     const turn = this.currentTurn();
     if (turn === undefined) return;
     turn.answer += delta;
+    this.contentRevision += 1;
   }
 
   appendThinking(delta: string): void {
     const turn = this.currentTurn();
     if (turn === undefined) return;
     turn.thinking += delta;
+    this.contentRevision += 1;
   }
 
   markDone(resultSummary?: string): void {
@@ -86,6 +205,7 @@ export class BtwPanelComponent implements Component {
     }
     this.transientNotices.length = 0;
     turn.phase = 'done';
+    this.contentRevision += 1;
   }
 
   markFailed(error: string): void {
@@ -99,76 +219,136 @@ export class BtwPanelComponent implements Component {
         phase: 'failed',
       });
       this.transientNotices.length = 0;
+      this.contentRevision += 1;
       return;
     }
     turn.error = error;
     this.transientNotices.length = 0;
     turn.phase = 'failed';
+    this.contentRevision += 1;
   }
 
-  invalidate(): void {}
+  consumeOverflowChange(): boolean {
+    if (this.bodyScroll === undefined) return false;
+    const changed = this.bodyScroll.consumeOverflowChange();
+    if (changed) this.syncFullscreenHeader();
+    return changed;
+  }
 
-  render(width: number): string[] {
-    const safeWidth = Math.max(4, width);
-    const contentWidth = Math.max(1, safeWidth - 4);
-    const body = this.renderBody(contentWidth);
-    const lines = [this.renderTopBorder(safeWidth, body.truncated)];
-    for (const line of body.lines) {
-      lines.push(this.renderBodyLine(line, safeWidth));
+  override render(width: number): string[] {
+    const gutter = this.options.fullscreen === true ? CHROME_GUTTER : 0;
+    const panelWidth = Math.max(4, width - gutter * 2);
+    const contentWidth = Math.max(1, panelWidth - 4);
+    const body = this.fitBodyLines(this.getTurnLines(contentWidth));
+    const { title } = this.buildTitle(body.truncated);
+    const box = new Box({
+      border: { top: true, left: true, right: true },
+      borderStyle: 'rounded',
+      borderColor: paintBorder,
+      title,
+      padding: { left: 1, right: 1 },
+    });
+    box.addChild({
+      render: () => body.lines,
+      invalidate: () => {},
+    });
+    const rendered = box.render(panelWidth);
+    if (gutter === 0) return [...rendered];
+    const pad = ' '.repeat(gutter);
+    return rendered.map((line) => truncateToWidth(`${pad}${line}${pad}`, width));
+  }
+
+  private syncFullscreenHeader(): void {
+    if (this.frameBox === undefined) return;
+    if (this.rowEntryOptions !== undefined) {
+      this.rowEntryOptions.maxSize = this.maxFullscreenPanelRows();
     }
+    const truncated = this.bodyScroll?.canScroll ?? false;
+    const { title, closeStart, closeEnd } = this.buildTitle(truncated);
+    this.frameBox.updateHeader(title, closeStart, closeEnd);
+  }
+
+  private buildTitle(truncated: boolean): {
+    readonly title: string;
+    readonly closeStart: number;
+    readonly closeEnd: number;
+  } {
+    const prefixPlain = ' BTW ─ ';
+    const hint =
+      truncated && this.options.canUseScrollKeys()
+        ? `${CLOSE_LABEL} · ↑↓ scroll `
+        : `${CLOSE_LABEL} `;
+    const title =
+      currentTheme.boldFg('accent', ' BTW ') +
+      currentTheme.fg('border', '─ ') +
+      currentTheme.fg('textMuted', hint);
+    const closeStart = 1 + visibleWidth(prefixPlain);
+    const closeEnd = closeStart + visibleWidth(CLOSE_LABEL);
+    return { title, closeStart, closeEnd };
+  }
+
+  private resolveMinBodyRows(lineCount: number): number {
+    const bodyLimit = this.collapsedBodyLimit();
+    const targetUncapped = Math.max(this.minBodyLines, lineCount);
+    const target = bodyLimit === undefined ? targetUncapped : Math.min(bodyLimit, targetUncapped);
+    this.minBodyLines = Math.max(this.minBodyLines, target);
+    return target;
+  }
+
+  private renderUnclippedBody(width: number): readonly string[] {
+    const lines = this.getTurnLines(width);
+    const target = this.resolveMinBodyRows(lines.length);
+    return padLines(lines, target);
+  }
+
+  private getTurnLines(width: number): readonly string[] {
+    const safeWidth = Math.max(1, width);
+    const palette = currentTheme.palette;
+    const cached = this.turnLinesCache;
+    if (
+      cached?.revision === this.contentRevision &&
+      cached.width === safeWidth &&
+      cached.palette === palette
+    ) {
+      return cached.lines;
+    }
+    const lines = this.collectTurnLines(safeWidth);
+    this.turnLinesCache = { revision: this.contentRevision, width: safeWidth, palette, lines };
     return lines;
   }
 
-  private renderTopBorder(width: number, truncated: boolean): string {
-    const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
-    const hint = truncated && this.options.canUseScrollKeys()
-      ? 'Esc close · ↑↓ scroll '
-      : 'Esc close ';
-    const title =
-      chalk.hex(currentTheme.palette.accent).bold(' BTW ') +
-      paint('─ ') +
-      chalk.hex(currentTheme.palette.textMuted)(hint);
-    const innerWidth = Math.max(1, width - 2);
-    const clippedTitle =
-      visibleWidth(title) > innerWidth ? truncateToWidth(title, innerWidth, '') : title;
-    const dashCount = Math.max(0, innerWidth - visibleWidth(clippedTitle));
-    return paint('╭') + clippedTitle + paint('─'.repeat(dashCount)) + paint('╮');
-  }
-
-  private renderBody(width: number): BtwBodyRender {
+  private collectTurnLines(width: number): string[] {
     const lines: string[] = [];
     for (const [index, turn] of this.turns.entries()) {
       if (index > 0) lines.push('');
       lines.push(...this.renderTurn(turn, width));
     }
     if (this.turns.length === 0) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question…'));
+      lines.push(currentTheme.fg('textDim', 'Ready for a side question…'));
     }
-    lines.push(...this.renderTransientNotices(width));
-    return this.fitBodyLines(lines);
-  }
-
-  private renderTransientNotices(width: number): string[] {
-    const lines: string[] = [];
     for (const notice of this.transientNotices) {
-      lines.push(...new Text(chalk.hex(currentTheme.palette.textDim)(notice), 0, 0).render(width));
+      lines.push(...new Text(currentTheme.fg('textDim', notice), 0, 0).render(width));
     }
     return lines;
   }
 
-  private fitBodyLines(lines: string[]): BtwBodyRender {
-    const bodyLimit = this.collapsedBodyLimit();
-    const targetUncapped = Math.max(this.minBodyLines, lines.length);
-    const target =
-      bodyLimit === undefined ? targetUncapped : Math.min(bodyLimit, targetUncapped);
-    this.minBodyLines = Math.max(this.minBodyLines, target);
+  private fitBodyLines(lines: readonly string[]): BtwBodyRender {
+    const target = this.resolveMinBodyRows(lines.length);
 
     if (lines.length > target) {
       this.maxScrollTop = lines.length - target;
-      if (this.followTail) {
+      const following =
+        this.bodyScroll !== undefined && this.bodyScroll.viewportHeight > 0
+          ? this.bodyScroll.isFollowingEnd
+          : this.followTail;
+      const baseScrollTop =
+        this.bodyScroll !== undefined && this.bodyScroll.viewportHeight > 0
+          ? this.bodyScroll.scrollTop
+          : this.scrollTop;
+      if (following) {
         this.scrollTop = this.maxScrollTop;
       } else {
-        this.scrollTop = Math.min(this.scrollTop, this.maxScrollTop);
+        this.scrollTop = Math.max(0, Math.min(baseScrollTop, this.maxScrollTop));
       }
       const start = this.scrollTop;
       return { lines: lines.slice(start, start + target), truncated: true };
@@ -177,11 +357,12 @@ export class BtwPanelComponent implements Component {
     this.followTail = true;
     this.scrollTop = 0;
     this.maxScrollTop = 0;
-    const padded = [...lines];
-    while (padded.length < target) {
-      padded.push('');
-    }
-    return { lines: padded, truncated: false };
+    return { lines: padLines(lines, target), truncated: false };
+  }
+
+  private maxFullscreenPanelRows(): number {
+    const limit = this.collapsedBodyLimit();
+    return limit === undefined ? Number.MAX_SAFE_INTEGER : limit + 1;
   }
 
   private collapsedBodyLimit(): number | undefined {
@@ -192,7 +373,7 @@ export class BtwPanelComponent implements Component {
   }
 
   private renderTurn(turn: BtwTurn, width: number): string[] {
-    const prompt = chalk.hex(currentTheme.palette.accent)(`Q: ${turn.prompt}`);
+    const prompt = currentTheme.fg('accent', `Q: ${turn.prompt}`);
     const lines = [...new Text(prompt, 0, 0).render(width)];
     const answer = turn.answer.trim();
     const thinking = turn.thinking.trim();
@@ -205,31 +386,20 @@ export class BtwPanelComponent implements Component {
         ...new Markdown(answer, 0, 0, theme, undefined, createMarkdownOptions()).render(width),
       );
     } else if (thinking.length > 0) {
-      const thinkingLines = new Text(chalk.hex(currentTheme.palette.textDim)(thinking), 0, 0).render(
-        width,
-      );
+      const thinkingLines = new Text(currentTheme.fg('textDim', thinking), 0, 0).render(width);
       const visibleThinking =
         thinkingLines.length > THINKING_PREVIEW_LINES
           ? thinkingLines.slice(thinkingLines.length - THINKING_PREVIEW_LINES)
           : thinkingLines;
       lines.push(...visibleThinking);
     } else if (turn.error === undefined) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Waiting for answer…'));
+      lines.push(currentTheme.fg('textDim', 'Waiting for answer…'));
     }
     if (turn.error !== undefined) {
-      const error = chalk.hex(currentTheme.palette.error)(turn.error);
+      const error = currentTheme.fg('error', turn.error);
       lines.push(...new Text(error, 0, 0).render(width));
     }
     return lines;
-  }
-
-  private renderBodyLine(line: string, width: number): string {
-    const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
-    const contentWidth = Math.max(1, width - 4);
-    const clipped =
-      visibleWidth(line) > contentWidth ? truncateToWidth(line, contentWidth, '…') : line;
-    const padding = Math.max(0, contentWidth - visibleWidth(clipped));
-    return paint('│') + ' ' + clipped + ' '.repeat(padding) + ' ' + paint('│');
   }
 
   private currentTurn(): BtwTurn | undefined {
@@ -245,6 +415,16 @@ export class BtwPanelComponent implements Component {
   }
 
   scroll(direction: 'up' | 'down'): boolean {
+    if (this.bodyScroll !== undefined) {
+      const delta = direction === 'up' ? -1 : 1;
+      const moved = this.bodyScroll.scrollBy(delta) !== delta;
+      if (moved) {
+        this.scrollTop = this.bodyScroll.scrollTop;
+        this.followTail = this.bodyScroll.isFollowingEnd;
+        this.syncFullscreenHeader();
+      }
+      return moved;
+    }
     if (this.maxScrollTop <= 0) return false;
     const current = this.followTail ? this.maxScrollTop : this.scrollTop;
     const next =

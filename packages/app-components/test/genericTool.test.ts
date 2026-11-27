@@ -236,61 +236,6 @@ describe('GenericTool computer use row', () => {
   });
 });
 
-describe('Auto Review hint', () => {
-  const HINT = 'Auto Review in progress…';
-
-  function mountReviewingRun(): ToolCall {
-    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
-    const i18n = createKimiI18n({ locale: 'en' });
-    setKimiClientDeps({
-      t: (key: string, params?: Record<string, unknown>) =>
-        params === undefined ? i18n.global.t(key) : i18n.global.t(key, params),
-    } as never);
-    const tool = reactive({ id: 'call_1', name: 'mcp__other__click', arg: '{"x":1}', status: 'running', autoReviewing: true } as ToolCall);
-    app = createApp({ setup: () => () => h(ActivityRun, { items: [{ kind: 'tool', tool }], live: true, forceOpen: true }) });
-    app.use(i18n);
-    app.provide(IconResolverKey, name => ({ render: () => h('svg', { 'data-icon': name }) }));
-    app.mount(host);
-    return tool;
-  }
-
-  const rowHint = () => [...host.querySelectorAll('.tl-faint')].some((node) => node.textContent === HINT);
-  const summaryHint = () => host.querySelector('.ar-sum')?.textContent?.includes(HINT) === true;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  it('shows the hint on the tool row and the run summary once a review passes 3 seconds', async () => {
-    const tool = mountReviewingRun();
-    await nextTick();
-    expect([rowHint(), summaryHint()]).toEqual([false, false]);
-
-    await vi.advanceTimersByTimeAsync(2_999);
-    expect([rowHint(), summaryHint()]).toEqual([false, false]);
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect([rowHint(), summaryHint()]).toEqual([true, true]);
-
-    tool.autoReviewing = undefined;
-    await nextTick();
-    expect([rowHint(), summaryHint()]).toEqual([false, false]);
-  });
-
-  it('never shows the hint for a review that finishes within 3 seconds', async () => {
-    const tool = mountReviewingRun();
-    await vi.advanceTimersByTimeAsync(2_000);
-    tool.autoReviewing = undefined;
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect([rowHint(), summaryHint()]).toEqual([false, false]);
-  });
-});
-
 describe('Write and Edit streaming rows', () => {
   it.each([
     ['Write', 'content'],

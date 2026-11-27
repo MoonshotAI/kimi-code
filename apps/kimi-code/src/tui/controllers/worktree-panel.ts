@@ -49,6 +49,9 @@ export interface WorktreePanelHost {
   showStatus(message: string, color?: ColorToken): void;
   showError(message: string): void;
   startSessionAt(location: WorkLocation): Promise<boolean>;
+  canMoveSessionToWorktree?(): boolean;
+  precheckMoveSession?(): Promise<void> | void;
+  moveSessionTo?(location: WorkLocation): Promise<boolean>;
 }
 
 interface Destination {
@@ -135,8 +138,11 @@ export class WorktreePanelController {
   private showForm(initialName?: string): void {
     if (this.entering) return;
     this.inspectToken += 1;
+    const canMoveSession =
+      this.host.canMoveSessionToWorktree?.() === true && this.host.moveSessionTo !== undefined;
     const form: WorktreeFormComponent = new WorktreeFormComponent({
       initialName,
+      canMoveSession,
       onSubmit: (value) => {
         void this.create(form, value);
       },
@@ -149,20 +155,30 @@ export class WorktreePanelController {
   }
 
   private async create(form: WorktreeFormComponent, value: WorktreeFormValue): Promise<void> {
-    await this.host.worktreeCreation.run(value, {
-      onRejected: (error) => {
-        if (this.mounted !== form) {
-          this.host.showError(engineMessage(error));
-          return;
-        }
-        form.showError(engineMessage(error), fieldAtFault(error));
-        this.host.state.ui.requestRender();
+    const moveSession = value.sessionAction === 'move' && this.host.moveSessionTo !== undefined;
+    await this.host.worktreeCreation.run(
+      {
+        name: value.name,
+        base: value.base,
+        mode: moveSession ? 'move' : 'new',
       },
-      onAccepted: () => {
-        if (this.mounted === form) this.close();
+      {
+        beforeCreate: moveSession ? () => this.host.precheckMoveSession?.() : undefined,
+        onRejected: (error) => {
+          if (this.mounted !== form) {
+            this.host.showError(engineMessage(error));
+            return;
+          }
+          form.showError(engineMessage(error), fieldAtFault(error));
+          this.host.state.ui.requestRender();
+        },
+        onAccepted: () => {
+          if (this.mounted === form) this.close();
+        },
+        enter: (location) =>
+          moveSession ? this.host.moveSessionTo!(location) : this.host.startSessionAt(location),
       },
-      enter: (location) => this.host.startSessionAt(location),
-    });
+    );
   }
 
   private async delete(row: WorktreeRow): Promise<void> {
