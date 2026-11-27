@@ -126,7 +126,7 @@ describe('AgentReminderService', () => {
 
   it('appends provider content parts verbatim without system-reminder wrapping', async () => {
     reminder.register('media_test', () => [
-      { type: 'text', text: 'caption' },
+      { type: 'text', text: 'caption', meta: { kind: 'tool_lifecycle', added: ['a'], removed: ['b'] } },
       { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
     ]);
 
@@ -134,7 +134,7 @@ describe('AgentReminderService', () => {
 
     const message = context.history().at(-1);
     expect(message?.content).toEqual([
-      { type: 'text', text: 'caption' },
+      { type: 'text', text: 'caption', meta: { kind: 'tool_lifecycle', added: ['a'], removed: ['b'] } },
       { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
     ]);
     expect(message?.origin).toEqual({ kind: 'injection', variant: 'media_test' });

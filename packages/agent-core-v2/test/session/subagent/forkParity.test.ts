@@ -221,11 +221,13 @@ describe('subagent task reminders and btw request parity', () => {
 
   async function createDirectChild(profile = 'coder'): Promise<IAgentScopeHandle> {
     const lifecycle = ctx.get(IAgentLifecycleService);
-    const child = await lifecycle.create({
+    const childContext = await lifecycle.create({
       agentId: 'direct-child',
       binding: { profile, model: 'mock-model' },
     });
-    return lifecycle.handleOf(child.agentId)!;
+    const child = lifecycle.handleOf(childContext.agentId)!;
+    await child.accessor.get(IAgentLoopService).start();
+    return child;
   }
 
   async function runPrompt(agent: IAgentScopeHandle): Promise<void> {

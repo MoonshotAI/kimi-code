@@ -61,6 +61,7 @@ function createControl(initial = true): DesktopBrowserAgentControl & { set(enabl
 }
 
 async function runReminderStep(loop: IAgentLoopService): Promise<void> {
+  await loop.start();
   const entries = Reflect.get(loop.hooks.onWillBeginStep, 'entries') as readonly {
     readonly id: string;
     readonly handler: (
@@ -133,7 +134,9 @@ it('loads the browser through upstream MCP selection and restores it with sessio
     expect(registry.resolve(name)).toBeDefined();
     await selection.prepareForRequest();
     expect(selection.shapeTools(registry.list()).map((tool) => tool.name)).not.toContain(name);
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    expect(selection.loadableToolsAnnouncement()?.content[0]).toMatchObject({
+      text: expect.stringContaining(name),
+    });
     const loaded = selection.load([name]);
     expect(loaded.toLoad).toEqual([name]);
     expect(loaded.schemas.map((tool) => tool.name)).toEqual([name]);
@@ -429,8 +432,9 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
   const reminders = (agent: Agent) => agent.accessor.get(IAgentLoopService).history()
     .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === DESKTOP_BROWSER_REMINDER_VARIANT)
     .map((message) => JSON.stringify(message.content));
-  const settle = (agent: Agent, toolName: string, args: string, output: string) => {
+  const settle = async (agent: Agent, toolName: string, args: string, output: string) => {
     const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
     const id = `call-${toolName}`;
     loop.remind(
       historyEntryFromContext({ role: 'assistant', content: [], toolCalls: [{ type: 'function', id, name: toolName, arguments: args }] }),
@@ -439,7 +443,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
     loop.flushReminders();
   };
   type Kind = 'call' | 'rewritten' | 'select' | 'erred';
-  const histories: Record<Kind, (agent: Agent) => void> = {
+  const histories: Record<Kind, (agent: Agent) => Promise<void>> = {
     call: (agent) => settle(agent, name, '{}', `Tool "${name}" not found`),
     rewritten: (agent) => settle(
       agent,
@@ -464,7 +468,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
         await mkdir(workDir);
         const session = await sessions.create({ workDir });
         const agent = await prepare(session);
-        histories[kind](agent);
+        await histories[kind](agent);
         if (phase === 'live') live[kind] = agent;
         else {
           closed[kind] = session.id;

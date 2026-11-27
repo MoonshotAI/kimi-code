@@ -195,6 +195,19 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 6; index += 1) await nextTick();
 }
 
+async function hoverTooltipText(target: Element | null): Promise<string | undefined> {
+  vi.useFakeTimers();
+  try {
+    document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
+    target?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 24, clientY: 18 }));
+    vi.advanceTimersByTime(200);
+  } finally {
+    vi.useRealTimers();
+  }
+  await settle();
+  return document.querySelector('.ui-tip__bubble')?.textContent ?? undefined;
+}
+
 async function mountPanel(locale: 'en' | 'zh' = 'en'): Promise<void> {
   plugins = makePlugins(rowData);
   authorization = makeAuthorization();
@@ -1179,7 +1192,7 @@ describe('PluginsPanel', () => {
     clickButton('Vercel');
     await settle();
 
-    expect(authorization.refresh).toHaveBeenCalled();
+    expect(authorization.refresh).toHaveBeenCalledWith('vercel');
     expect(authorization.authorize).not.toHaveBeenCalled();
     const button = host.querySelector<HTMLButtonElement>('.plugin-capabilities__actions button');
     expect(button?.textContent?.trim()).toBe('Connect');
@@ -1249,7 +1262,7 @@ describe('PluginsPanel', () => {
     await nextTick();
     const authorizationError = details.querySelector('.plugin-capabilities__authorization-error');
     expect(authorizationError?.textContent).toContain('Authorization failed. Please try again later');
-    expect(authorizationError?.getAttribute('title')).toContain('software statement is invalid');
+    expect(await hoverTooltipText(authorizationError)).toContain('software statement is invalid');
     expect(details.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('Retry authorization');
 
     authorization.states['plugin-vercel:vercel'] = {
@@ -1421,7 +1434,7 @@ describe('PluginsPanel', () => {
 
     const error = host.querySelector('.plugin-capabilities__authorization-error');
     expect(error?.textContent?.trim()).toBe('授权失败，请稍后重试');
-    expect(error?.getAttribute('title')).toBe('invalid_software_statement');
+    expect(await hoverTooltipText(error)).toBe('invalid_software_statement');
   });
 
   it('shows reset failures and keeps the authorized badge control', async () => {
@@ -1453,7 +1466,7 @@ describe('PluginsPanel', () => {
 
     const resetError = host.querySelector('.plugin-capabilities__authorization-error');
     expect(resetError?.textContent).toContain('Authorization failed. Please try again later');
-    expect(resetError?.getAttribute('title')).toBe('reset failed');
+    expect(await hoverTooltipText(resetError)).toBe('reset failed');
     expect(host.querySelector('.plugin-capabilities__actions')).not.toBeNull();
   });
 

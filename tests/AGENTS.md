@@ -1,5 +1,7 @@
 # 测试指南
 
+> 临时状态：Desktop E2E、E2E smoke 和 Layered QA 目前仅手动触发；主 CI 的 built CLI 子进程旅程和 L0 汇总暂停，普通分片暂时排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。下文涉及这些自动触发与门禁的段落描述恢复后的配置。
+
 先写出用户或调用方依赖的行为，再选能复现故障、能直接观察结果的入口。「桌面用户看到了回答」要读真实窗口。「引擎重试后完成了原回合」可以从引擎会话验收。选定位置后，再读该目录最近的 AGENTS.md。
 
 ## 测试今天写在哪
@@ -17,7 +19,7 @@
 
 ## 计划迁入的目录
 
-以下是目标布局。尖括号代表业务或模块名。引擎会话集成和 TUI 读屏目录已接入 Vitest。Desktop 的新 E2E 目录也已接入 Playwright。`tests/e2e` 有自己的 Playwright 配置，目前只接通了 TUI 一个面，写法见[新 E2E 指南](e2e/AGENTS.md)。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
+以下是目标布局。尖括号代表业务或模块名。引擎会话集成和 TUI 读屏目录已接入 Vitest。Desktop 的新 E2E 目录也已接入 Playwright。`tests/e2e` 有自己的 Playwright 配置，TUI、ACP、Desktop、Web 四个面都已接通，写法见[新 E2E 指南](e2e/AGENTS.md)。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
 
 ```text
 packages/<包>/test/unit/<模块>/                   模块单测

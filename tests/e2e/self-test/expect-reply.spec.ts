@@ -41,6 +41,16 @@ selfTest('expectReply', {
         await product.expectReply('The command printed one line.');
       },
     },
+    'finds text in and around a bullet list in the reply': {
+      run: async ({ product, model }) => {
+        model.script(say('The plan has two steps:\n\n- gather the facts\n- write them down\n\nThat is the whole plan.'));
+        await product.send('Give me a plan as a list.');
+        await product.waitIdle();
+        await product.expectReply('The plan has two steps:');
+        await product.expectReply('write them down');
+        await product.expectReply('That is the whole plan.');
+      },
+    },
     'finds text after a horizontal rule in the reply': {
       run: async ({ product, model }) => {
         model.script(say('First section.\n\n---\n\nSecond section.'));
@@ -59,6 +69,17 @@ selfTest('expectReply', {
         await product.waitIdle();
         await expect(product.expectReply('The sky is blue.')).rejects.toThrow('did not find "The sky is blue."');
         await product.expectReply('The grass is green.');
+      },
+    },
+    'does not join the words before a tool call with the words after it': {
+      workspace: { 'a.txt': 'hello\n' },
+      run: async ({ product, model }) => {
+        model.script(read('a.txt', { text: 'Before the tool.' }), say('After the tool.'));
+        await product.send('Say something, read a.txt, then say something else.');
+        await product.waitIdle();
+        await expect(product.expectReply('Before the tool.After the tool.')).rejects.toThrow('did not find "Before the tool.After the tool."');
+        await product.expectReply('Before the tool.');
+        await product.expectReply('After the tool.');
       },
     },
     'does not take a tool card for a reply': {

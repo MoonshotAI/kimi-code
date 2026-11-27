@@ -3,6 +3,7 @@ import { useHistoryState } from '../historyState';
 import { computed, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Markdown } from '@moonshot-ai/app-markdown';
+import { Tooltip } from '@moonshot-ai/app-ui';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import { toolGlyph, toolLabel } from '@moonshot-ai/app-components';
@@ -49,7 +50,9 @@ function openPlanFile(): void {
     <template #body>
       <ToolPanel scroll :copy-text="plan?.plan ?? ''">
         <template v-if="path" #head>
-          <button type="button" class="plan-path" :title="path" :data-file-path="path" @click.stop="openPlanFile">{{ path }}</button>
+          <Tooltip :text="path">
+            <button type="button" class="plan-path" :data-file-path="path" @click.stop="openPlanFile">{{ path }}</button>
+          </Tooltip>
         </template>
         <div v-if="plan" class="plan-content">
           <Markdown :text="plan.plan" :open-file="panelApi?.openFile" :resolve-file-path="props.resolveFilePath" :resolve-image="props.resolveImage" />

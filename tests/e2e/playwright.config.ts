@@ -11,5 +11,10 @@ export default defineConfig<SurfaceOptions>({
   forbidOnly: true,
   timeout: 120_000,
   reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
-  projects: [{ name: 'tui', use: { surface: 'tui' } }],
+  projects: [
+    { name: 'tui', use: { surface: 'tui' } },
+    { name: 'acp', use: { surface: 'acp' } },
+    { name: 'desktop', use: { surface: 'desktop' }, workers: 1 },
+    { name: 'web', use: { surface: 'web' } },
+  ],
 });

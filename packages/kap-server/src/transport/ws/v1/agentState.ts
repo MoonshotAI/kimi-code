@@ -7,6 +7,8 @@ import {
   IAgentSwarmService,
   IAgentTodoService,
   IAgentTowerService,
+  MAIN_AGENT_ID,
+  missingConfiguredModelAlias,
   planKey,
   type IAgentScopeHandle,
   type ServiceIdentifier,
@@ -31,7 +33,8 @@ export function readAgentState(handle: IAgentScopeHandle | undefined, running: b
     };
   }
   const profile = optionalService(handle, IAgentLoopService);
-  const model = profile?.getModel() ?? '';
+  let model = profile?.getModel() ?? '';
+  if (handle.id === MAIN_AGENT_ID && model !== '' && missingConfiguredModelAlias(handle) !== undefined) model = '';
   return {
     status: running ? 'running' : 'idle',
     compacting: (optionalService(handle, IAgentFullCompactionService)?.compacting ?? null) !== null,

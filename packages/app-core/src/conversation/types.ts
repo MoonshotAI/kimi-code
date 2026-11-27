@@ -4,6 +4,8 @@ export type ConversationOutcome = 'completed' | 'interrupted' | 'failed';
 
 export type ConversationEndReason = 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
 
+export type ConversationContinuation = 'turn' | 'background' | 'none';
+
 export interface ConversationError {
   readonly code: string;
   readonly message: string;
@@ -161,6 +163,7 @@ export interface ToolCallItem extends ConversationItemBase {
   readonly stage?: 'input' | 'awaiting_approval' | 'executing';
   readonly input?: unknown;
   readonly input_text?: string;
+  readonly fields?: Readonly<Record<string, unknown>>;
   readonly display?: unknown;
   readonly output?: string;
   readonly media?: readonly ConversationMedia[];
@@ -231,6 +234,7 @@ export interface ConversationTurnHeader {
   readonly status: ConversationItemStatus;
   readonly outcome?: ConversationOutcome;
   readonly end_reason?: ConversationEndReason;
+  readonly continuation?: ConversationContinuation;
   readonly error?: ConversationError;
   readonly retry?: ConversationRetry;
   readonly turn_number?: number;

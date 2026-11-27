@@ -684,11 +684,11 @@ const {
       <span class="pinned-resize-bar" aria-hidden="true"></span>
     </div>
     <Teleport to="body">
-      <Transition name="menu-pop">
+      <Transition name="ui-menu-pop">
         <Menu
           v-if="menuOpen"
           ref="menuRef"
-          class="pinned-menu anchored-menu"
+          class="pinned-menu ui-menu-floating"
           :style="menuStyle"
           @click.stop
           @contextmenu.prevent.stop
@@ -724,11 +724,11 @@ const {
 
 <style scoped>
 .pinned-options {
-  color: var(--faint);
+  color: var(--color-text-quaternary);
 }
 .pinned-options:hover,
 .pinned-options.open {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .pinned-options.open {
   background: var(--color-hover);
@@ -736,32 +736,6 @@ const {
 .pinned-options svg {
   width: 13px;
   height: 13px;
-}
-
-.se-locate-flash,
-.pin-workspace.ws-locate-flash :deep(.gh) {
-  isolation: isolate;
-}
-.se-locate-flash::before,
-.pin-workspace.ws-locate-flash :deep(.gh)::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-soft);
-  pointer-events: none;
-  animation: se-locate-fade var(--duration-flash) var(--ease-out) forwards;
-}
-@keyframes se-locate-fade {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .se-locate-flash::before,
-  .pin-workspace.ws-locate-flash :deep(.gh)::before {
-    animation: none;
-  }
 }
 
 .pinned-rows {
@@ -852,12 +826,12 @@ const {
 }
 .pinned-seam--top {
   top: 0;
-  border-top: var(--p-hairline) solid var(--line);
+  border-top: var(--p-hairline) solid var(--color-line);
   background: var(--pinned-seam-down);
 }
 .pinned-seam--bottom {
   bottom: 0;
-  border-bottom: var(--p-hairline) solid var(--line);
+  border-bottom: var(--p-hairline) solid var(--color-line);
   background: var(--pinned-seam-up);
 }
 .pinned-rows-wrap.scrolled .pinned-seam--top,
@@ -921,3 +895,5 @@ const {
 </style>
 
 <style src="./lib/anchored-menu.css"></style>
+
+<style scoped src="./lib/locate-flash.css"></style>

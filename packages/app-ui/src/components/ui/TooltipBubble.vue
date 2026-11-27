@@ -124,10 +124,24 @@ function hide(): void {
   positioned.value = false;
 }
 
+function hoverBlocked(event: PointerEvent): boolean {
+  if (event.pointerType === 'touch') return true;
+  if (event.pointerType === 'mouse') return false;
+  return window.matchMedia?.('(any-hover: none)').matches === true;
+}
+
 function onDirectPointerMove(event: PointerEvent): void {
+  if (hoverBlocked(event)) {
+    hide();
+    return;
+  }
   if (hovering || isSyntheticPointerMove(event)) return;
   hovering = true;
   show();
+}
+
+function onPointerDown(event: PointerEvent): void {
+  if (hoverBlocked(event)) hide();
 }
 
 function onFocus(event: FocusEvent): void {
@@ -147,6 +161,10 @@ function ownerOf(el: EventTarget | null): HTMLElement | null {
 function onDelegatePointerMove(event: PointerEvent): void {
   const shell = props.delegate;
   if (!shell) return;
+  if (hoverBlocked(event)) {
+    hide();
+    return;
+  }
   if (ownerOf(event.target) !== shell) {
     hide();
     return;
@@ -171,6 +189,7 @@ function onDelegateBlur(): void {
 function detach(): void {
   if (!attachedTo) return;
   attachedTo.removeEventListener('focusin', onFocus);
+  attachedTo.removeEventListener('pointerdown', onPointerDown);
   if (props.delegate) {
     attachedTo.removeEventListener('pointermove', onDelegatePointerMove);
     attachedTo.removeEventListener('mouseout', onDelegateOut);
@@ -191,6 +210,7 @@ function attach(): void {
   if (!el) return;
   attachedTo = el;
   el.addEventListener('focusin', onFocus);
+  el.addEventListener('pointerdown', onPointerDown);
   if (props.delegate) {
     el.addEventListener('pointermove', onDelegatePointerMove, { passive: true });
     el.addEventListener('mouseout', onDelegateOut);
@@ -248,7 +268,7 @@ onBeforeUnmount(() => {
   <Teleport v-if="open" to="body">
     <div
       ref="bubble"
-      class="ui-tip__bubble"
+      class="ui-tip-surface ui-tip__bubble"
       :class="{ positioned, 'ui-tip__bubble--keys': keys.length > 0, 'ui-tip__bubble--arrow': arrow }"
       :data-side="arrow ? side : undefined"
       :style="[bubbleStyle, { '--tip-lines': maxLines }]"
@@ -265,21 +285,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ui-tip__bubble {
-  position: fixed;
-  z-index: var(--z-tooltip);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: var(--tip-lines);
   max-width: 280px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--color-text);
-  color: var(--color-bg);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
   line-height: 1.35;
   overflow: hidden;
-  overflow-wrap: anywhere;
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);

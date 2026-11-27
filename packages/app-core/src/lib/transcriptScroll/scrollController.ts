@@ -1,6 +1,6 @@
 import { nextJumpPillVisible } from '../followScroll';
 import { createDomAnchors, resolvedExactly, ROW_KEY_ATTRIBUTE, type AnchorCandidate, type AnchorPath, type PickOptions } from './anchor';
-import { isUnexpectedScroll, readScrollIntent } from './intent';
+import { isUnexpectedScroll, readScrollIntent, USER_SCROLL_TOLERANCE } from './intent';
 import type { LayoutModel } from './layoutModel';
 
 export const FOLLOW_THRESHOLD = 24;
@@ -80,10 +80,17 @@ export interface ResizeObserverLike {
   disconnect(): void;
 }
 
+export interface MutationObserverLike {
+  observe(target: Node, options?: MutationObserverInit): void;
+  takeRecords(): readonly unknown[];
+  disconnect(): void;
+}
+
 export interface ScrollOptions {
   followThreshold: number;
   animationMs: number;
   createResizeObserver: (callback: (entries: readonly ResizeEntryLike[]) => void) => ResizeObserverLike;
+  createMutationObserver: (callback: () => void) => MutationObserverLike;
   requestFrame: (callback: () => void) => number;
   cancelFrame: (handle: number) => void;
   now: () => number;
@@ -154,6 +161,7 @@ function defaultOptions(): ScrollOptions {
     followThreshold: FOLLOW_THRESHOLD,
     animationMs: SCROLL_ANIMATION_MS,
     createResizeObserver: callback => new ResizeObserver(entries => callback(entries)),
+    createMutationObserver: callback => new MutationObserver(() => callback()),
     requestFrame: callback => requestAnimationFrame(callback),
     cancelFrame: handle => cancelAnimationFrame(handle),
     now: () => performance.now(),
@@ -192,9 +200,14 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   let held: { el: HTMLElement; offset: number; until: number } | null = null;
   let holdFrame = 0;
   let dragging = false;
+  let pressing = false;
+  let stickyPress = false;
+  let mutatedFrame = 0;
   let touchActive = false;
+  let touchTarget: AbortController | null = null;
   let touching = false;
   let touchScrolled = false;
+  let touchSettled = false;
   let scrollInput = false;
   let restoring = false;
   let animation: Animation | null = null;
@@ -203,6 +216,8 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   const observer = options.createResizeObserver(onResize);
   observer.observe(scroller);
+  const mutations = options.createMutationObserver(onMutation);
+  mutations.observe(scroller, { subtree: true, childList: true, characterData: true, attributes: true });
 
   function viewTop(): number {
     return scroller.getBoundingClientRect().top;
@@ -364,7 +379,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   }
 
   function adoptClamp(): boolean {
-    if ((!restoring && state.mode.kind !== 'navigating') || scrollInput || dragging || touching) return false;
+    if ((!restoring && state.mode.kind !== 'navigating' && !animation) || scrollInput || dragging || touching) return false;
     expectedTop = scroller.scrollTop;
     return true;
   }
@@ -381,13 +396,37 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     return state.mode.kind === 'follow' && !scrollInput && !touching && expectedTop - top <= options.followThreshold;
   }
 
+  function contentClamp(top: number): boolean {
+    if (state.mode.kind !== 'follow' || top >= expectedTop || scrollInput || touching || dragging || pressing) return false;
+    if (mutations.takeRecords().length > 0) onMutation();
+    return mutatedFrame !== 0;
+  }
+
+  function onMutation(): void {
+    if (disposed) return;
+    if (mutatedFrame) options.cancelFrame(mutatedFrame);
+    mutatedFrame = options.requestFrame(() => {
+      mutatedFrame = options.requestFrame(() => {
+        mutatedFrame = 0;
+      });
+    });
+  }
+
   function handleScroll(layout = false): void {
     const top = scroller.scrollTop;
     if (!isUnexpectedScroll(top, expectedTop) || adoptClamp()) return;
-    if (touching) touchScrolled = true;
+    if (touching) {
+      touchScrolled = true;
+      touchSettled = false;
+    }
     const max = maxTop();
     if (top < expectedTop && !dragging && (top >= max - 1 || (layout && followClamp(top)))) {
       expectedTop = top;
+      return;
+    }
+    if (contentClamp(top)) {
+      expectedTop = top;
+      write(max, 'follow');
       return;
     }
     const shift = pendingShift();
@@ -428,37 +467,62 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
         if (animation || state.mode.kind === 'navigating') interrupt();
         else if (intent.direction < 0 && state.mode.kind === 'follow' && maxTop() > 1) anchorHere();
         break;
+      case 'press':
+        pressing = true;
+        stickyPress = intent.sticky;
+        return;
       case 'drag-start':
         dragging = true;
         if (animation || state.mode.kind === 'navigating') interrupt();
         else if (state.mode.kind === 'follow') anchorHere();
         break;
       case 'drag-end':
+        if (!stickyPress) pressing = false;
         if (!dragging) return;
         dragging = false;
         correct('drag-end');
         return;
       case 'touch-start':
         touching = touchActive = true;
-        touchScrolled = false;
+        touchScrolled = touchSettled = false;
+        followTouchTarget(event.target);
         if (animation || state.mode.kind === 'navigating') interrupt();
         break;
       case 'touch-end':
         if (!touchActive) return;
         touchActive = false;
-        if (!touchScrolled || !options.supportsScrollEnd) {
+        if (!touchScrolled || touchSettled || !options.supportsScrollEnd) {
           touching = false;
           correct('touch-end');
           return;
         }
         break;
       case 'scroll-end':
-        if (!touching || touchActive) return;
+        if (!touching) return;
+        if (touchActive) {
+          touchSettled = true;
+          return;
+        }
         touching = false;
         correct('scroll-end');
         return;
     }
     emit();
+  }
+
+  function followTouchTarget(target: EventTarget | null): void {
+    touchTarget?.abort();
+    touchTarget = null;
+    if (!target || target === scroller) return;
+    const listening = new AbortController();
+    const end = (event: Event): void => {
+      listening.abort();
+      if (touchTarget === listening) touchTarget = null;
+      onInput(event);
+    };
+    target.addEventListener('touchend', end, { passive: true, signal: listening.signal });
+    target.addEventListener('touchcancel', end, { passive: true, signal: listening.signal });
+    touchTarget = listening;
   }
 
   function onResize(entries: readonly ResizeEntryLike[]): void {
@@ -550,8 +614,14 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     }
   }
 
+  function abandonTouch(): void {
+    touching = touchActive = false;
+    pressing = stickyPress = false;
+  }
+
   function follow(opts: { smooth?: boolean } = {}): void {
     if (disposed) return;
+    abandonTouch();
     cancelAnimation();
     finishNavigation();
     held = null;
@@ -566,6 +636,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   function navigate(path: AnchorPath, opts: NavigateOptions = {}): Promise<void> {
     if (disposed) return Promise.resolve();
+    abandonTouch();
     cancelAnimation();
     finishNavigation();
     held = null;
@@ -619,7 +690,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
       return;
     }
     held = null;
-    if (state.mode.kind !== 'anchored' || dragging || touching || maxTop() - scroller.scrollTop > options.followThreshold) return;
+    if (state.mode.kind !== 'anchored' || dragging || touching || maxTop() - scroller.scrollTop > USER_SCROLL_TOLERANCE) return;
     setMode({ kind: 'follow' });
     correct('follow');
   }
@@ -655,8 +726,11 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     disposed = true;
     cancelAnimation();
     if (holdFrame) options.cancelFrame(holdFrame);
+    if (mutatedFrame) options.cancelFrame(mutatedFrame);
+    touchTarget?.abort();
     finishNavigation();
     observer.disconnect();
+    mutations.disconnect();
     rows.clear();
     targets.clear();
     retiring.clear();

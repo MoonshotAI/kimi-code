@@ -223,7 +223,7 @@ import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { isSessionOccupiedError } from './utils/session-lock-errors';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
-import { lazyModelSelection } from './utils/model-switch';
+import { hasUnavailableSessionModel, lazyModelSelection } from './utils/model-switch';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
@@ -1430,7 +1430,6 @@ export class KimiTUI {
   }
 
   handlePlanToggle(next: boolean): void {
-    this.promptPredictionController.handlePlanModeChanged(next);
     void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
   }
 
@@ -1585,6 +1584,7 @@ export class KimiTUI {
     preExtracted?: ExtractionResult,
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
+    if (hasUnavailableSessionModel(this)) return;
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
@@ -1658,6 +1658,7 @@ export class KimiTUI {
     preExtracted?: ExtractionResult,
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
+    if (hasUnavailableSessionModel(this)) return;
     if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
@@ -2212,6 +2213,10 @@ export class KimiTUI {
 
   handlePromptPredictionTurnEnded(event: TurnEndedEvent): void {
     this.promptPredictionController.handleTurnEnded(event);
+  }
+
+  handlePromptPredictionIdle(): void {
+    this.promptPredictionController.handleLoopIdle();
   }
 
   private async maybeAutoGenerateSessionTitle(): Promise<void> {
@@ -3273,7 +3278,7 @@ export class KimiTUI {
     initialUserTurnCount = session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
   ): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
-    await previous?.close();
+    if (previous !== undefined && previous !== session) await previous.close();
     if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
     this.hasSessionHistory = true;
@@ -3513,6 +3518,7 @@ export class KimiTUI {
     this.promptPredictionController.reset();
     this.surveyController.reset();
     this.streamingUI.discardPending();
+    this.streamingUI.resetContinuation();
     this.resetSteerDeliveries();
     if (options?.keepQueuedMessages !== true) this.clearQueuedMessages();
     this.programStatus.resetSession();
@@ -3565,6 +3571,7 @@ export class KimiTUI {
         id: targetSessionId,
         replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
       });
+      await this.switchToSession(session, `Resumed session (${session.id}).`);
     } catch (error) {
       log.error('failed to resume session', {
         sessionId: targetSessionId,
@@ -3578,8 +3585,6 @@ export class KimiTUI {
       this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);
       return false;
     }
-
-    await this.switchToSession(session, `Resumed session (${session.id}).`);
     return true;
   }
 
@@ -4410,7 +4415,6 @@ export class KimiTUI {
 
   updateQueueDisplay(): void {
     this.programStatus?.refresh();
-    this.promptPredictionController.handleQueueChange();
     const { queueContainer, queuePane, queuedMessages } = this.state;
     if (queuedMessages.length === 0) {
       queuePane.scrollBodyToTop();
@@ -4685,7 +4689,6 @@ export class KimiTUI {
     this.editorReplacementOnDisplaced = onDisplaced;
     this.editorReplacementOnReplaced = onReplaced;
     this.editorReplacementOwner = owner;
-    this.promptPredictionController.notifyDisplaced();
     this.surveyController.notifyDisplaced();
     if (this.state.activeDialog === 'model-switch-confirm') this.state.activeDialog = null;
     this.disposeEditorReplacement();

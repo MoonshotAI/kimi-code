@@ -122,14 +122,15 @@ describe('loop journal restore', () => {
     journal.append({ type: 'prompt.submitted', message: first });
     journal.append({ type: 'prompt.submitted', message: second });
     journal.append({ type: 'prompt.steered', promptIds: ['p1', 'p2'], messages: [first, second] });
-    journal.append({ type: 'turn.ended', turnId: 0, outcome: { type: 'done' } });
+    journal.append({ type: 'turn.ended', turnId: 0, outcome: { type: 'done' }, continuation: 'turn' });
     journal.append({ type: 'turn.started', turnId: 1, trigger: 'notify', promptOnly: true, message: first });
     journal.append({ type: 'message.appended', turnId: 1, step: 0, source: 'notify', message: first });
-    journal.append({ type: 'turn.ended', turnId: 1, outcome: { type: 'done' } });
+    journal.append({ type: 'turn.ended', turnId: 1, outcome: { type: 'done' }, continuation: 'turn' });
     journal.append({ type: 'turn.started', turnId: 2, trigger: 'notify', message: second });
     journal.append({ type: 'message.appended', turnId: 2, step: 0, source: 'notify', message: second });
-    journal.append({ type: 'turn.ended', turnId: 2, outcome: { type: 'done' } });
+    journal.append({ type: 'turn.ended', turnId: 2, outcome: { type: 'done' }, continuation: 'none' });
 
+    expect(records.at(-1)).toMatchObject({ type: 'turn.ended', turnId: 2, continuation: 'none' });
     expect(records.filter((record) => record.type === 'turn.steer')).toHaveLength(0);
     expect(records.filter((record) => record.type === 'turn.prompt')).toMatchObject([
       { turnId: 0, promptId: 'active' },

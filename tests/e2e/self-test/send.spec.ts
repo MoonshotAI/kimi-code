@@ -13,6 +13,19 @@ selfTest('send', {
         await product.expectReply('Received.');
       },
     },
+    'tells a repeated prompt from the earlier one after a long answer': {
+      run: async ({ product, model }) => {
+        const long = Array.from({ length: 80 }, (_, index) => `Paragraph number ${index + 1}.`).join('\n\n');
+        model.script(say(long), say('Second answer.'));
+        await product.send('Answer me.');
+        await product.waitIdle();
+        await product.expectReply('Paragraph number 80.');
+        await product.send('Answer me.');
+        await product.waitIdle();
+        expect(model.requests('main')).toHaveLength(2);
+        await product.expectReply('Second answer.');
+      },
+    },
   },
   negative: {
     'refuses a prompt that the product would read as a command': {

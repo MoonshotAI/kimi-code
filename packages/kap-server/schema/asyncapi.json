@@ -2434,6 +2434,13 @@
                       "type": "string"
                     },
                     "cwd": {
+                      "deprecated": true,
+                      "type": "string"
+                    },
+                    "environment_cwd": {
+                      "type": "string"
+                    },
+                    "environment_id": {
                       "type": "string"
                     },
                     "git": {
@@ -2511,6 +2518,9 @@
                     },
                     "workspace_id": {
                       "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      "type": "string"
+                    },
+                    "workspace_root": {
                       "type": "string"
                     }
                   },
@@ -3450,6 +3460,14 @@
             },
             "turn": {
               "properties": {
+                "continuation": {
+                  "enum": [
+                    "turn",
+                    "background",
+                    "none"
+                  ],
+                  "type": "string"
+                },
                 "duration_ms": {
                   "minimum": 0,
                   "type": "number"
@@ -3876,6 +3894,14 @@
             "turns": {
               "items": {
                 "properties": {
+                  "continuation": {
+                    "enum": [
+                      "turn",
+                      "background",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
                   "duration_ms": {
                     "minimum": 0,
                     "type": "number"

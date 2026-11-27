@@ -9,7 +9,6 @@ import FeedbackGuideLink from './FeedbackGuideLink.vue';
 const props = defineProps<{
   anchor: HTMLButtonElement;
   target: TurnFeedbackTarget;
-  preparedForm?: Promise<FeedbackForm | null>;
   saving: boolean;
   updating: boolean;
 }>();
@@ -23,8 +22,7 @@ const editor = ref<InstanceType<typeof Textarea>>();
 const scrolls = ref(false);
 const deferPreview = ref(false);
 const position = shallowRef<{ top: number; left: number; maxHeight: number }>();
-const form = shallowRef<FeedbackForm | null>();
-const loadingWasVisible = ref(false);
+const form = shallowRef<FeedbackForm | null | undefined>(feedback?.peekForm(props.target.sessionId));
 const builtinReasons = ['incorrect', 'missed_instructions', 'off_topic', 'lost_context', 'slow', 'other'] as const;
 const reasonOptions = computed(() => {
   if (form.value === undefined) return [];
@@ -42,7 +40,7 @@ const countId = useId();
 const overLimit = computed(() => detail.value.length > FEEDBACK_DESCRIPTION_LIMIT);
 const canSubmit = computed(() => selected.value.length > 0 && !overLimit.value && !props.saving && !props.updating);
 let observer: ResizeObserver | undefined;
-let firstFrame: number;
+let active = true;
 
 function measure(): void {
   const panel = menu.value?.el;
@@ -95,22 +93,30 @@ onMounted(() => {
   document.addEventListener('scroll', measure, true);
   window.addEventListener('keydown', escape, true);
   window.addEventListener('resize', measure);
-  const request = props.preparedForm ?? feedback?.loadForm(props.target.sessionId);
-  void request?.then(config => {
-    form.value = config;
-  });
-  firstFrame = requestAnimationFrame(() => { loadingWasVisible.value = form.value === undefined; });
+  const request = feedback?.loadForm(props.target.sessionId);
+  if (form.value === undefined) {
+    void request?.then(config => {
+      if (active) form.value = config;
+    });
+  }
 });
 
 onBeforeUnmount(() => {
+  active = false;
   observer?.disconnect();
-  cancelAnimationFrame(firstFrame);
   document.removeEventListener('click', outside, true);
   document.removeEventListener('scroll', measure, true);
   window.removeEventListener('keydown', escape, true);
   window.removeEventListener('resize', measure);
   if (menu.value?.el?.contains(document.activeElement) && !props.anchor.disabled) props.anchor.focus({ preventScroll: true });
 });
+
+function focusEditor(event: MouseEvent): void {
+  const input = editor.value?.el;
+  if (!input || event.target === input || props.updating) return;
+  event.preventDefault();
+  input.focus();
+}
 
 function toggle(id: string): void {
   selected.value = selected.value.includes(id) ? selected.value.filter(selectedId => selectedId !== id) : [...selected.value, id];
@@ -149,7 +155,6 @@ async function submit(): Promise<void> {
     </div>
     <div
       class="feedback-reasons"
-      :class="{ 'feedback-reasons-loading-size': loadingWasVisible }"
       role="group"
       :aria-label="t('feedback.multipleReasons')"
       :aria-busy="form === undefined || undefined"
@@ -164,7 +169,11 @@ async function submit(): Promise<void> {
         @click="toggle(reason.id)"
       ><span>{{ reason.label }}</span></Pill>
     </div>
-    <div class="feedback-editor" :class="{ 'is-scrollable': scrolls, 'defer-preview': deferPreview }">
+    <div
+      class="feedback-editor"
+      :class="{ 'is-scrollable': scrolls, 'defer-preview': deferPreview }"
+      @mousedown="focusEditor"
+    >
       <Textarea
         ref="editor"
         v-model="detail"
@@ -252,16 +261,6 @@ async function submit(): Promise<void> {
   flex-wrap: wrap;
   gap: var(--space-2);
 }
-.feedback-reasons-loading-size {
-  height: var(--feedback-reason-height);
-}
-.feedback-reasons-loading-size:has(.ui-pill + .ui-pill) {
-  align-content: start;
-  height: calc(var(--feedback-reason-height) + var(--space-3));
-  margin-bottom: calc(0px - var(--space-3));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
 .feedback-reasons .ui-pill {
   --feedback-control-bg: var(--color-fill-1);
   --feedback-control-radius: var(--radius-md);
@@ -295,7 +294,9 @@ async function submit(): Promise<void> {
   border-radius: var(--radius-dock-pill);
   outline: 1px solid transparent;
   outline-offset: -1px;
+  cursor: text;
 }
+.feedback-editor:has(.ui-textarea:disabled) { cursor: default; }
 .feedback-editor.is-scrollable { gap: var(--space-2); }
 .feedback-editor:focus-within { outline-color: var(--color-accent); }
 .feedback-editor .ui-textarea {
@@ -323,6 +324,7 @@ async function submit(): Promise<void> {
   color: var(--color-text-quaternary);
   font-size: var(--ui-c1);
   line-height: 1.5;
+  user-select: none;
 }
 .feedback-count.is-over { color: #ff3849; }
 .feedback-popover-footer { justify-content: space-between; gap: var(--space-2); }

@@ -158,7 +158,7 @@ defineExpose({ el: menuEl });
   flex: none;
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 .slash-icon :deep(svg) {
   display: block;

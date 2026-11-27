@@ -5,6 +5,8 @@ import {
   ISessionUsageService,
   IModelCatalog,
   IModelService,
+  isMissingConfiguredModelError,
+  MAIN_AGENT_ID,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
@@ -32,12 +34,17 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const context = agentContextOf(agent);
   const usage = usageService.status(context);
   const contextTokens = tokenCounting.statusSize(context);
-  const modelSpec = profile.getModel() === '' ? undefined : profile.resolveModelContext().model;
+  const model = profile.getModel();
+  let modelSpec;
+  try {
+    modelSpec = model === '' ? undefined : profile.resolveModelContext().model;
+  } catch (error) {
+    if (context.agentId !== MAIN_AGENT_ID || !isMissingConfiguredModelError(error, model)) throw error;
+  }
   let maxContextTokens = modelSpec?.maxInputSize ?? modelSpec?.maxContextSize ?? 0;
-  if (maxContextTokens === 0 && profile.getModel() === '') {
+  if (maxContextTokens === 0) {
     maxContextTokens = defaultModelContextTokens(agent) ?? 0;
   }
-  const model = profile.getModel();
   return {
     usage,
     contextTokens,

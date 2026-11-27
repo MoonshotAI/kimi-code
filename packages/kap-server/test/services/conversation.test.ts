@@ -196,6 +196,38 @@ describe('conversation fold', () => {
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
   });
 
+  it('folds turn.ended continuation onto the turn header and omits it for legacy records', () => {
+    const state = fold([
+      turnPrompt(0, 'p0'), userMessage('p0', 'first'), turnEnded(0, 'completed', { continuation: 'turn' }),
+      turnPrompt(1, 'p1'), userMessage('p1', 'second'), turnEnded(1, 'completed', { continuation: 'background' }),
+      turnPrompt(2, 'p2'), userMessage('p2', 'third'), turnEnded(2, 'completed', { continuation: 'none' }),
+      turnPrompt(3, 'p3'), userMessage('p3', 'legacy'), turnEnded(3, 'completed'),
+    ]);
+
+    expect(state.turns.map((turn) => turn.continuation)).toEqual(['turn', 'background', 'none', undefined]);
+  });
+
+  it('appends the parts of a step without rescanning the items already in its turn', () => {
+    const state = fold([turnPrompt(0, 'p1'), userMessage('p1', 'hello'), stepBegin(0, 1, 's1')]);
+    const turn = state.turns[0]!;
+    let itemReads = 0;
+    turn.items = new Proxy(turn.items, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) itemReads++;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    const parts = 200;
+    for (let block = 0; block < parts; block++) {
+      applyConversationRecord(state, contentPart(0, 1, 's1', { type: 'think', think: `t${String(block)}` }, block));
+    }
+    applyConversationRecord(state, contentPart(0, 1, 's1', { type: 'think', think: 'rewritten' }, 0));
+
+    expect(itemReads).toBeLessThan(parts * 2);
+    expect(turn.items).toHaveLength(parts + 1);
+    expect(turn.items[1]).toMatchObject({ item_id: 's1:0', text: 'rewritten' });
+  });
+
   it('attaches the request debug to the last item of each step only when debugging', () => {
     const records = [
       turnPrompt(0, 'p1'),
@@ -1035,6 +1067,32 @@ async function runningTurn(h: FeedHarness): Promise<void> {
 }
 
 describe('conversation feed', () => {
+  it('publishes turn continuation on live turn.ended frames, REST pages, and replay', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed', continuation: 'turn' }));
+    await flushed();
+    expect(h.events).toEqual([
+      expect.objectContaining({ type: 'turn.ended', turn: expect.objectContaining({ status: 'ended', continuation: 'turn' }) }),
+    ]);
+    expect((await h.feed.page(undefined, 20)).turns[0]?.continuation).toBe('turn');
+
+    h.events.length = 0;
+    await h.dispatcher.dispatch(prompt(1, 'p2'));
+    await h.dispatcher.dispatch(userPrompt('p2', 'after background'));
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed', continuation: 'none' }));
+    await flushed();
+    expect(h.events.filter((event) => event.type === 'turn.ended')).toEqual([
+      expect.objectContaining({ turn: expect.objectContaining({ continuation: 'none' }) }),
+    ]);
+
+    h.events.length = 0;
+    await h.dispatcher.restore();
+    expect(h.events).toEqual([]);
+    expect((await h.feed.page(undefined, 20)).turns.map((turn) => turn.continuation)).toEqual(['turn', 'none']);
+    h.dispatcher.dispose();
+  });
+
   it('only reuses the historical request ID when its step produced the rated reply', async () => {
     const h = feedHarness([
       turnPrompt(0, 'p0'), userMessage('p0', 'First question'),
@@ -1250,6 +1308,26 @@ describe('conversation feed', () => {
     await flushed();
 
     expect(h.events.at(-1)).toMatchObject({ type: 'item.updated', item_id: 'call-1', set: { task_id: 'bash-p81' } });
+  });
+
+  it('delivers the pending OAuth URL both live and on reconnect without retaining it on completion', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    const display = { kind: 'generic', summary: 'Authenticate example', detail: { kind: 'mcp_oauth', serverName: 'example' } } as const;
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'mcp__example__authenticate', args: {}, display, turnId: '0', step: 1 }));
+    await flushed();
+    const request = { waitId: 'wait-1', serverName: 'example', authorizationUrl: 'https://auth.example.test/authorize?state=test', expiresAt: Date.now() + 60_000 };
+    const fields = { 'mcp.oauth.authorization_url': request };
+    await h.dispatcher.dispatch(updated(fields));
+    await h.dispatcher.dispatch(updated({ ...fields, status: 'Waiting for callback' }));
+    expect(h.events).toContainEqual(expect.objectContaining({ type: 'item.updated', item_id: 'call-1', set: { fields } }));
+    expect((await h.feed.page(undefined, 20)).turns[0]?.items[1]).toMatchObject({ status: 'running', display, fields });
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.result', toolCallId: 'call-1', result: { output: 'Connected' } }));
+    await flushed();
+    const ended = (await h.feed.page(undefined, 20)).turns[0]?.items[1];
+    expect(ended).toMatchObject({ status: 'ended', display });
+    expect(JSON.stringify(ended)).not.toContain(request.authorizationUrl);
+    h.dispatcher.dispose();
   });
 
   it('streams a tool call through its stages, input, output and fields', async () => {

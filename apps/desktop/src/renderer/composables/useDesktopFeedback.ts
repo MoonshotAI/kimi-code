@@ -11,7 +11,7 @@ export type { FeedbackAttachment } from '../lib/feedbackReceipt';
 export type { FeedbackForm };
 
 export interface GlobalFeedbackTarget {
-  source: 'sidebar' | 'command';
+  source: 'sidebar' | 'command' | 'menu';
   sessionId?: string;
 }
 
@@ -43,6 +43,13 @@ interface FeedbackAccount {
 }
 
 export const FEEDBACK_DESCRIPTION_LIMIT = 2000;
+export const FEEDBACK_FORM_STALE_MS = 6 * 60 * 60 * 1000;
+
+interface FeedbackFormCacheEntry {
+  value?: FeedbackForm;
+  fetchedAt?: number;
+  inflight?: Promise<FeedbackForm | null>;
+}
 
 export function feedbackAccessFailureKey(error: unknown): 'feedback.accessDenied' | undefined {
   if (isDaemonApiError(error) && error.code === KIMI_AUTH_REJECTED_CODE) return 'feedback.accessDenied';
@@ -68,6 +75,7 @@ export function useDesktopFeedback(deps: {
 }) {
   const activePopover = shallowRef<string>();
   const accounts = shallowReactive(new Map<string | undefined, FeedbackAccount>());
+  const formCache = new Map<string | undefined, FeedbackFormCacheEntry>();
   const accountEpoch = shallowRef(0);
   let activeAccountId = deps.accountId();
 
@@ -83,6 +91,7 @@ export function useDesktopFeedback(deps: {
   }
 
   function clearAccountState(hostId?: string): void {
+    formCache.delete(hostId);
     const account = accounts.get(hostId);
     if (hostId === undefined) accountEpoch.value += 1;
     if (account === undefined) return;
@@ -104,22 +113,26 @@ export function useDesktopFeedback(deps: {
     return true;
   }
 
-  watch([deps.signedIn, deps.accountId], ([signedIn, accountId]) => {
+  watch([deps.signedIn, deps.accountId], ([signedIn, accountId], [wasSignedIn]) => {
     if (!signedIn) {
       activeAccountId = undefined;
       clearAccountState();
-    } else if (accountId !== undefined) {
-      if (activeAccountId !== undefined && activeAccountId !== accountId) clearAccountState();
-      activeAccountId = accountId;
+    } else {
+      if (!wasSignedIn) formCache.delete(undefined);
+      if (accountId !== undefined) {
+        if (activeAccountId !== undefined && activeAccountId !== accountId) clearAccountState();
+        activeAccountId = accountId;
+      }
     }
   }, { flush: 'sync' });
   watch(deps.hostAccounts, hosts => {
-    for (const hostId of accounts.keys()) {
+    for (const hostId of new Set([...accounts.keys(), ...formCache.keys()])) {
       if (hostId !== undefined && hosts[hostId]?.status === 'signedOut') clearAccountState(hostId);
     }
   }, { flush: 'sync' });
   onScopeDispose(() => {
     for (const hostId of accounts.keys()) clearAccountState(hostId);
+    formCache.clear();
   });
 
   function state(target: TurnFeedbackTarget | undefined): TurnFeedback | undefined {
@@ -130,14 +143,58 @@ export function useDesktopFeedback(deps: {
     return target !== undefined && activePopover.value === turnFeedbackKey(target);
   }
 
-  async function loadForm(sessionId?: string): Promise<FeedbackForm | null> {
+  function formHost(sessionId?: string): string | undefined {
+    return sessionId === undefined ? undefined : deps.sessionHost(sessionId);
+  }
+
+  function peekForm(sessionId?: string): FeedbackForm | undefined {
+    return formCache.get(formHost(sessionId))?.value;
+  }
+
+  function revalidateForm(host: string | undefined, existing?: FeedbackFormCacheEntry): Promise<FeedbackForm | null> {
+    if (existing?.inflight !== undefined) return existing.inflight;
+    let rawConfig: Promise<unknown>;
     try {
-      const host = sessionId === undefined ? undefined : deps.sessionHost(sessionId);
-      const config = await getDeviceApi(host).getClientConfig(FEEDBACK_FORM_CONFIG_NAME);
-      return feedbackFormSchema.safeParse(config).data ?? null;
+      rawConfig = getDeviceApi(host).getClientConfig(FEEDBACK_FORM_CONFIG_NAME);
     } catch {
-      return null;
+      return Promise.resolve(null);
     }
+    const entry: FeedbackFormCacheEntry = existing ?? {};
+    formCache.set(host, entry);
+    const request = rawConfig
+      .then(config => feedbackFormSchema.safeParse(config).data ?? null, () => null)
+      .then(parsed => {
+        if (formCache.get(host) === entry && entry.inflight === request) {
+          entry.inflight = undefined;
+          if (parsed !== null) {
+            entry.value = parsed;
+            entry.fetchedAt = Date.now();
+          } else if (entry.value === undefined) {
+            formCache.delete(host);
+          }
+        }
+        return parsed;
+      });
+    entry.inflight = request;
+    return request;
+  }
+
+  function loadForm(sessionId?: string): Promise<FeedbackForm | null> {
+    const host = formHost(sessionId);
+    const existing = formCache.get(host);
+    if (existing?.value !== undefined) {
+      if (existing.fetchedAt === undefined || Date.now() - existing.fetchedAt >= FEEDBACK_FORM_STALE_MS) {
+        void revalidateForm(host, existing);
+      }
+      return Promise.resolve(existing.value);
+    }
+    return revalidateForm(host, existing);
+  }
+
+  function prefetchForm(sessionId?: string): void {
+    const host = formHost(sessionId);
+    if (host === undefined ? !deps.signedIn() : deps.hostAccounts()[host]?.status === 'signedOut') return;
+    void loadForm(sessionId);
   }
 
   function closePopover(target?: TurnFeedbackTarget): void {
@@ -298,7 +355,7 @@ export function useDesktopFeedback(deps: {
     }, 2000));
   }
 
-  return { accountEpoch, clearHostAccount: (hostId: string) => clearAccountState(hostId), state, isPopoverOpen, closePopover, loadForm, requireLogin, submitGlobal, chooseRating, submitDetails };
+  return { accountEpoch, clearHostAccount: (hostId: string) => clearAccountState(hostId), state, isPopoverOpen, closePopover, peekForm, prefetchForm, loadForm, requireLogin, submitGlobal, chooseRating, submitDetails };
 }
 
 export const DesktopFeedbackKey: InjectionKey<ReturnType<typeof useDesktopFeedback>> = Symbol('desktop-feedback');

@@ -74,7 +74,8 @@ describe('conversation over KAP', () => {
     const turns = await kap.turns(session.id);
     expect(turns).toHaveLength(1);
     const [turn] = turns;
-    expect(turn).toMatchObject({ ordinal: 0, turn_number: 0, kind: 'agent', status: 'ended', outcome: 'completed' });
+    expect(turn).toMatchObject({ ordinal: 0, turn_number: 0, kind: 'agent', status: 'ended', outcome: 'completed', continuation: 'none' });
+    expect(turnOf(turnEnd)).toMatchObject({ continuation: 'none' });
     expect(turn?.turn_id).toMatch(/^t_[0-9a-f]{12}$/);
     expect(turn).not.toHaveProperty('end_reason');
     expect(turn?.['ended_at']).toEqual(expect.any(String));
@@ -266,7 +267,9 @@ describe('conversation over KAP', () => {
 
   test('queues a prompt sent while the model is still replying and runs it as its own turn', async ({ kap, model }) => {
     model.script(held('first-reply', say('first answer')), say('second answer'));
+    const socket = await kap.connect();
     const session = await kap.createSession();
+    await socket.subscribe(session.id);
 
     const first = await kap.prompt(session.id, 'one');
     await model.hold('first-reply').reached();
@@ -274,9 +277,16 @@ describe('conversation over KAP', () => {
     expect(queued.status).toBe('queued');
     model.hold('first-reply').release();
     await kap.waitIdle(session.id);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id) && turnOf(frame)?.['continuation'] === 'none');
 
     expect(model.request(1)).toMatchObject({ firstUserText: 'one', userTextsSinceReply: ['two'] });
     const turns = await kap.turns(session.id);
+    expect(turns.map((turn) => turn['continuation'])).toEqual(['turn', 'none']);
+    expect(
+      socket.conversation(session.id)
+        .filter((frame) => isMainTurnEnd(frame, session.id))
+        .map((frame) => turnOf(frame)?.['continuation']),
+    ).toEqual(['turn', 'none']);
     expect(turns.map((turn) => turn.items.filter((item) => item.type === 'assistant_message').map((item) => item['text']))).toEqual([
       ['first answer'],
       ['second answer'],
@@ -680,6 +690,12 @@ describe('conversation over KAP', () => {
     await socket.waitFor((frame) => frame.type === 'task' && frame['task_id'] === task['task_id'] && frame['outcome'] === 'completed');
     await kap.waitIdle(session.id);
     const turns = await kap.turns(session.id);
+    expect(turns.map((turn) => turn['continuation'])).toEqual(['background', 'none']);
+    expect(
+      socket.conversation(session.id)
+        .filter((frame) => isMainTurnEnd(frame, session.id))
+        .map((frame) => turnOf(frame)?.['continuation']),
+    ).toEqual(['background', 'none']);
     const notification = turns.find((turn) => turn.items[0]?.type === 'notification')?.items[0];
     expect(notification).toMatchObject({
       type: 'notification',

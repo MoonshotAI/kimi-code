@@ -20,17 +20,8 @@ const TEXT_ID = 'md-link-tip-text';
 
 const STYLE_TEXT = `
 .${BUBBLE_CLASS} {
-  position: fixed;
-  z-index: var(--z-tooltip);
   max-width: var(--p-tip-max-w);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--color-text);
-  color: var(--color-bg);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
   line-height: round(calc(var(--text-xs) * 1.5), 1px);
-  overflow-wrap: anywhere;
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
@@ -426,7 +417,7 @@ export function ensureLinkTooltip(tooltipHost?: LinkTooltipHost): void {
     document.head.appendChild(style);
   }
   bubble = document.createElement('div');
-  bubble.className = BUBBLE_CLASS;
+  bubble.className = `ui-tip-surface ${BUBBLE_CLASS}`;
   bubble.id = BUBBLE_CLASS;
   bubble.setAttribute('aria-hidden', 'true');
   bubble.setAttribute('inert', '');

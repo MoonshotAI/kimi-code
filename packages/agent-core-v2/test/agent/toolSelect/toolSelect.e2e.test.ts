@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type TestContext } from 'vitest';
 import { appendContext } from '../contextMemory/stubs';
 import { createControlledPromise } from '@antfu/utils';
-import { say } from '@moonshot-ai/testkit/model';
+import { call, say } from '@moonshot-ai/testkit/model';
 
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -405,6 +405,9 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(historyText(switchWire.history)).toContain(runtimeTool);
     expect(historyText(switchWire.history)).toContain('The available tools changed during this session.');
     expect(historyText(switchWire.history)).not.toContain('Use the select_tools tool');
+    expect(switchWire.history.flatMap((message) => message.content).some(
+      (part) => part.type === 'text' && part.meta?.kind === 'tool_lifecycle',
+    )).toBe(false);
 
     const dynamicAgainWire = priorCalls[8]!;
     expect(toolNames(dynamicAgainWire.tools)).toContain('select_tools');
@@ -427,6 +430,12 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(snapshotHashes.size).toBe(2);
     expect(ctx.get(IAgentLoopService).history().some((message) =>
       message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT)).toBe(true);
+    expect(ctx.get(IAgentLoopService).history().flatMap((message) => message.content)).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        meta: expect.objectContaining({ kind: 'tool_lifecycle', removed: [runtimeTool] }),
+      }),
+    );
 
     expect(alpha.calls).toBe(1);
     expect(inlineTool.calls).toBe(0);
@@ -718,6 +727,40 @@ describe('same-turn MCP tool replacement', () => {
       await server.close();
       vi.restoreAllMocks();
       vi.unstubAllEnvs();
+    }
+  });
+});
+
+const correctionTest = it.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+describe('deferred tool argument correction', () => {
+  correctionTest('retries schema-invalid deferred tool arguments with a correction instead of executing', async ({ agent, model }) => {
+    agent.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+    const weather = new StubMcpTool('deferred_weather');
+    const registration = agent.get(IAgentToolRegistryService).register(weather, {
+      source: 'mcp',
+      disclosure: 'deferred',
+    });
+    try {
+      await agent.restorePersisted();
+      await agent.rpc.setPermission({ mode: 'yolo' });
+      model.script(
+        call('select_tools', { names: ['deferred_weather'] }, { id: 'select-weather', invalid: true }),
+        call('deferred_weather', {}, { id: 'rejected-deferred', rawArguments: '{"query":42}', invalid: true }),
+        call('deferred_weather', { query: 'sf' }, { id: 'valid-deferred', invalid: true }),
+        say('done'),
+      );
+
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'load and call the deferred weather tool' }] });
+      await agent.untilTurnEnd();
+
+      expect(model.requests('main')).toHaveLength(4);
+      const correction = model.requests('main')[2]!;
+      expect(correction.view.system).toContain('was not executed because its arguments were invalid');
+      expect(JSON.stringify(correction.view.messages)).not.toContain('rejected-deferred');
+      expect(weather.calls).toBe(1);
+    } finally {
+      registration.dispose();
     }
   });
 });
