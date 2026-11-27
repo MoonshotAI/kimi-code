@@ -1,3 +1,4 @@
+import { abortable, createDeadlineAbortSignal } from '#/_base/utils/abort';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -13,6 +14,8 @@ import { IWebFetchService } from '#/app/web/web';
 import { HttpFetchError } from '#/app/web/tools/fetch-url-types';
 import { FetchURLInputSchema, IFetchURLTool, type FetchURLInput } from './fetch-url';
 import DESCRIPTION from './fetch-url.md?raw';
+
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class FetchURLTool implements IFetchURLTool {
   declare readonly _serviceBrand: undefined;
@@ -38,10 +41,14 @@ export class FetchURLTool implements IFetchURLTool {
     args: FetchURLInput,
     { toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    const deadline = createDeadlineAbortSignal(signal, DEFAULT_TIMEOUT_MS);
     try {
-      const { content, kind } = await this.webFetch
-        .getUrlFetcher()
-        .fetch(args.url, { toolCallId, signal });
+      const { content, kind } = await abortable(
+        this.webFetch
+          .getUrlFetcher()
+          .fetch(args.url, { toolCallId, signal: deadline.signal }),
+        deadline.signal,
+      );
 
       if (!content) {
         return {
@@ -60,6 +67,12 @@ export class FetchURLTool implements IFetchURLTool {
       builder.write(`${note} ${citeReminder}\n\n${content}`);
       return builder.ok();
     } catch (error) {
+      if (deadline.timedOut()) {
+        return {
+          isError: true,
+          output: `Failed to fetch URL: request timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)} seconds. ${args.url}`,
+        };
+      }
       if (signal.aborted) throw error;
       const msg = error instanceof Error ? error.message : String(error);
       if (error instanceof HttpFetchError) {
@@ -72,6 +85,8 @@ export class FetchURLTool implements IFetchURLTool {
         isError: true,
         output: `Failed to fetch URL due to network error: ${args.url}. ${msg}`,
       };
+    } finally {
+      deadline.clear();
     }
   }
 }
