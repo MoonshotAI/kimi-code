@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
-import { writeKimiConfig } from '@moonshot-ai/testkit/fixtures';
+import { mergeKimiConfig, writeKimiConfig, type KimiConfig } from '@moonshot-ai/testkit/fixtures';
 import { agent, fakeModelConfig, finishWith, held, httpError, read, say } from '@moonshot-ai/testkit/model';
 import {
   homeFixtures,
@@ -22,11 +22,11 @@ const test = base.extend<Fixtures>({ ...homeFixtures(), ...modelFixtures() });
 
 async function inAcpSession(
   fixtures: Fixtures,
-  loopControl: Readonly<Record<string, number>>,
+  config: KimiConfig,
   run: (client: TestClient, sessionId: string) => Promise<void>,
 ): Promise<void> {
   await fixtures.model.listen();
-  await writeKimiConfig(fixtures.testHome.dataDir, { ...fakeModelConfig(fixtures.model), loopControl });
+  await writeKimiConfig(fixtures.testHome.dataDir, mergeKimiConfig(fakeModelConfig(fixtures.model), config));
   const client = await createTestClient({ homeDir: fixtures.testHome.dataDir });
   try {
     await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
@@ -94,7 +94,7 @@ describe('how session/prompt answers a turn that ended', () => {
     const notes = join(testHome.workspace, 'notes.txt');
     await writeFile(notes, 'Step one.\n');
     model.script(read(notes));
-    await inAcpSession({ model, testHome }, { max_steps_per_turn: 1 }, async (client, sessionId) => {
+    await inAcpSession({ model, testHome }, { loopControl: { max_steps_per_turn: 1 } }, async (client, sessionId) => {
       expect(await promptAnswer(client, sessionId, 'Keep going.')).toMatchObject({
         error: {
           code: -32603,
@@ -178,6 +178,27 @@ test('streams a background task notification between editor prompts', { timeout:
   });
 });
 
+test('streams the turn a blocking Stop hook continues between editor prompts', { timeout: 30_000 }, async ({ model, testHome }) => {
+  const answer = 'The parser reads tokens.';
+  const continued = 'I touched no files.';
+  const reason = 'Also list the files you touched.';
+  const decision = JSON.stringify({ hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: reason } });
+  const stopHook = `node -e "console.log(JSON.stringify(${decision.replaceAll('"', "'")}))"`;
+  model.script(say(answer), say(continued));
+
+  await inAcpSession({ model, testHome }, { hooks: [{ event: 'Stop', command: stopHook }] }, async (client, sessionId) => {
+    const usageUpdates = () => client.sessionUpdates()
+      .map(({ params }) => params as SessionNotification)
+      .filter((params) => params.sessionId === sessionId && params.update.sessionUpdate === 'usage_update');
+
+    expect(await promptAnswer(client, sessionId, 'Describe the parser.')).toEqual({ result: { stopReason: 'end_turn' } });
+    await expect.poll(() => usageUpdates()).toHaveLength(2);
+    expect(agentText(client, sessionId)).toBe(answer + continued);
+    expect(model.requests('main')).toHaveLength(2);
+    expect(model.requests('main')[1]?.userTextsSinceReply.join('\n')).toContain(reason);
+  });
+});
+
 describe('a turn that fails after the editor asked to cancel it', () => {
   interface Launched {
     readonly turn_id: number;
@@ -197,7 +218,7 @@ describe('a turn that fails after the editor asked to cancel it', () => {
     const session = Object.create(AcpSession.prototype) as AcpSession;
     const internals = session as unknown as {
       driver?: { turnId?: number };
-      taskNotificationTurnId?: number;
+      agentStartedTurnId?: number;
       onTurnEnded(event: unknown): void;
     };
     Object.assign(session as unknown as Record<string, unknown>, {
@@ -223,7 +244,7 @@ describe('a turn that fails after the editor asked to cancel it', () => {
       cancels,
       promptSent: () => launch !== undefined,
       startTaskNotification: (turnId) => {
-        internals.taskNotificationTurnId = turnId;
+        internals.agentStartedTurnId = turnId;
       },
       launch: (launched) => {
         if (launch === undefined) throw new Error('the session has not launched a turn yet');

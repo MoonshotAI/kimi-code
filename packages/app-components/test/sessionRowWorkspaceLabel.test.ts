@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Session } from '@moonshot-ai/app-core/client/types';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import { clientPinia } from '@moonshot-ai/app-client/stores';
 import SessionRow from '../src/SessionRow.vue';
 

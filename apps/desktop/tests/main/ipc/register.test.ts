@@ -137,6 +137,7 @@ const mocks = vi.hoisted(() => ({
   appExit: vi.fn(),
   appQuit: vi.fn(),
   markQuitting: vi.fn(),
+  sendToRenderer: vi.fn(),
   captureScreenshot: vi.fn(async () => ({ status: 'cancelled' })),
   cancelScreenshotCapture: vi.fn(),
 }));
@@ -187,13 +188,18 @@ vi.mock('electron', () => ({
   clipboard: { writeText: mocks.clipboardWriteText },
 }));
 
+vi.mock('../../../src/main/window/window-registry', () => ({
+  getMainWindow: mocks.getMainWindow,
+  markQuitting: mocks.markQuitting,
+  sendToRenderer: mocks.sendToRenderer,
+  windowForWebContents: vi.fn(),
+}));
 vi.mock('../../../src/main/window/main-window', () => ({
   getMainWindow: mocks.getMainWindow,
   showMainWindow: mocks.showMainWindow,
   applyWindowVibrancy: mocks.applyWindowVibrancy,
-  markQuitting: mocks.markQuitting,
   markRendererUiMounted: mocks.markRendererUiMounted,
-  sendToRenderer: vi.fn(),
+  sendToRenderer: mocks.sendToRenderer,
 }));
 vi.mock('../../../src/main/browser/browser-view', () => ({
   restoreBrowser: mocks.browserGetState,
@@ -297,6 +303,8 @@ vi.mock('../../../src/main/shell/menu', () => ({
   setMenuLocale: vi.fn(),
   setMenuShortcuts: vi.fn(),
   setMenuSuspended: vi.fn(),
+}));
+vi.mock('../../../src/main/shell/terminal-menu-focus', () => ({
   setTerminalMenuFocus: vi.fn(),
   onTerminalMenuFocus: vi.fn(),
 }));

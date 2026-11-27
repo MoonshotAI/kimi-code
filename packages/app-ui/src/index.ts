@@ -46,8 +46,16 @@ export {
   trackMenuSurface,
 } from './composables/menuStack';
 export { ensurePointerTracking, isSyntheticPointerMove } from './composables/pointerMovement';
+export { installImeCompositionLatch, isImeKeyEvent } from './composables/imeComposition';
 export { useImeComposition } from './composables/useImeComposition';
-export { IconResolverKey, SIZE_PX, type IconSize } from './icons';
+export {
+  dragOverlayScrollbarThumb,
+  overlayScrollbarThumb,
+  useOverlayScrollbar,
+  type OverlayScrollbarThumb,
+  type UseOverlayScrollbar,
+} from './composables/useOverlayScrollbar';
+export { IconResolverKey, SIZE_PX, type IconSize } from './iconResolver';
 
 export { default as MetricBadge } from './components/ui/MetricBadge.vue';
 export { menuNavigationIndex } from './composables/menuNavigation';

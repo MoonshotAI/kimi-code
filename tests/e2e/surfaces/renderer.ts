@@ -14,6 +14,7 @@ import {
   type ApproveOptions,
   type DriverActionsOn,
   type PermissionMode,
+  type PlanModeState,
   type ToolExpectation,
   type ToolName,
   type ToolStatus,
@@ -33,12 +34,18 @@ const FOLDED = 'button[aria-expanded="false"]';
 const MARKDOWN = 'p, h1, h2, h3, h4, h5, h6, ul, ol, pre, blockquote, table';
 const BLOCK = `${ROW}${SHOWN}:not(:has(${LIST}))`;
 const REPLY = `:not(:has(${DISCLOSURE})):not(:has(${STATE})):has(${MARKDOWN})`;
+const SIDE_CHAT_REPLY = `:is(${MARKDOWN})${SHOWN}:not([role="combobox"] *)`;
 const ON_A_CARD = `${SHOWN}:not(:is(${MARKDOWN}), :is(${MARKDOWN}) *)`;
 const DESCRIBED_LINES = 80;
 const NEW_SESSION = 'New Session';
 const COMPACT_COMMAND = '/compact';
 const COMPACTED = /^Context compacted/;
 const COMPACTION_FAILED = 'Context compaction failed';
+const RELOAD_COMMAND = '/reload';
+const RELOAD_LABEL = 'reload';
+const SESSION_RELOADED = 'Session reloaded.';
+const REQUEST_FAILED = /^(?:Request failed|Operation failed|Cannot connect|Response timed out)/;
+const SKILL_COMMAND = '/skill:';
 const APPROVAL_TITLES: Readonly<Record<string, ApprovalToolName>> = { 'Run command?': 'Bash', 'Apply changes?': 'Edit', 'Write file?': 'Write' };
 const COMMAND_PROMPT = '$ ';
 const FEEDBACK_BOX = 'Explain why you are rejecting…';
@@ -56,6 +63,26 @@ const DISMISS = 'Dismiss';
 const OTHER_ANSWER = 'Other';
 const ASKED = 'Collected your answers';
 const UNANSWERED = ' —— No answer';
+const MENU_BUTTON = 'button[aria-haspopup="menu"]';
+const THINKING_ROW = 'Thinking';
+const THINKING_ON = 'Thinking';
+const MODEL_SUFFIX = ' · ';
+const SETTINGS = 'Settings';
+const CLOSE_SETTINGS = 'Close (Esc)';
+const BROWSER_SETTINGS = 'Browser';
+const AGENT_BROWSER_CONTROL = 'Let agents control the built-in browser';
+const PLAN_PLACEHOLDER = 'What should the agent plan for?';
+const ADD_MENU = 'Add';
+const PLAN_ITEM = /^Plan/;
+const PLAN_PILL = 'Plan';
+const EXIT_MODE = 'Exit mode';
+const CLOSE_DOCK_PANEL = 'Close panel';
+const BTW_COMMAND = '/btw';
+const DETAIL_PANEL = 'Detail panel';
+const SIDE_CHAT = /^Side Chat(?: \d+)?$/;
+const CLOSE_TAB = 'Close tab';
+const CLOSE_SIDE_CHAT_DIALOG = 'Close side chat?';
+const CLOSE_SIDE_CHAT = 'Close side chat';
 
 export type MenuPage = () => Promise<Page>;
 
@@ -77,6 +104,14 @@ function quoted(value: string): string {
 
 function startingWith(text: string): RegExp {
   return new RegExp(`^${containing(text).source}`);
+}
+
+function effortLabel(effort: string): string {
+  return `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`;
+}
+
+function squashed(text: string | null): string {
+  return (text ?? '').replaceAll(/\s+/g, ' ').trim();
 }
 
 function cardShows(lines: readonly string[], { name, target }: ApprovalExpectation, workspace: string): boolean {
@@ -316,6 +351,58 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.wait(`the permission mode button to show ${name}`, async () => ((await this.modeButton(name).isVisible()) && !(await choice.isVisible()) ? true : undefined));
   }
 
+  async switchModel(name: string): Promise<void> {
+    const shown = await this.shownModel('switchModel()');
+    if (shown === name || shown.startsWith(`${name}${MODEL_SUFFIX}`)) {
+      throw new Error(`switchModel() asked for ${JSON.stringify(name)}, but that is already the model.\n${await this.describe()}`);
+    }
+    const menu = await this.openModelMenu('switchModel()');
+    const choice = menu.getByRole('menuitemradio', { name, exact: true });
+    if ((await choice.count()) === 0) {
+      const offered = (await menu.getByRole('menuitemradio').allTextContents()).map(squashed);
+      await this.closeModelMenu('switchModel()', this.thinkingRow(menu));
+      throw new Error(`switchModel() asked for ${JSON.stringify(name)}, but the model menu offers only ${JSON.stringify(offered)}.\n${await this.describe()}`);
+    }
+    await this.press('switchModel()', name, choice);
+    await this.wait(`the model menu to mark ${name} as chosen`, async () => ((await choice.getAttribute('aria-checked')) === 'true' ? true : undefined));
+    await this.closeModelMenu('switchModel()', choice);
+    await this.wait(`the model button to show ${name}`, async () => {
+      const now = await this.modelName();
+      return now === name || now?.startsWith(`${name}${MODEL_SUFFIX}`) === true ? true : undefined;
+    });
+  }
+
+  async setThinkingEffort(effort: string): Promise<void> {
+    const before = await this.shownModel('setThinkingEffort()');
+    const wanted = effortLabel(effort);
+    const menu = await this.openModelMenu('setThinkingEffort()');
+    const row = this.thinkingRow(menu);
+    const current = await this.thinkingShown(row);
+    if ((await row.getAttribute('aria-disabled')) === 'true' || current === wanted) {
+      await this.closeModelMenu('setThinkingEffort()', row);
+      const problem = current === wanted ? 'that is already the thinking effort' : `the model offers no thinking effort to choose (${current})`;
+      throw new Error(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but ${problem}.\n${await this.describe()}`);
+    }
+    try {
+      await row.hover({ timeout: TIMEOUTS.wait });
+    } catch (cause) {
+      throw new Error(`setThinkingEffort() could not point at the ${THINKING_ROW} row: ${reasonOf(cause)}\n${await this.describe()}`, { cause });
+    }
+    await this.wait('the thinking efforts to open beside the model menu', async () => ((await row.getAttribute('aria-expanded')) === 'true' ? true : undefined));
+    const choice = menu.getByRole('menuitemradio', { name: wanted, exact: true });
+    if ((await choice.count()) === 0) {
+      const offered = (await menu.getByRole('menuitemradio').allTextContents()).map(squashed);
+      await this.closeModelMenu('setThinkingEffort()', row);
+      throw new Error(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but the model menu offers only ${JSON.stringify(offered)}.\n${await this.describe()}`);
+    }
+    await this.press('setThinkingEffort()', wanted, choice);
+    await this.wait(`the model menu to show thinking ${wanted}`, async () => ((await this.thinkingShown(row)) === wanted ? true : undefined));
+    await this.closeModelMenu('setThinkingEffort()', row);
+    const model = current === effortLabel('off') ? before : before.slice(0, before.lastIndexOf(MODEL_SUFFIX));
+    const expected = effort === 'off' ? model : `${model}${MODEL_SUFFIX}${effort === 'on' ? THINKING_ON : wanted}`;
+    await this.wait(`the model button to show ${expected}`, async () => ((await this.modelName()) === expected ? true : undefined));
+  }
+
   async stop(): Promise<void> {
     if (await this.questionShown()) {
       throw new Error(
@@ -464,12 +551,145 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     if (outcome === 'failed') throw new Error(`compact() saw the compaction fail.\n${await this.describe()}`);
   }
 
+  async reload(): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`reload() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.assertEmptyInput('reload()');
+    const size = await this.conversationSize();
+    if (size === 0) throw new Error(`reload() reloads the open conversation, but it shows no message yet; send one first.\n${await this.describe()}`);
+    const reloaded = this.notices(SESSION_RELOADED);
+    const failed = this.notices(REQUEST_FAILED);
+    const before = await reloaded.count();
+    const failedBefore = await failed.count();
+    await this.pickCommand('reload()', RELOAD_COMMAND, RELOAD_LABEL);
+    const outcome = await this.wait(`a ${SESSION_RELOADED} notice, with the conversation still there`, async () => {
+      if ((await failed.count()) > failedBefore) return 'failed' as const;
+      return (await reloaded.count()) > before && (await this.idle()) && (await this.conversationSize()) >= size ? ('reloaded' as const) : undefined;
+    });
+    if (outcome === 'failed') throw new Error(`reload() saw the session fail to reload.\n${await this.describe()}`);
+  }
+
+  async useSkill(name: string): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`useSkill() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.assertEmptyInput('useSkill()');
+    const before = await this.conversationSize();
+    await this.pickCommand('useSkill()', `${SKILL_COMMAND}${name}`, name);
+    await this.wait(`the message input to hold the skill ${JSON.stringify(name)}`, async () => ((await this.composerText()) === name ? true : undefined));
+    await this.enter(name, before);
+  }
+
+  async setPlanMode(state: PlanModeState): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`setPlanMode() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    const wanted = state === 'on';
+    if ((await this.planShown()) === wanted) {
+      throw new Error(`setPlanMode() asked to turn plan mode ${state}, but plan mode is already ${state}.\n${await this.describe()}`);
+    }
+    if (wanted) await this.armPlanMode();
+    else await this.leavePlanMode();
+    await this.wait(`the message input to show that plan mode is ${state}`, async () => ((await this.planShown()) === wanted ? true : undefined));
+  }
+
+  async btw(question: string, reply: string): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`btw() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.assertEmptyInput('btw()');
+    await this.press('btw()', 'the message input', this.composer());
+    await this.page.keyboard.type(`${BTW_COMMAND} ${question}`);
+    const send = this.page.getByRole('button', { name: SEND, exact: true, disabled: false });
+    await this.wait('the Send button to become enabled', async () => (await send.isVisible()) || undefined);
+    await this.page.keyboard.press('Enter');
+    const panel = this.page.getByRole('complementary', { name: DETAIL_PANEL });
+    const tab = panel.getByRole('tab', { name: SIDE_CHAT, selected: true });
+    await this.wait('the side chat to open', async () => (await tab.isVisible()) || undefined);
+    const asked = panel.getByText(question, { exact: true });
+    const replies = panel.locator(SIDE_CHAT_REPLY);
+    const working = panel.getByRole('button', { name: INTERRUPT });
+    let previous: string | undefined;
+    const outcome = await this.wait(`the side chat to finish answering ${JSON.stringify(question)}`, async () => {
+      const ended = (await asked.count()) > 0 && !(await working.isVisible()) && ((await replies.count()) > 0 || (await panel.getByRole('alert').count()) > 0);
+      if (!ended) {
+        previous = undefined;
+        return undefined;
+      }
+      if ((await replies.filter({ hasText: containing(reply) }).count()) > 0) return 'answered' as const;
+      const shown = (await panel.allTextContents()).join('\n');
+      const settled = shown === previous;
+      previous = shown;
+      return settled ? ('over' as const) : undefined;
+    });
+    const shown = await this.cardLines(panel);
+    await this.closeSideChat(panel, tab);
+    if (outcome === 'over') {
+      throw new Error(`btw() asked ${JSON.stringify(question)}, but the side chat ended without ${JSON.stringify(reply)}. The side chat showed:\n${shown}\n${await this.describe()}`);
+    }
+  }
+
   async newSession(): Promise<void> {
     if (!(await this.idle())) {
       throw new Error(`newSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
     }
-    await this.press('newSession()', `the ${NEW_SESSION} button`, this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) }).first());
+    await this.press('newSession()', `the ${NEW_SESSION} button`, this.newSessionButton().first());
     await this.wait('a new, empty conversation', async () => ((await this.conversationSize()) === 0 && (await this.composer().isVisible()) ? true : undefined));
+  }
+
+  async openSession(title: string): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`openSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    if ((await this.userMessages(1, title).count()) > 0) {
+      throw new Error(
+        `openSession() found that the session titled ${JSON.stringify(title)} is the session already open: its first prompt is in the conversation on screen. Go back to another session.\n${await this.describe()}`,
+      );
+    }
+    const sidebar = this.sidebar();
+    const entry = sidebar.getByText(title, { exact: true }).and(this.page.locator(SHOWN));
+    let previous: string | undefined;
+    const listed = await this.wait(`the sidebar to list the session ${JSON.stringify(title)}, or to stop changing`, async () => {
+      if ((await entry.count()) > 0) return 'listed' as const;
+      const shown = (await sidebar.allTextContents()).join('\n');
+      const settled = shown === previous;
+      previous = shown;
+      return settled ? ('missing' as const) : undefined;
+    });
+    if (listed === 'missing') {
+      const shown = await sidebar.ariaSnapshot({ timeout: TIMEOUTS.wait }).catch((error: unknown) => `The sidebar could not be read: ${reasonOf(error)}`);
+      throw new Error(`openSession() found no session titled ${JSON.stringify(title)} in the sidebar. The sidebar shows:\n${shown}`);
+    }
+    await this.press('openSession()', `the session ${JSON.stringify(title)} in the sidebar`, entry.first());
+    await this.wait(`the conversation of the session ${JSON.stringify(title)} to show its first prompt`, async () =>
+      (await this.userMessages(1, title).count()) > 0 && (await this.idle()) ? true : undefined,
+    );
+    this.recalled = undefined;
+  }
+
+  async setBrowserControl(enabled: boolean): Promise<void> {
+    const wanted = enabled ? 'on' : 'off';
+    if (!(await this.idle())) {
+      throw new Error(`setBrowserControl() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.press('setBrowserControl()', `the ${SETTINGS} button`, this.page.getByRole('button', { name: SETTINGS, exact: true }).first());
+    const settings = this.page.getByRole('dialog', { name: SETTINGS, exact: true });
+    await this.press('setBrowserControl()', `the ${BROWSER_SETTINGS} tab`, settings.getByRole('tab', { name: BROWSER_SETTINGS, exact: true }));
+    const control = settings.getByRole('switch', { name: AGENT_BROWSER_CONTROL, exact: true });
+    const shown = async (): Promise<boolean | undefined> => {
+      const checked = await control.getAttribute('aria-checked', { timeout: TIMEOUTS.wait }).catch(() => null);
+      return checked === 'true' ? true : checked === 'false' ? false : undefined;
+    };
+    const current = await this.wait(`the ${JSON.stringify(AGENT_BROWSER_CONTROL)} switch to show its state`, shown);
+    const already = current === enabled;
+    if (!already) {
+      await this.press('setBrowserControl()', `the ${JSON.stringify(AGENT_BROWSER_CONTROL)} switch`, control);
+      await this.wait(`the ${JSON.stringify(AGENT_BROWSER_CONTROL)} switch to turn ${wanted}`, async () => ((await shown()) === enabled ? true : undefined));
+    }
+    await this.press('setBrowserControl()', `the ${JSON.stringify(CLOSE_SETTINGS)} button`, settings.getByRole('button', { name: CLOSE_SETTINGS, exact: true }));
+    await this.wait('the settings to close and the message input to come back', async () => (!(await settings.isVisible()) && (await this.composer().isVisible()) ? true : undefined));
+    if (already) throw new Error(`setBrowserControl() asked to turn agent control of the built-in browser ${wanted}, but it is already ${wanted}.\n${await this.describe()}`);
   }
 
   async resize(viewport: { readonly width: number; readonly height: number }): Promise<void> {
@@ -491,6 +711,62 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     });
   }
 
+  private async pickCommand(verb: string, typed: string, label: string): Promise<void> {
+    await this.press(verb, 'the message input', this.composer());
+    await this.page.keyboard.type(typed);
+    const option = this.page
+      .getByRole('option')
+      .and(this.page.locator(SHOWN))
+      .filter({ has: this.page.getByText(label, { exact: true }) });
+    await this.wait(`the slash menu to offer ${typed}`, async () => ((await option.count()) > 0 ? true : undefined));
+    await this.press(verb, `${typed} in the slash menu`, option.first());
+  }
+
+  private notices(text: string | RegExp): Locator {
+    return this.page.getByRole('status').and(this.page.locator(SHOWN)).filter({ hasText: text });
+  }
+
+  private async planShown(): Promise<boolean> {
+    return (await this.composer().getAttribute('aria-placeholder', { timeout: TIMEOUTS.wait })) === PLAN_PLACEHOLDER;
+  }
+
+  private async armPlanMode(): Promise<void> {
+    const add = this.page.getByRole('button', { name: ADD_MENU, exact: true });
+    const composerArea = this.composer().locator('xpath=ancestor::*').filter({ has: add }).last();
+    await this.press('setPlanMode()', ADD_MENU, composerArea.getByRole('button', { name: ADD_MENU, exact: true }));
+    await this.press('setPlanMode()', PLAN_PILL, composerArea.getByRole('menuitem', { name: PLAN_ITEM }));
+  }
+
+  private async leavePlanMode(): Promise<void> {
+    const armed = this.composer().locator('xpath=..').getByRole('button', { name: EXIT_MODE, exact: true });
+    if (await armed.isVisible()) {
+      await this.press('setPlanMode()', EXIT_MODE, armed);
+      return;
+    }
+    await this.press('setPlanMode()', `the ${PLAN_PILL} pill`, this.page.getByRole('button', { name: PLAN_PILL, exact: true }));
+    const exit = this.page.getByRole('button', { name: EXIT_MODE, exact: true });
+    await this.press('setPlanMode()', EXIT_MODE, exit);
+    await this.wait(`the plan panel to drop its ${EXIT_MODE} button`, async () => ((await exit.count()) === 0 ? true : undefined));
+    const close = this.page.getByRole('button', { name: CLOSE_DOCK_PANEL, exact: true });
+    if (await close.isVisible()) await this.press('setPlanMode()', CLOSE_DOCK_PANEL, close);
+    await this.wait('the plan panel to close', async () => ((await close.count()) === 0 ? true : undefined));
+  }
+
+  private async closeSideChat(panel: Locator, tab: Locator): Promise<void> {
+    const closeTab = this.page.getByRole('button', { name: CLOSE_TAB, exact: true });
+    await this.press('btw()', CLOSE_TAB, tab.locator('xpath=ancestor::*').filter({ has: closeTab }).last().getByRole('button', { name: CLOSE_TAB, exact: true }));
+    const confirm = this.page.getByRole('dialog', { name: CLOSE_SIDE_CHAT_DIALOG, exact: true }).getByRole('button', { name: CLOSE_SIDE_CHAT, exact: true });
+    const sideChats = panel.getByRole('tab', { name: SIDE_CHAT });
+    const closed = await this.wait('the side chat to ask before closing, or to close', async () => {
+      if ((await sideChats.count()) === 0) return true;
+      return (await confirm.isVisible()) ? false : undefined;
+    });
+    if (!closed) await this.press('btw()', CLOSE_SIDE_CHAT, confirm);
+    await this.wait('the side chat to close and leave one message input', async () =>
+      (await sideChats.count()) === 0 && (await this.page.getByRole('combobox', { name: 'Message input' }).count()) === 1 ? true : undefined,
+    );
+  }
+
   private async inputArea(): Promise<Locator> {
     if (await this.approvalShown()) return this.approvalCard();
     if (await this.questionShown()) return this.questionCard();
@@ -503,6 +779,14 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   private composer(): Locator {
     return this.page.getByRole('combobox', { name: 'Message input' });
+  }
+
+  private sidebar(): Locator {
+    return this.page.getByRole('complementary').filter({ has: this.newSessionButton() });
+  }
+
+  private newSessionButton(): Locator {
+    return this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) });
   }
 
   private failureCards(): Locator {
@@ -538,6 +822,49 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   private modeButton(name: string): Locator {
     return this.page.getByRole('button', { name, exact: true });
+  }
+
+  private modelPill(): Locator {
+    return this.page
+      .getByRole('button', { name: SEND, exact: true })
+      .locator('xpath=ancestor::*')
+      .filter({ has: this.page.locator(MENU_BUTTON) })
+      .last()
+      .locator(MENU_BUTTON);
+  }
+
+  private async modelName(): Promise<string | undefined> {
+    const pill = this.modelPill();
+    if (!(await pill.isVisible())) return undefined;
+    const name = squashed((await pill.getAttribute('aria-label')) ?? (await pill.textContent()));
+    return name === '' ? undefined : name;
+  }
+
+  private async shownModel(verb: string): Promise<string> {
+    if (!(await this.idle())) {
+      throw new Error(`${verb} needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    return this.wait('the model button to show the current model', () => this.modelName());
+  }
+
+  private thinkingRow(menu: Page): Locator {
+    return menu.getByRole('menuitem', { name: startingWith(THINKING_ROW) });
+  }
+
+  private async thinkingShown(row: Locator): Promise<string> {
+    return squashed(await row.textContent()).slice(THINKING_ROW.length).trim();
+  }
+
+  private async openModelMenu(verb: string): Promise<Page> {
+    await this.press(verb, 'the model button', this.modelPill());
+    const menu = await this.menus();
+    await this.wait('the model menu to open', async () => ((await this.thinkingRow(menu).isVisible()) ? true : undefined));
+    return menu;
+  }
+
+  private async closeModelMenu(verb: string, shownInMenu: Locator): Promise<void> {
+    await this.press(verb, 'the model button', this.modelPill());
+    await this.wait('the model menu to close', async () => ((await shownInMenu.isVisible()) ? undefined : true));
   }
 
   private async shownMode(): Promise<string | undefined> {

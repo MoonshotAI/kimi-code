@@ -14,6 +14,7 @@ export type McpServersChangeEvent = McpServersChange & IWaitUntil;
 
 export interface McpTunables {
   readonly startupTimeoutMs?: number;
+  readonly startupWaitMs?: number;
   readonly toolTimeoutMs?: number;
   readonly defaultDeferred?: boolean;
   readonly reconnectInitialDelayMs?: number;

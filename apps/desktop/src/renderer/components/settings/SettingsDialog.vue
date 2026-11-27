@@ -8,7 +8,7 @@ import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
-import type { FontTarget } from '@moonshot-ai/app-core';
+import type { FontTarget } from '@moonshot-ai/app-core/composables';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
 import { usePlugins } from '@moonshot-ai/app-client/composables';
@@ -32,7 +32,7 @@ import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
-import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
+import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
@@ -471,7 +471,7 @@ async function onCheckUpdate(): Promise<void> {
   checkingUpdate.value = true;
   checkResult.value = null;
   try {
-    checkResult.value = await updateTracker.check();
+    checkResult.value = await updateTracker.checkAndOpen();
   } finally {
     checkingUpdate.value = false;
   }
@@ -485,7 +485,7 @@ const checkResultText = computed(() => {
       if (updateTracker.status.value.state === 'downloaded') {
         return t('settings.updateCheckDownloaded', { version: result.version ?? '' });
       }
-      if (updateTracker.autoDownload.value) {
+      if (updateTracker.status.value.state === 'downloading' || updateTracker.autoDownload.value) {
         return t('settings.updateCheckAvailableAuto', { version: result.version ?? '' });
       }
       return t('settings.updateCheckAvailable', { version: result.version ?? '' });

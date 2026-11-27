@@ -25,7 +25,7 @@ import { RcDeviceSwitcher, SessionListPanel, useAnchoredMenu } from '@moonshot-a
 import { hasCustomTitleBar, hasDesktopBridge, isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import type { WorkspaceView } from '../types';
 import { useVibrancy } from '../composables/useVibrancy';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { resolvedBindingKeys, shortcutTooltip } from '../composables/useShortcuts';
 import { canOpenDirectoryInNative, openDirectoryInNative } from '../lib/nativeOpenIn';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';

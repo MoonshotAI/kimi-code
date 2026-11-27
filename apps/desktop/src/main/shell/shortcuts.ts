@@ -1,7 +1,8 @@
 import { app, globalShortcut } from 'electron';
 
 import { bindingToAccelerator } from './menu';
-import { getMainWindow, isRendererReady, sendToRenderer, showMainWindow } from '../window/main-window';
+import { getMainWindow, sendToRenderer } from '../window/window-registry';
+import { isRendererReady, showMainWindow } from '../window/main-window';
 import { log } from '../diagnostics/log';
 import { isScreenshotShortcutEnabled } from '../release/release-channel';
 import { trackDesktopEvent } from '../diagnostics/track';

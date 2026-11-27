@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { attachmentKindIconSvg } from '@moonshot-ai/app-composer/features/attachment';
 import { fileMentionIconSvg, mentionIconSvg, mentionMatchSpans, type MentionMatchSpan } from '@moonshot-ai/app-composer/features/mention';
 import type { MentionItem } from '@moonshot-ai/app-client/composables';
-import { iconSvg } from '@moonshot-ai/app-client/icons';
+import { iconSvg } from '@moonshot-ai/app-ui/icons';
 import type { FileItem } from '@moonshot-ai/app-core/client/types';
 import { skillDirectoryName, skillIdentity, skillSourceKind } from '@moonshot-ai/app-core/lib';
 import AuthMedia from '../chat/AuthMedia.vue';

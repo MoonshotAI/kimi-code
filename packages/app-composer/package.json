@@ -31,7 +31,7 @@
     "vue": "^3.5.35"
   },
   "devDependencies": {
-    "@moonshot-ai/app-client": "workspace:*",
+    "@moonshot-ai/app-ui": "workspace:*",
     "@moonshot-ai/vite-preset": "workspace:*",
     "linkedom": "^0.18.12",
     "typescript": "6.0.2",

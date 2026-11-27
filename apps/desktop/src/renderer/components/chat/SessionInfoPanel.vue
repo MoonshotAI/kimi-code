@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useContextInspector } from '@moonshot-ai/app-core';
+import { useContextInspector } from '@moonshot-ai/app-core/composables';
 import type { CompactPhase } from '@moonshot-ai/app-components/support';
 import { sessionInfoStore } from '@moonshot-ai/app-client/stores';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';

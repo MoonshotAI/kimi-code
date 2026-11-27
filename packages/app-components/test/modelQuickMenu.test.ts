@@ -5,7 +5,7 @@ import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import ModelQuickMenu from '../src/composer/ModelQuickMenu.vue';
 
 const kimiModels: AppModel[] = [
