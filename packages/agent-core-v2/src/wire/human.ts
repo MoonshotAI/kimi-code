@@ -1,5 +1,6 @@
 import type { WireRecord } from './record';
 import { AGENT_SWITCHED_TYPE } from './tree/tree';
+import { isVisibleWireTurnAppend, matchWireTurnInputRecords } from './turnInput';
 
 export const HUMAN_AGENT_DOMAIN = 'agent';
 
@@ -55,6 +56,13 @@ interface LegacyTurnSegment {
 }
 
 export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]): WireRecord[] {
+  const appendIndexBySteer = new Map<number, number>();
+  if (records.some((record) => record.type === 'turn.steer')) {
+    for (const match of matchWireTurnInputRecords(records, true)) {
+      if (match.inputIndex === undefined || records[match.inputIndex]!.type !== 'turn.steer') continue;
+      appendIndexBySteer.set(match.inputIndex, match.appendIndex);
+    }
+  }
   const normalized: WireRecord[] = [];
   const segments = new Map<number, LegacyTurnSegment>();
   const cancelledTurnIds = new Set<number>();
@@ -73,7 +81,14 @@ export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]):
     normalized.push({ ...record, turnId });
   };
 
-  for (const record of records) {
+  const moveLegacySteerBeforeAppend = (index: number, generatedCount: number): void => {
+    const appendIndex = appendIndexBySteer.get(index);
+    if (appendIndex !== index - 1 || !isVisibleWireTurnAppend(records[appendIndex]!)) return;
+    const generated = normalized.splice(-generatedCount, generatedCount);
+    normalized.splice(normalized.length - 1, 0, ...generated);
+  };
+
+  for (const [index, record] of records.entries()) {
     if (record.type === 'turn.prompt') {
       startTurn(recordTurnId(record) ?? nextTurnId, record);
       continue;
@@ -95,29 +110,30 @@ export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]):
           trigger: 'notify',
           time: record.time,
         });
-        continue;
+      } else {
+        const endedTurnId = current.turnId ?? sourceTurnId;
+        normalized.push({
+          type: 'turn.ended',
+          agentId: record['agentId'],
+          turnId: endedTurnId,
+          reason: 'completed',
+          time: record.time,
+        });
+        if (endedTurnId !== undefined) nextTurnId = Math.max(nextTurnId, endedTurnId + 1);
+        const promptIds = record['promptIds'];
+        const firstPromptId = Array.isArray(promptIds) && typeof promptIds[0] === 'string' ? promptIds[0] : undefined;
+        startTurn(sourceTurnId ?? nextTurnId, {
+          type: 'turn.prompt',
+          agentId: record['agentId'],
+          input: record['input'],
+          origin: record['origin'],
+          promptId: typeof record['messageId'] === 'string' ? record['messageId'] : firstPromptId,
+          turnId: nextTurnId,
+          trigger: 'notify',
+          time: record.time,
+        });
       }
-      const endedTurnId = current.turnId ?? sourceTurnId;
-      normalized.push({
-        type: 'turn.ended',
-        agentId: record['agentId'],
-        turnId: endedTurnId,
-        reason: 'completed',
-        time: record.time,
-      });
-      if (endedTurnId !== undefined) nextTurnId = Math.max(nextTurnId, endedTurnId + 1);
-      const promptIds = record['promptIds'];
-      const firstPromptId = Array.isArray(promptIds) && typeof promptIds[0] === 'string' ? promptIds[0] : undefined;
-      startTurn(sourceTurnId ?? nextTurnId, {
-        type: 'turn.prompt',
-        agentId: record['agentId'],
-        input: record['input'],
-        origin: record['origin'],
-        promptId: typeof record['messageId'] === 'string' ? record['messageId'] : firstPromptId,
-        turnId: nextTurnId,
-        trigger: 'notify',
-        time: record.time,
-      });
+      moveLegacySteerBeforeAppend(index, current === undefined ? 1 : 2);
       continue;
     }
     if (record.type === 'turn.ended') {

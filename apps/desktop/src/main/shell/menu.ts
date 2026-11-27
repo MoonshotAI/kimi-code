@@ -1,13 +1,13 @@
 import { app, dialog, Menu, shell, webContents } from 'electron';
 import type { BrowserWindow, MenuItemConstructorOptions } from 'electron';
 
-import { getMainWindow, createWindow, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
+import { getMainWindow, createWindow, sendMenuActionWhenReady, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
 import { connect } from '../server/connect';
 import { getTraceRecorder } from '../diagnostics/trace';
 import { exportDiagnostics, openLogsFolder } from '../diagnostics/diagnostics-export';
 import { reportExternalLinkFailure } from './external-links';
 import { refreshServerRegion, serverRegionProfile, whenServerRegionSource } from '../server/region';
-import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall, UPDATE_CHECK_TIMED_OUT } from '../release/updater';
+import { requestUpdateCheck, UPDATE_CHECK_TIMED_OUT } from '../release/updater';
 import { trackDesktopEvent } from '../diagnostics/track';
 import { isLinuxNativeTitleBar } from '../app/ui-state';
 import { IPC } from '../ipc/ipc-channels';
@@ -65,16 +65,10 @@ interface MenuStrings {
   checkForUpdates: string;
   retryConnection: string;
   updateCheckTitle: string;
-  updateAvailable: string;
-  updateAutoDownloading: string;
-  updateReadyToInstall: string;
   updateLatest: string;
   updateUnsupported: string;
   updateFailed: string;
   updateCheckTimedOut: string;
-  downloadNow: string;
-  restartNow: string;
-  later: string;
   ok: string;
   help: string;
   documentation: string;
@@ -130,16 +124,10 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     checkForUpdates: '检查更新…',
     retryConnection: '重试连接',
     updateCheckTitle: '检查更新',
-    updateAvailable: '发现新版本 {version},可立即下载更新。',
-    updateAutoDownloading: '发现新版本 {version},正在后台下载,完成后重启即可更新。',
-    updateReadyToInstall: '新版本 {version} 已下载完成,重启即可更新。',
     updateLatest: '当前已是最新版本。',
     updateUnsupported: '开发版本不支持检查更新。',
     updateFailed: '检查更新失败:{message}',
     updateCheckTimedOut: '检查更新超时,请检查网络后重试。',
-    downloadNow: '立即下载',
-    restartNow: '立即重启',
-    later: '稍后',
     ok: '好',
     help: '帮助',
     documentation: '使用文档',
@@ -193,16 +181,10 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     checkForUpdates: 'Check for Updates…',
     retryConnection: 'Retry Connection',
     updateCheckTitle: 'Check for Updates',
-    updateAvailable: 'Version {version} is available.',
-    updateAutoDownloading: 'Version {version} is downloading in the background; restart to update once it finishes.',
-    updateReadyToInstall: 'Version {version} has been downloaded; restart to finish updating.',
     updateLatest: "You're on the latest version.",
     updateUnsupported: 'Update checks are unavailable in development builds.',
     updateFailed: 'Update check failed: {message}',
     updateCheckTimedOut: 'The update check timed out. Check your network and try again.',
-    downloadNow: 'Download Now',
-    restartNow: 'Restart Now',
-    later: 'Later',
     ok: 'OK',
     help: 'Help',
     documentation: 'Documentation',
@@ -354,40 +336,7 @@ async function runMenuUpdateCheck(): Promise<void> {
   const show = (opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> =>
     win === null || win.isDestroyed() ? dialog.showMessageBox(opts) : dialog.showMessageBox(win, opts);
   if (result.outcome === 'available') {
-    if (getUpdateStatus().state === 'downloaded') {
-      const { response } = await show({
-        type: 'info',
-        message: strings.updateCheckTitle,
-        detail: strings.updateReadyToInstall.replace('{version}', result.version ?? ''),
-        buttons: [strings.restartNow, strings.later],
-        defaultId: 0,
-        cancelId: 1,
-      });
-      if (response === 0) {
-        requestUpdateInstall();
-      }
-      return;
-    }
-    if (getUpdateAutoDownload()) {
-      await show({
-        type: 'info',
-        message: strings.updateCheckTitle,
-        detail: strings.updateAutoDownloading.replace('{version}', result.version ?? ''),
-        buttons: [strings.ok],
-      });
-      return;
-    }
-    const { response } = await show({
-      type: 'info',
-      message: strings.updateCheckTitle,
-      detail: strings.updateAvailable.replace('{version}', result.version ?? ''),
-      buttons: [strings.downloadNow, strings.later],
-      defaultId: 0,
-      cancelId: 1,
-    });
-    if (response === 0) {
-      requestUpdateDownload();
-    }
+    sendMenuActionWhenReady('open-update-dialog');
     return;
   }
   await show({

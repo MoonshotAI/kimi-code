@@ -186,7 +186,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.sha || github.sha }}
       - name: Fetch Changesets base branch
-        if: startsWith(github.ref, 'refs/heads/release/') && (inputs.canary || github.event_name == 'push')
+        if: (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') && (inputs.canary || github.event_name == 'push')
         run: git fetch --no-tags origin main:refs/heads/main
       - uses: actions/setup-node@v6
         with:

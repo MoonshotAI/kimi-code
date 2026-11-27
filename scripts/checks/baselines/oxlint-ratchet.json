@@ -211,7 +211,6 @@
   },
   "eslint/prefer-const": {
     "apps/desktop/src/main/screenshot/screenshot-output.ts": 1,
-    "apps/desktop/src/main/window/main-window.ts": 1,
     "apps/desktop/tests/renderer/browser-live-view.test.ts": 2,
     "apps/desktop/tests/renderer/latest-frame.test.ts": 1,
     "apps/desktop/tests/renderer/panelAdapters.test.ts": 1,
@@ -529,7 +528,6 @@
   "typescript/no-floating-promises": {
     "apps/desktop/e2e/focus-watch/steal-control.cjs": 1,
     "apps/desktop/src/main/ipc/register.ts": 1,
-    "apps/desktop/src/main/shell/menu.ts": 1,
     "packages/app-client/test/useUpdateStatus.test.ts": 2,
     "scripts/canary-linux.test.mjs": 1,
     "scripts/desktop-artifact-prefix.test.mjs": 2,
