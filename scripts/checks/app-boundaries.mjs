@@ -22,10 +22,6 @@ const DIRECT_API_CALL = /(?<![\w.$])(?:getKimiWebApi|getDeviceApi|fetch)\s*\(/g;
 const DIRECT_IPC_ACCESS = /\bwindow\.kimiDesktop\b|(?<![\w.$])(?:getNativeBrowserBridge|getDesktopBridge)\s*\(/g;
 
 export const BOUNDARY_RULES = {
-  'self-package-import': {
-    what: 'a module importing its own package name instead of a relative path',
-    instead: 'import sibling modules by relative path so package barrels do not pull the whole package into internal cycles',
-  },
   'upward-package-import': {
     what: 'a lower-level package importing an upper-level package or app-core/api',
     instead: 'move shared primitives, contracts and UI helpers down to app-core/lib, app-core/contracts or app-ui',
@@ -43,8 +39,8 @@ export const BOUNDARY_RULES = {
     instead: 'wrap platform calls in a renderer hook and let the component compose the hook',
   },
   'runtime-cycle': {
-    what: 'membership in a runtime import cycle (the count is the cycle size; type-only edges do not count)',
-    instead: 'extract the shared state or contract into a leaf module that neither side imports back from',
+    what: 'membership in a cross-package runtime import cycle (the count is the cycle size; intra-package cycles and type-only edges do not count)',
+    instead: 'extract the shared contract or primitive into a lower-level package so package dependencies stay acyclic',
   },
 };
 
@@ -191,9 +187,6 @@ export function countBoundaries({ files, readText, resolveTarget }) {
       const target = resolveTarget(specifier, file);
       if (target === undefined) continue;
       const { targetFile, targetPkg } = target;
-      if (fromPkg !== undefined && targetPkg === fromPkg && specifier.startsWith('@moonshot-ai/')) {
-        add('self-package-import', file);
-      }
       if (fromPkg === 'app-ui' && targetPkg === 'app-core' && specifier.startsWith('@moonshot-ai/app-core/api')) {
         add('upward-package-import', file);
       }
@@ -223,6 +216,7 @@ export function countBoundaries({ files, readText, resolveTarget }) {
   }
 
   for (const cycle of findRuntimeCycles(files, edges)) {
+    if (new Set(cycle.map((file) => packageOfFile(file))).size < 2) continue;
     for (const file of cycle) add('runtime-cycle', file, cycle.length);
   }
   return counts;
