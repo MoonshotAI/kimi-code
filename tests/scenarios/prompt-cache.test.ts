@@ -43,7 +43,6 @@ const PROFILES: readonly Profile[] = [
       env: {
         KIMI_CODE_EXPERIMENTAL_FLAG: '1',
         KIMI_CODE_EXPERIMENTAL_NOTIFY_USER: '1',
-        KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP: '1',
         KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS: '1',
         KIMI_CODE_EXPERIMENTAL_SIDEBAR_MULTI_TAB: '1',
         KIMI_CODE_EXPERIMENTAL_WAIT_FOR: '1',
@@ -229,10 +228,10 @@ const CHANGES: readonly Change[] = [
   {
     name: 'turning an experimental feature off and reloading the session',
     prepare: async (kap) => {
-      await kap.rest.post('/api/v1/config', { experimental: { wait_for: true } });
+      await kap.rest.post('/api/v1/config', { experimental: { cli: { wait_for: true } } });
     },
     apply: async (kap, sessionId) => {
-      await kap.rest.post('/api/v1/config', { experimental: { wait_for: false } });
+      await kap.rest.post('/api/v1/config', { experimental: { cli: { wait_for: false } } });
       return kap.rest.post(`/api/v1/sessions/${sessionId}:reload`);
     },
     takesEffect: (_applied, next) => expect(next.remindersSinceReply.join('\n')).toMatch(/<tools_removed>\s*WaitFor\s*<\/tools_removed>/),

@@ -1667,14 +1667,14 @@ describe('WaitForTool (harness)', () => {
       const config = ctx.get(IConfigService);
       expect(registry.resolve('WaitFor')).toBeUndefined();
 
-      await config.set(EXPERIMENTAL_SECTION, { wait_for: true });
+      await config.set(EXPERIMENTAL_SECTION, { cli: { wait_for: true } });
       expect(registry.resolve('WaitFor')).toBeDefined();
 
-      await config.set(EXPERIMENTAL_SECTION, { wait_for: false });
+      await config.set(EXPERIMENTAL_SECTION, { cli: { wait_for: false } });
       expect(registry.resolve('WaitFor')).toBeUndefined();
       expect(registry.list().map((tool) => tool.name)).not.toContain('WaitFor');
 
-      await config.set(EXPERIMENTAL_SECTION, { wait_for: true });
+      await config.set(EXPERIMENTAL_SECTION, { cli: { wait_for: true } });
       expect(registry.resolve('WaitFor')).toBeDefined();
     } finally {
       await ctx.dispose();

@@ -178,6 +178,7 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
         envelope({
           ...wireMeta,
           experimental_beta: {
+            profile: 'desktop',
             enabled: true,
             source: 'config',
             env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -216,6 +217,7 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
     const meta = await makeApi().getMeta();
 
     expect(meta.experimentalBeta).toEqual({
+      profile: 'desktop',
       enabled: true,
       source: 'config',
       env: 'KIMI_CODE_EXPERIMENTAL_FLAG',

@@ -7,7 +7,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { FlagService } from '#/app/flag/flagService';
-import { NOTIFY_USER_APP_FLAG_ID } from '#/features/notify/flag';
+import { NOTIFY_USER_FLAG_ID } from '#/features/notify/flag';
 import { NOTIFY_USER_UI_CAPABILITY } from '#/features/notify/notifyUserAvailability';
 import { NOTIFY_USER_NUDGE_VARIANT } from '#/features/notify/notifyUserNudge';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
@@ -66,7 +66,7 @@ describe('AgentNotifyUserNudgeService', () => {
     context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
     flags = ctx.get(IFlagService) as FlagService;
-    flags.setConfigOverrides({ [NOTIFY_USER_APP_FLAG_ID]: true });
+    flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: true });
     const registry = ctx.get(IAgentToolRegistryService);
     if (registry.resolve(NOTIFY_USER_TOOL_NAME) === undefined) registry.register(notifyToolStub);
     await ctx.restorePersisted();
@@ -93,12 +93,12 @@ describe('AgentNotifyUserNudgeService', () => {
     expect(nudgeInjections()).toHaveLength(1);
     expect(messageText(nudgeInjections()[0]!)).toContain('NotifyUser');
 
-    flags.setConfigOverrides({ [NOTIFY_USER_APP_FLAG_ID]: false });
+    flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: false });
     appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(1);
 
-    flags.setConfigOverrides({ [NOTIFY_USER_APP_FLAG_ID]: true });
+    flags.setConfigOverrides({ [NOTIFY_USER_FLAG_ID]: true });
     appendSilentRounds(8);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(2);

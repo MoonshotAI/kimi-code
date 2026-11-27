@@ -7,6 +7,9 @@ export const EXPERIMENTAL_SURFACES = ['tui', 'desktop', 'web'] as const;
 export type ExperimentalSurface = (typeof EXPERIMENTAL_SURFACES)[number];
 export type FlagSurface = ExperimentalSurface;
 
+export const EXPERIMENTAL_PROFILES = ['cli', 'desktop'] as const;
+export type ExperimentalProfile = (typeof EXPERIMENTAL_PROFILES)[number];
+
 export const EXPERIMENTAL_STAGES = ['experimental', 'beta', 'ga'] as const;
 export type ExperimentalStage = (typeof EXPERIMENTAL_STAGES)[number];
 
@@ -20,7 +23,6 @@ export interface FlagDefinitionInput {
   readonly title: string;
   readonly description: string;
   readonly env: string;
-  readonly fallbackEnv?: string;
   readonly stages: Partial<Record<ExperimentalSurface, ExperimentalStage>>;
   readonly effectTiming?: ExperimentalEffectTiming;
   readonly isExposed?: (flags: IFlagService) => boolean;

@@ -25,8 +25,11 @@ import {
   BETA_MASTER_CONFIG_KEY,
   EXPERIMENTAL_SECTION,
   IFlagService,
+  experimentalFromToml,
+  experimentalToToml,
 } from '#/app/flag/flag';
 import {
+  type ExperimentalProfile,
   type ExperimentalSurface,
   IFlagRegistry,
   type FlagDefinitionInput,
@@ -105,9 +108,10 @@ describe('FlagService', () => {
   function makeFlags(
     env: Readonly<Record<string, string | undefined>> = {},
     surface: ExperimentalSurface = 'tui',
+    experimentalProfile?: ExperimentalProfile,
   ) {
     const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IBootstrapService, stubBootstrap(homeDir, env, { surface }));
+    ix.stub(IBootstrapService, stubBootstrap(homeDir, env, { surface, experimentalProfile }));
     ix.stub(ILogService, stubLog());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
@@ -150,6 +154,7 @@ describe('FlagService', () => {
       source: 'default',
     });
     expect(flags.betaState()).toEqual({
+      profile: 'cli',
       enabled: false,
       source: 'default',
       env: MASTER_ENV,
@@ -165,9 +170,10 @@ describe('FlagService', () => {
 
   it('enables only beta flags via KIMI_CODE_EXPERIMENTAL_FLAG and leaves experimental flags off', async () => {
     const { config, flags } = makeFlags({ [MASTER_ENV]: '1' });
-    await config.set(EXPERIMENTAL_SECTION, { example_beta: false });
+    await config.set(EXPERIMENTAL_SECTION, { cli: { example_beta: false } });
 
     expect(flags.betaState()).toEqual({
+      profile: 'cli',
       enabled: true,
       source: 'env',
       env: MASTER_ENV,
@@ -184,14 +190,17 @@ describe('FlagService', () => {
     });
   });
 
-  it('enables only beta flags via [experimental].beta without overwriting child config values', async () => {
+  it('enables only beta flags via [experimental.cli].beta without overwriting child config values', async () => {
     const { config, flags } = makeFlags({ [MASTER_ENV]: '0' });
     await config.set(EXPERIMENTAL_SECTION, {
-      example_beta: false,
-      [BETA_MASTER_CONFIG_KEY]: true,
+      cli: {
+        example_beta: false,
+        [BETA_MASTER_CONFIG_KEY]: true,
+      },
     });
 
     expect(flags.betaState()).toEqual({
+      profile: 'cli',
       enabled: true,
       source: 'config',
       env: MASTER_ENV,
@@ -208,8 +217,10 @@ describe('FlagService', () => {
     });
 
     await config.set(EXPERIMENTAL_SECTION, {
-      example_beta: false,
-      [BETA_MASTER_CONFIG_KEY]: false,
+      cli: {
+        example_beta: false,
+        [BETA_MASTER_CONFIG_KEY]: false,
+      },
     });
     expect(flags.explain('example_beta')).toMatchObject({
       enabled: false,
@@ -224,8 +235,10 @@ describe('FlagService', () => {
       [MASTER_ENV]: '1',
     });
     await config.set(EXPERIMENTAL_SECTION, {
-      example_beta: true,
-      [BETA_MASTER_CONFIG_KEY]: true,
+      cli: {
+        example_beta: true,
+        [BETA_MASTER_CONFIG_KEY]: true,
+      },
     });
     expect(flags.explain('example_beta')).toMatchObject({
       enabled: false,
@@ -234,45 +247,68 @@ describe('FlagService', () => {
     });
   });
 
-  it('resolves fallbackEnv when primary env is unset and lets primary env take precedence', () => {
-    const { flagRegistry: fallbackRegistry, flags: fallbackFlags } = makeFlags(
-      { KIMI_CODE_EXPERIMENTAL_FALLBACK: '1' },
-      'desktop',
-    );
-    fallbackRegistry.register({
-      id: 'split_app',
-      title: 'Split app flag',
-      description: 'Uses fallback env when primary is unset.',
-      env: 'KIMI_CODE_EXPERIMENTAL_SPLIT_APP',
-      fallbackEnv: 'KIMI_CODE_EXPERIMENTAL_FALLBACK',
-      stages: { desktop: 'experimental' },
-    });
-    expect(fallbackFlags.explain('split_app')).toMatchObject({
-      enabled: true,
-      source: 'env',
-      env: 'KIMI_CODE_EXPERIMENTAL_FALLBACK',
-    });
-
-    const { flagRegistry: primaryRegistry, flags: primaryFlags } = makeFlags(
-      {
-        KIMI_CODE_EXPERIMENTAL_SPLIT_APP: '0',
-        KIMI_CODE_EXPERIMENTAL_FALLBACK: '1',
+  it('isolates [experimental.cli] (tui + web) from [experimental.desktop]', async () => {
+    const sharedSection = {
+      cli: {
+        [BETA_MASTER_CONFIG_KEY]: true,
+        example_exp: false,
       },
-      'desktop',
-    );
-    primaryRegistry.register({
-      id: 'split_app',
-      title: 'Split app flag',
-      description: 'Uses fallback env when primary is unset.',
-      env: 'KIMI_CODE_EXPERIMENTAL_SPLIT_APP',
-      fallbackEnv: 'KIMI_CODE_EXPERIMENTAL_FALLBACK',
-      stages: { desktop: 'experimental' },
-    });
-    expect(primaryFlags.explain('split_app')).toMatchObject({
+      desktop: {
+        [BETA_MASTER_CONFIG_KEY]: false,
+        example_exp: true,
+      },
+    };
+
+    const tui = makeFlags({}, 'tui');
+    await tui.config.set(EXPERIMENTAL_SECTION, sharedSection);
+    expect(tui.flags.betaState()).toMatchObject({ profile: 'cli', enabled: true, source: 'config' });
+    expect(tui.flags.enabled('example_beta')).toBe(true);
+    expect(tui.flags.enabled('example_exp')).toBe(false);
+
+    const web = makeFlags({}, 'web');
+    await web.config.set(EXPERIMENTAL_SECTION, sharedSection);
+    expect(web.flags.betaState()).toMatchObject({ profile: 'cli', enabled: true, source: 'config' });
+    expect(web.flags.enabled('example_beta')).toBe(true);
+    expect(web.flags.enabled('example_exp')).toBe(false);
+
+    const desktop = makeFlags({}, 'desktop');
+    await desktop.config.set(EXPERIMENTAL_SECTION, sharedSection);
+    expect(desktop.flags.betaState()).toMatchObject({
+      profile: 'desktop',
       enabled: false,
-      source: 'env',
-      env: 'KIMI_CODE_EXPERIMENTAL_SPLIT_APP',
+      source: 'config',
+      configValue: false,
     });
+    expect(desktop.flags.enabled('example_beta')).toBe(false);
+    expect(desktop.flags.enabled('example_exp')).toBe(true);
+  });
+
+  it('normalizes legacy flat [experimental] TOML keys without leaking CLI-only keys into desktop', () => {
+    const parsed = experimentalFromToml({
+      notify_user: true,
+      wait_for: true,
+      prompt_prediction: true,
+      tower: false,
+      desktop: {
+        prompt_prediction: false,
+      },
+    });
+    expect(parsed).toEqual({
+      cli: {
+        notify_user: true,
+        wait_for: true,
+        prompt_prediction: true,
+        tower: false,
+      },
+      desktop: {
+        prompt_prediction: false,
+        tower: false,
+      },
+    });
+    expect(experimentalToToml({ cli: {}, desktop: { notify_user: true } })).toEqual({
+      desktop: { notify_user: true },
+    });
+    expect(experimentalToToml({})).toEqual({});
   });
 
   it('evaluates ga stage per surface, ignores false in shared config.toml, and excludes ga from exposedIds', async () => {
@@ -284,7 +320,7 @@ describe('FlagService', () => {
       env: 'KIMI_CODE_EXPERIMENTAL_GRADUATED_ON_TUI',
       stages: { tui: 'ga', desktop: 'beta' },
     });
-    await config.set(EXPERIMENTAL_SECTION, { graduated_on_tui: false });
+    await config.set(EXPERIMENTAL_SECTION, { cli: { graduated_on_tui: false } });
 
     expect(tuiFlags.enabled('graduated_on_tui')).toBe(true);
     expect(tuiFlags.explain('graduated_on_tui')).toMatchObject({
@@ -303,7 +339,7 @@ describe('FlagService', () => {
       env: 'KIMI_CODE_EXPERIMENTAL_GRADUATED_ON_TUI',
       stages: { tui: 'ga', desktop: 'beta' },
     });
-    await desktopCfg.set(EXPERIMENTAL_SECTION, { graduated_on_tui: false });
+    await desktopCfg.set(EXPERIMENTAL_SECTION, { desktop: { graduated_on_tui: false } });
     expect(desktopFlags.enabled('graduated_on_tui')).toBe(false);
     expect(desktopFlags.explain('graduated_on_tui')).toMatchObject({
       stage: 'beta',
@@ -332,7 +368,7 @@ describe('FlagService', () => {
     const { config, flags: webFlags } = makeFlags({}, 'web');
     expect(webFlags.explainAll().map((f) => f.id)).toEqual(['example_beta']);
 
-    await config.set(EXPERIMENTAL_SECTION, { example_exp: true });
+    await config.set(EXPERIMENTAL_SECTION, { cli: { example_exp: true } });
     expect(webFlags.enabled('example_exp')).toBe(true);
     expect(webFlags.exposedIds()).not.toContain('example_exp');
   });
@@ -348,7 +384,7 @@ describe('FlagService', () => {
       effectTiming: 'restart',
       isExposed: () => false,
     });
-    await config.set(EXPERIMENTAL_SECTION, { assembled_only: true });
+    await config.set(EXPERIMENTAL_SECTION, { cli: { assembled_only: true } });
 
     expect(flags.explain('assembled_only')).toMatchObject({
       enabled: true,
@@ -367,8 +403,10 @@ describe('FlagService', () => {
     expect(flags.enabled('example_exp')).toBe(false);
 
     await config.set(EXPERIMENTAL_SECTION, {
-      obsolete_flag: true,
-      example_exp: true,
+      cli: {
+        obsolete_flag: true,
+        example_exp: true,
+      },
     });
     expect(flags.snapshot()).toEqual({ example_beta: false, example_exp: true });
     expect(flags.explain('obsolete_flag')).toBeUndefined();
@@ -842,5 +880,32 @@ describe('migrateLegacyMasterEnvTower', () => {
       }),
     ).toBe('already-migrated');
     expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
+  });
+
+  it('migrates cli and desktop profiles into their own [experimental.<profile>] buckets independently', () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+        profile: 'cli',
+      }),
+    ).toBe('migrated-tower');
+    const cliText = readFileSync(configPath, 'utf8');
+    expect(cliText).toContain('[experimental.cli]');
+    expect(cliText).not.toContain('[experimental.desktop]');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+        profile: 'desktop',
+      }),
+    ).toBe('migrated-tower');
+    const bothText = readFileSync(configPath, 'utf8');
+    expect(bothText).toContain('[experimental.cli]');
+    expect(bothText).toContain('[experimental.desktop]');
   });
 });

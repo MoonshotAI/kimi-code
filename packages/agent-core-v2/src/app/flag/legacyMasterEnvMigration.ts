@@ -23,20 +23,33 @@ import { isPlainObject } from '#/app/config/configPure';
 import { planConfigWriteback } from '#/app/config/tomlWriteback';
 import { TOWER_FLAG_ENV, TOWER_FLAG_ID } from '#/features/tower/tower';
 
-import { EXPERIMENTAL_SECTION, ExperimentalConfigSchema } from './flag';
+import {
+  EXPERIMENTAL_SECTION,
+  type ExperimentalConfig,
+  ExperimentalConfigSchema,
+  experimentalFromToml,
+  experimentalToToml,
+} from './flag';
+import { EXPERIMENTAL_PROFILES, type ExperimentalProfile } from './flagRegistry';
 import { MASTER_ENV } from './flagService';
 
 export const EXPERIMENTAL_MIGRATIONS_FILENAME = 'experimental-migrations.json';
 
+type MigratedProfileConfigMap = Partial<
+  Record<ExperimentalProfile, Readonly<Record<string, boolean>>>
+>;
+
 interface ExperimentalMigrationsRecord {
   readonly legacyMasterEnvTowerMigrated?: boolean;
   readonly legacyMasterEnvTowerMigratedConfigs?: Readonly<Record<string, boolean>>;
+  readonly legacyMasterEnvTowerMigratedProfiles?: Readonly<MigratedProfileConfigMap>;
 }
 
 export interface MigrateLegacyMasterEnvTowerInput {
   readonly homeDir: string;
   readonly configPath?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly profile?: ExperimentalProfile;
   readonly onBeforeWrite?: (attempt: number) => void;
 }
 
@@ -51,6 +64,7 @@ export type MigrateLegacyMasterEnvTowerOutcome =
 
 const EXISTING_INSTALL_MARKERS = ['sessions', 'credentials', 'user-history'] as const;
 const MAX_MIGRATION_WRITE_ATTEMPTS = 3;
+const EXPERIMENTAL_PROFILE_SET: ReadonlySet<string> = new Set(EXPERIMENTAL_PROFILES);
 
 function safeLstat(filePath: string): Stats | undefined {
   try {
@@ -127,6 +141,18 @@ function readMigrationsRecord(markerPath: string): ExperimentalMigrationsRecord 
       if (!isPlainObject(configs)) return undefined;
       if (Object.values(configs).some((value) => typeof value !== 'boolean')) return undefined;
     }
+    const profiles = raw['legacyMasterEnvTowerMigratedProfiles'];
+    if (profiles !== undefined) {
+      if (!isPlainObject(profiles)) return undefined;
+      for (const [profileKey, bucket] of Object.entries(profiles)) {
+        if (!EXPERIMENTAL_PROFILE_SET.has(profileKey) || !isPlainObject(bucket)) {
+          return undefined;
+        }
+        if (Object.values(bucket).some((value) => typeof value !== 'boolean')) {
+          return undefined;
+        }
+      }
+    }
     return raw as ExperimentalMigrationsRecord;
   } catch {
     return undefined;
@@ -135,22 +161,49 @@ function readMigrationsRecord(markerPath: string): ExperimentalMigrationsRecord 
 
 function isConfigMigrated(
   record: ExperimentalMigrationsRecord,
+  profile: ExperimentalProfile,
   configKey: string,
   isDefaultConfig: boolean,
 ): boolean {
-  if (record.legacyMasterEnvTowerMigratedConfigs?.[configKey] === true) return true;
-  return isDefaultConfig && record.legacyMasterEnvTowerMigrated === true;
+  if (record.legacyMasterEnvTowerMigratedProfiles?.[profile]?.[configKey] === true) {
+    return true;
+  }
+  if (profile === 'cli') {
+    if (record.legacyMasterEnvTowerMigratedConfigs?.[configKey] === true) return true;
+    if (isDefaultConfig && record.legacyMasterEnvTowerMigrated === true) return true;
+  }
+  return false;
+}
+
+function mergeProfileRecords(
+  first: Readonly<MigratedProfileConfigMap> | undefined,
+  second: Readonly<MigratedProfileConfigMap> | undefined,
+): MigratedProfileConfigMap {
+  const merged: MigratedProfileConfigMap = {};
+  for (const profile of EXPERIMENTAL_PROFILES) {
+    const left = first?.[profile];
+    const right = second?.[profile];
+    if (left !== undefined || right !== undefined) {
+      merged[profile] = { ...left, ...right };
+    }
+  }
+  return merged;
 }
 
 function stampMigrationMarker(
   markerPath: string,
   existing: ExperimentalMigrationsRecord,
+  profile: ExperimentalProfile,
   configKey: string,
   isDefaultConfig: boolean,
 ): boolean {
   try {
     const latest = readMigrationsRecord(markerPath);
     if (latest === undefined) return false;
+    const mergedProfiles = mergeProfileRecords(
+      existing.legacyMasterEnvTowerMigratedProfiles,
+      latest.legacyMasterEnvTowerMigratedProfiles,
+    );
     const mergedBase: ExperimentalMigrationsRecord = {
       ...existing,
       ...latest,
@@ -158,13 +211,25 @@ function stampMigrationMarker(
         ...existing.legacyMasterEnvTowerMigratedConfigs,
         ...latest.legacyMasterEnvTowerMigratedConfigs,
       },
+      legacyMasterEnvTowerMigratedProfiles: mergedProfiles,
     };
     const next: ExperimentalMigrationsRecord = {
       ...mergedBase,
-      ...(isDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
-      legacyMasterEnvTowerMigratedConfigs: {
-        ...mergedBase.legacyMasterEnvTowerMigratedConfigs,
-        [configKey]: true,
+      ...(profile === 'cli' && isDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
+      ...(profile === 'cli'
+        ? {
+            legacyMasterEnvTowerMigratedConfigs: {
+              ...mergedBase.legacyMasterEnvTowerMigratedConfigs,
+              [configKey]: true,
+            },
+          }
+        : {}),
+      legacyMasterEnvTowerMigratedProfiles: {
+        ...mergedProfiles,
+        [profile]: {
+          ...mergedProfiles[profile],
+          [configKey]: true,
+        },
       },
     };
     writeFileAtomically(markerPath, `${JSON.stringify(next, null, 2)}\n`);
@@ -199,11 +264,12 @@ type ConfigInspectionResult =
       readonly onDiskText: string | undefined;
       readonly parsedDoc: Record<string, unknown>;
       readonly rawExperimental: unknown;
-      readonly validatedExperimental: Record<string, boolean> | undefined;
+      readonly validatedExperimental: ExperimentalConfig | undefined;
     };
 
 function inspectConfigForTowerMigration(
   configPath: string,
+  profile: ExperimentalProfile,
   masterEnv: boolean | undefined,
 ): ConfigInspectionResult {
   const failOutcome = masterEnv === true ? 'fallback-env' : 'skipped-error';
@@ -235,19 +301,21 @@ function inspectConfigForTowerMigration(
   }
 
   const rawExperimental = parsedDoc[EXPERIMENTAL_SECTION];
-  let validatedExperimental: Record<string, boolean> | undefined;
+  let validatedExperimental: ExperimentalConfig | undefined;
   if (rawExperimental !== undefined) {
     if (!isPlainObject(rawExperimental)) {
       return { kind: 'terminal', outcome: failOutcome };
     }
-    const parsedExperimental = ExperimentalConfigSchema.safeParse(rawExperimental);
+    const normalizedExperimental = experimentalFromToml(rawExperimental);
+    const parsedExperimental = ExperimentalConfigSchema.safeParse(normalizedExperimental);
     if (!parsedExperimental.success) {
       return { kind: 'terminal', outcome: failOutcome };
     }
     validatedExperimental = parsedExperimental.data;
   }
 
-  if (validatedExperimental !== undefined && Object.hasOwn(validatedExperimental, TOWER_FLAG_ID)) {
+  const bucket = validatedExperimental?.[profile];
+  if (bucket !== undefined && Object.hasOwn(bucket, TOWER_FLAG_ID)) {
     return { kind: 'already-configured' };
   }
 
@@ -264,11 +332,16 @@ function inspectConfigForTowerMigration(
 
 function buildTowerMigratedConfigText(
   snapshot: Extract<ConfigInspectionResult, { readonly kind: 'needs-migration' }>,
+  profile: ExperimentalProfile,
 ): string {
-  const nextExperimental: Record<string, unknown> = {
+  const nextValidated: ExperimentalConfig = {
     ...snapshot.validatedExperimental,
-    [TOWER_FLAG_ID]: true,
+    [profile]: {
+      ...snapshot.validatedExperimental?.[profile],
+      [TOWER_FLAG_ID]: true,
+    },
   };
+  const nextExperimental = experimentalToToml(nextValidated, snapshot.rawExperimental);
   const nextDoc: Record<string, unknown> = {
     ...snapshot.parsedDoc,
     [EXPERIMENTAL_SECTION]: nextExperimental,
@@ -295,6 +368,7 @@ export function migrateLegacyMasterEnvTower(
   input: MigrateLegacyMasterEnvTowerInput,
 ): MigrateLegacyMasterEnvTowerOutcome {
   const { homeDir } = input;
+  const profile: ExperimentalProfile = input.profile ?? 'cli';
   const defaultConfigPath = resolveConfigPath({ homeDir });
   const configPath = resolveConfigPath({ homeDir, configPath: input.configPath });
   const defaultConfigKey = normalizeConfigKey(defaultConfigPath);
@@ -304,13 +378,13 @@ export function migrateLegacyMasterEnvTower(
   const markerPath = join(homeDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
 
   const record = readMigrationsRecord(markerPath);
-  if (record !== undefined && isConfigMigrated(record, configKey, isDefaultConfig)) {
+  if (record !== undefined && isConfigMigrated(record, profile, configKey, isDefaultConfig)) {
     return 'already-migrated';
   }
 
   if (!isExistingInstallation(homeDir, configPath, defaultConfigPath)) {
     return record !== undefined &&
-      stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+      stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
       ? 'stamped-fresh-install'
       : 'skipped-error';
   }
@@ -319,18 +393,18 @@ export function migrateLegacyMasterEnvTower(
   const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
   if (towerEnvOverride !== undefined) {
     return record !== undefined &&
-      stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+      stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
       ? 'stamped-noop'
       : 'skipped-error';
   }
 
-  const initial = inspectConfigForTowerMigration(configPath, masterEnv);
+  const initial = inspectConfigForTowerMigration(configPath, profile, masterEnv);
   if (initial.kind === 'terminal') {
     return initial.outcome;
   }
   if (initial.kind === 'already-configured') {
     return record !== undefined &&
-      stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+      stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
       ? 'stamped-noop'
       : 'skipped-error';
   }
@@ -365,19 +439,19 @@ export function migrateLegacyMasterEnvTower(
   try {
     let committed = false;
     for (let attempt = 0; attempt < MAX_MIGRATION_WRITE_ATTEMPTS; attempt += 1) {
-      const current = inspectConfigForTowerMigration(configPath, true);
+      const current = inspectConfigForTowerMigration(configPath, profile, true);
       if (current.kind === 'terminal') {
         return current.outcome;
       }
       if (current.kind === 'already-configured') {
-        return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+        return stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
           ? 'stamped-noop'
           : 'skipped-error';
       }
       if (current.targetStat !== undefined) {
         assertWritableSingleLink(current.targetPath, current.targetStat);
       }
-      const nextText = buildTowerMigratedConfigText(current);
+      const nextText = buildTowerMigratedConfigText(current, profile);
       input.onBeforeWrite?.(attempt);
 
       if (current.onDiskText === undefined || current.targetStat === undefined) {
@@ -444,7 +518,7 @@ export function migrateLegacyMasterEnvTower(
     } catch {}
   }
 
-  return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+  return stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
     ? 'migrated-tower'
     : 'skipped-error';
 }

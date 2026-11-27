@@ -111,15 +111,10 @@ const promptPredictionLocked = computed(
   () => promptPredictionLockedByEnv.value || betaMasterEnabled.value,
 );
 
-const notifyUserFeature = computed(
-  () => findExperimentalFeature('notify_user_app') ?? findExperimentalFeature('notify_user'),
+const notifyUserFeature = computed(() => findExperimentalFeature('notify_user'));
+const notifyUserEnabled = computed(
+  () => notifyUserFeature.value?.enabled ?? configStore().experimentalFlags['notify_user'] === true,
 );
-const notifyUserEnabled = computed(() => {
-  if (notifyUserFeature.value !== undefined) return notifyUserFeature.value.enabled;
-  return 'notify_user_app' in configStore().experimentalFlags
-    ? configStore().experimentalFlags['notify_user_app'] === true
-    : configStore().experimentalFlags['notify_user'] === true;
-});
 const notifyUserLockedByEnv = computed(() => notifyUserFeature.value?.source === 'env');
 
 const sessionMentionsFeature = computed(() => findExperimentalFeature('session_mentions'));

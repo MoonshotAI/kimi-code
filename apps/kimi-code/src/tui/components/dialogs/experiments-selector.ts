@@ -20,6 +20,7 @@ import { renderSearchableListStatus, SearchableList } from '#/tui/utils/searchab
 
 const ELLIPSIS = '…';
 const DEFAULT_BETA_STATE: BetaMasterSwitchState = {
+  profile: 'cli',
   enabled: false,
   source: 'default',
   env: MASTER_ENV,

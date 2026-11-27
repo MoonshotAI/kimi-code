@@ -1011,6 +1011,7 @@ describe('session continuation', () => {
       dangerousBypassAuth: false,
       experimentalFlags: { notify_user: true },
       experimentalBeta: {
+        profile: 'cli',
         enabled: true,
         source: 'config',
         env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -1035,7 +1036,7 @@ describe('session continuation', () => {
     h.event('__global__', {
       type: 'configChanged',
       changedFields: [],
-      config: { providers: {}, experimental: { beta: true } },
+      config: { providers: {}, experimental: { cli: { beta: true } } },
     });
 
     await vi.waitFor(() => expect(configStore().experimentalBeta?.enabled).toBe(true));

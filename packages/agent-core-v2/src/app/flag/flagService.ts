@@ -3,12 +3,17 @@ import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
-import { IBootstrapService, resolveExperimentalSurface } from '#/app/bootstrap/bootstrap';
+import {
+  IBootstrapService,
+  resolveExperimentalProfile,
+  resolveExperimentalSurface,
+} from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 
 import {
   BETA_MASTER_CONFIG_KEY,
   type BetaMasterSwitchState,
+  type ExperimentalConfig,
   type ExperimentalFeatureState,
   type ExperimentalFlagConfig,
   type ExperimentalFlagMap,
@@ -17,6 +22,7 @@ import {
   IFlagService,
 } from './flag';
 import {
+  type ExperimentalProfile,
   type ExperimentalStage,
   type ExperimentalSurface,
   type FlagDefinitionInput,
@@ -55,8 +61,17 @@ export class FlagService extends Disposable implements IFlagService {
     return resolveExperimentalSurface(this.bootstrap.clientIdentity, this.bootstrap.args.surface);
   }
 
+  get profile(): ExperimentalProfile {
+    return resolveExperimentalProfile(
+      this.bootstrap.clientIdentity,
+      this.surface,
+      this.bootstrap.args.experimentalProfile,
+    );
+  }
+
   private readConfig(): ExperimentalFlagConfig {
-    return this.config.get<ExperimentalFlagConfig>(EXPERIMENTAL_SECTION) ?? {};
+    const section = this.config.get<ExperimentalConfig>(EXPERIMENTAL_SECTION);
+    return section?.[this.profile] ?? {};
   }
 
   setConfigOverrides(overrides: ExperimentalFlagConfig | undefined): void {
@@ -65,14 +80,15 @@ export class FlagService extends Disposable implements IFlagService {
   }
 
   betaState(): BetaMasterSwitchState {
+    const profile = this.profile;
     const configValue = this.configOverrides[BETA_MASTER_CONFIG_KEY];
     if (parseBooleanEnv(this.bootstrap.getEnv(MASTER_ENV)) === true) {
-      return { enabled: true, source: 'env', env: MASTER_ENV, configValue };
+      return { profile, enabled: true, source: 'env', env: MASTER_ENV, configValue };
     }
     if (configValue !== undefined) {
-      return { enabled: configValue, source: 'config', env: MASTER_ENV, configValue };
+      return { profile, enabled: configValue, source: 'config', env: MASTER_ENV, configValue };
     }
-    return { enabled: false, source: 'default', env: MASTER_ENV, configValue: undefined };
+    return { profile, enabled: false, source: 'default', env: MASTER_ENV, configValue: undefined };
   }
 
   enabled(id: FlagId): boolean {
@@ -122,18 +138,6 @@ export class FlagService extends Disposable implements IFlagService {
       .filter((state): state is ExperimentalFeatureState => state !== undefined);
   }
 
-  private resolveEnvOverride(
-    def: FlagDefinitionInput,
-  ): { readonly enabled: boolean; readonly env: string } | undefined {
-    const primary = parseBooleanEnv(this.bootstrap.getEnv(def.env));
-    if (primary !== undefined) return { enabled: primary, env: def.env };
-    if (def.fallbackEnv !== undefined) {
-      const fallback = parseBooleanEnv(this.bootstrap.getEnv(def.fallbackEnv));
-      if (fallback !== undefined) return { enabled: fallback, env: def.fallbackEnv };
-    }
-    return undefined;
-  }
-
   private evaluate(
     def: FlagDefinitionInput,
     stage: ExperimentalStage,
@@ -144,9 +148,9 @@ export class FlagService extends Disposable implements IFlagService {
     readonly configValue: boolean | undefined;
   } {
     const configValue = this.configOverrides[def.id];
-    const override = this.resolveEnvOverride(def);
-    if (override !== undefined) {
-      return { enabled: override.enabled, source: 'env', env: override.env, configValue };
+    const envOverride = parseBooleanEnv(this.bootstrap.getEnv(def.env));
+    if (envOverride !== undefined) {
+      return { enabled: envOverride, source: 'env', env: def.env, configValue };
     }
     if (stage === 'ga') {
       return { enabled: true, source: 'default', env: def.env, configValue };

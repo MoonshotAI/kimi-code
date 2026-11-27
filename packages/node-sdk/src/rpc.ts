@@ -295,7 +295,7 @@ export abstract class SDKRpcClientBase {
   abstract getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]>;
 
   async getExperimentalBetaState(): Promise<BetaMasterSwitchState> {
-    return { enabled: false, source: 'default', env: MASTER_ENV };
+    return { profile: 'cli', enabled: false, source: 'default', env: MASTER_ENV };
   }
 
   abstract setConfig(input: KimiConfigPatch): Promise<KimiConfig>;

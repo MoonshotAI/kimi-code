@@ -226,10 +226,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           ...(opts.env ?? process.env),
           KIMI_CODE_PLUGIN_MARKETPLACE_URL: opts.pluginMarketplaceUrl,
         };
+  const experimentalProfile =
+    opts.hostIdentity.platform === 'kimi_code_desktop' ? 'desktop' : 'cli';
   const bootstrapEnv = resolveBootstrapEnvWithLegacyTowerMigration({
     homeDir,
     configPath,
     env: baseBootstrapEnv,
+    profile: experimentalProfile,
   });
   const { app: core } = bootstrap(
     {
@@ -244,6 +247,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         replyStyleGuide: opts.hostIdentity.replyStyleGuide,
         uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
         surface: opts.hostIdentity.platform === 'kimi_code_desktop' ? 'desktop' : 'web',
+        experimentalProfile,
       },
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],

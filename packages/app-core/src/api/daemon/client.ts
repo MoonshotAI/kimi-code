@@ -233,6 +233,7 @@ interface WireHealth {
 }
 
 interface WireMetaExperimentalBeta {
+  profile?: 'cli' | 'desktop';
   enabled: boolean;
   source: 'env' | 'config' | 'default';
   env: string;
@@ -402,6 +403,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       experimentalFlags: data.experimental_flags ?? {},
       experimentalBeta: data.experimental_beta
         ? {
+            profile: data.experimental_beta.profile ?? 'cli',
             enabled: data.experimental_beta.enabled,
             source: data.experimental_beta.source,
             env: data.experimental_beta.env,

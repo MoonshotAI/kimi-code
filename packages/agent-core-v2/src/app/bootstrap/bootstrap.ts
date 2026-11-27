@@ -14,7 +14,7 @@ import {
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
-import type { ExperimentalSurface } from '#/app/flag/flagRegistry';
+import type { ExperimentalProfile, ExperimentalSurface } from '#/app/flag/flagRegistry';
 
 export type HostUiCapability = 'update_panel';
 
@@ -27,6 +27,7 @@ export interface HostArgs {
   readonly nonInteractive?: boolean;
   readonly uiCapabilities?: readonly HostUiCapability[];
   readonly surface?: ExperimentalSurface;
+  readonly experimentalProfile?: ExperimentalProfile;
 }
 
 export interface HostArgsInput {
@@ -38,6 +39,7 @@ export interface HostArgsInput {
   readonly nonInteractive?: boolean;
   readonly uiCapabilities?: readonly HostUiCapability[];
   readonly surface?: ExperimentalSurface;
+  readonly experimentalProfile?: ExperimentalProfile;
 }
 
 export function resolveExperimentalSurface(
@@ -50,10 +52,21 @@ export function resolveExperimentalSurface(
   return 'tui';
 }
 
+export function resolveExperimentalProfile(
+  identity?: KimiHostIdentity,
+  surface?: ExperimentalSurface,
+  explicit?: ExperimentalProfile,
+): ExperimentalProfile {
+  if (explicit !== undefined) return explicit;
+  if (identity?.platform === 'kimi_code_desktop' || surface === 'desktop') return 'desktop';
+  return 'cli';
+}
+
 export function resolveHostArgs(
   input: HostArgsInput | undefined,
   identity?: KimiHostIdentity,
 ): HostArgs {
+  const surface = resolveExperimentalSurface(identity, input?.surface);
   return {
     agentFiles: input?.agentFiles,
     skillDirs: input?.skillDirs,
@@ -62,7 +75,12 @@ export function resolveHostArgs(
     replyStyleGuide: input?.replyStyleGuide,
     nonInteractive: input?.nonInteractive,
     uiCapabilities: input?.uiCapabilities,
-    surface: resolveExperimentalSurface(identity, input?.surface),
+    surface,
+    experimentalProfile: resolveExperimentalProfile(
+      identity,
+      surface,
+      input?.experimentalProfile,
+    ),
   };
 }
 

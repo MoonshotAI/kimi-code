@@ -26,10 +26,10 @@ Good candidates include:
 
 Tower is off by default. Enable the experiment in one of the following ways.
 
-For a persistent setting, add this to `config.toml` (by default, `~/.kimi-code/config.toml`; see [Config files](../configuration/config-files.md)):
+For a persistent setting, add this to `config.toml` (by default, `~/.kimi-code/config.toml` — use `[experimental.cli]` for `kimi` / `kimi web` or `[experimental.desktop]` for the desktop app; see [Config files](../configuration/config-files.md#experimental)):
 
 ```toml
-[experimental]
+[experimental.cli]
 tower = true
 ```
 

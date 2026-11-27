@@ -502,15 +502,27 @@ Disabling the trust requirement loads project-level MCP servers and other trust-
 
 Changes take effect on `/reload`; a running TUI does not show a startup trust prompt retroactively. `KIMI_CODE_TRUST_WORKSPACE=1` remains an independent per-process trust override, and a falsy value does not restore the first-open requirement when `require_trust` is `false`. Existing trust records are preserved and used again if the requirement is re-enabled.
 
-<!--
 ## `experimental`
 
-`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `false`; set it to `true` to enable automatic trimming of older large tool results.
+`experimental` stores persistent overrides for Beta and Experimental features, isolated by host profile so CLI and Desktop toggles do not overwrite each other:
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
--->
+- `[experimental.cli]` — shared by the CLI TUI (`kimi`), `kimi web`, and `kimi rc`.
+- `[experimental.desktop]` — shared by the Kimi Code desktop app and its Remote Control web session.
+
+Within either sub-table, `beta = true` enables all `Beta`-stage features for that profile without overwriting individual boolean entries; `Experimental`-stage features must be enabled individually.
+
+```toml
+[experimental.cli]
+beta = true
+notify_user = true
+wait_for = true
+tower = true
+
+[experimental.desktop]
+beta = false
+context_inspector = true
+notify_user = true
+```
 
 ## `services`
 

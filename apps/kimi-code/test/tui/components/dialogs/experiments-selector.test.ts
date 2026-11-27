@@ -39,6 +39,7 @@ function betaState(
   overrides: Partial<BetaMasterSwitchState> = {},
 ): BetaMasterSwitchState {
   return {
+    profile: 'cli',
     enabled: false,
     source: 'default',
     env: 'KIMI_CODE_EXPERIMENTAL_FLAG',

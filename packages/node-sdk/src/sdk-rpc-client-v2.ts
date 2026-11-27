@@ -160,6 +160,7 @@ import {
   ensureMainAgent,
   getOrRestoreAgent,
   resolveBootstrapEnvWithLegacyTowerMigration,
+  resolveExperimentalProfile,
   reloadOnStale,
   agentContextOf,
   IAgentChangeNotifierService,
@@ -535,6 +536,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const bootstrapEnv = resolveBootstrapEnvWithLegacyTowerMigration({
       homeDir: this.homeDir,
       configPath: this.configPath,
+      profile: resolveExperimentalProfile(identity),
     });
     const { app } = bootstrap(
       {

@@ -843,13 +843,13 @@ export async function applyExperimentalFeatureChanges(
     return;
   }
 
-  const experimental: Record<string, boolean> = {};
+  const experimentalBucket: Record<string, boolean> = {};
   for (const change of changes) {
-    experimental[change.id] = change.enabled;
+    experimentalBucket[change.id] = change.enabled;
   }
 
   try {
-    await host.harness.setConfig({ experimental });
+    await host.harness.setConfig({ experimental: { cli: experimentalBucket } });
     const features = await host.harness.getExperimentalFeatures();
     setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();

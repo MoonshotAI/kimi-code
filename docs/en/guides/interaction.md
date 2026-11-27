@@ -12,7 +12,7 @@ The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / 
 
 After a main agent turn completes normally, Kimi Code CLI can suggest the next prompt in an empty input box. The suggestion is generated in a side request and never submitted automatically.
 
-Set `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` before launching to enable it, put `[experimental] prompt_prediction = true` in `config.toml`, or turn on **Prompt prediction** (or **Enable all Beta features**) in `/lab` (TUI) or Settings > Lab (desktop app and web UI). Press `Tab` or `→` to insert the full suggestion, edit it if needed, and press `Enter` to submit. The suggestion hides while you type and reappears once the input is cleared, ready to be inserted again; starting a new turn or switching sessions clears it. Cancelled, failed, or blocked turns do not produce suggestions.
+Set `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` before launching to enable it, put `prompt_prediction = true` under `[experimental.cli]` (or `[experimental.desktop]`) in `config.toml`, or turn on **Prompt prediction** (or **Enable all Beta features**) in `/lab` (TUI) or Settings > Lab (desktop app and web UI). Press `Tab` or `→` to insert the full suggestion, edit it if needed, and press `Enter` to submit. The suggestion hides while you type and reappears once the input is cleared, ready to be inserted again; starting a new turn or switching sessions clears it. Cancelled, failed, or blocked turns do not produce suggestions.
 
 ## Pasting images and video
 

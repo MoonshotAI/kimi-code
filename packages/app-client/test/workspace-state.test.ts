@@ -5918,24 +5918,31 @@ describe('setNotifyUserEnabled', () => {
     configStore().resetConfig();
   });
 
-  it('does not update notify_user_app flag when the config write fails', async () => {
+  it('does not update notify_user flag when the config write fails', async () => {
     apiMock.setConfig.mockRejectedValueOnce(new Error('write conflict'));
     expect(await configStore().setNotifyUserEnabled(true)).toBe(false);
-    expect(configStore().experimentalFlags['notify_user_app']).toBeUndefined();
+    expect(configStore().experimentalFlags['notify_user']).toBeUndefined();
   });
 
-  it('updates notify_user_app flag only after a successful write and falls back to notify_user against legacy servers', async () => {
+  it('writes notify_user into the active profile bucket (cli vs desktop)', async () => {
     apiMock.setConfig.mockResolvedValue({ providers: {}, defaultModel: 'model-new' });
     apiMock.getMeta.mockResolvedValue(null);
     expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
-    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { notify_user_app: true } });
-    expect(configStore().experimentalFlags['notify_user_app']).toBe(true);
+    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { cli: { notify_user: true } } });
+    expect(configStore().experimentalFlags['notify_user']).toBe(true);
 
     configStore().resetConfig();
-    configStore().experimentalFlags = { notify_user: false };
+    configStore().experimentalBeta = {
+      profile: 'desktop',
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    };
     apiMock.setConfig.mockClear();
     expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
-    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { notify_user: true } });
+    expect(apiMock.setConfig).toHaveBeenCalledWith({
+      experimental: { desktop: { notify_user: true } },
+    });
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
   });
 
@@ -5949,6 +5956,7 @@ describe('setNotifyUserEnabled', () => {
       dangerousBypassAuth: false,
       experimentalFlags: { notify_user: false, tower: true },
       experimentalBeta: {
+        profile: 'desktop',
         enabled: false,
         source: 'default',
         env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -5992,7 +6000,7 @@ describe('setNotifyUserEnabled', () => {
     apiMock.getMeta.mockResolvedValue(null);
 
     expect(await configStore().setBetaFeaturesEnabled(true)).toBe(true);
-    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { beta: true } });
+    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { desktop: { beta: true } } });
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
@@ -6052,6 +6060,7 @@ describe('setNotifyUserEnabled', () => {
           sidebar_multi_tab: false,
         },
         experimentalBeta: {
+          profile: 'cli',
           enabled: false,
           source: 'default',
           env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -6105,6 +6114,7 @@ describe('setNotifyUserEnabled', () => {
           sidebar_multi_tab: true,
         },
         experimentalBeta: {
+          profile: 'cli',
           enabled: false,
           source: 'default',
           env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -6155,9 +6165,11 @@ describe('setNotifyUserEnabled', () => {
     await configStore().refreshServerMeta();
     expect(apiMock.setConfig).toHaveBeenCalledWith({
       experimental: {
-        context_inspector: true,
-        session_mentions: true,
-        sidebar_multi_tab: true,
+        cli: {
+          context_inspector: true,
+          session_mentions: true,
+          sidebar_multi_tab: true,
+        },
       },
     });
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
@@ -6175,6 +6187,7 @@ describe('setNotifyUserEnabled', () => {
       dangerousBypassAuth: false,
       experimentalFlags: { context_inspector: false },
       experimentalBeta: {
+        profile: 'cli',
         enabled: false,
         source: 'default',
         env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -6208,6 +6221,7 @@ describe('setNotifyUserEnabled', () => {
     const { useContextInspector } = await import('@moonshot-ai/app-core');
     useContextInspector().setContextInspectorEnabled(false);
     configStore().experimentalBeta = {
+      profile: 'cli',
       enabled: false,
       source: 'default',
       env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -6242,6 +6256,7 @@ describe('setNotifyUserEnabled', () => {
       dangerousBypassAuth: false,
       experimentalFlags: { notify_user: false },
       experimentalBeta: {
+        profile: 'cli',
         enabled: false,
         source: 'config',
         env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -6272,6 +6287,7 @@ describe('setNotifyUserEnabled', () => {
       dangerousBypassAuth: false,
       experimentalFlags: { notify_user: true },
       experimentalBeta: {
+        profile: 'cli',
         enabled: true,
         source: 'config',
         env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -6343,16 +6359,18 @@ describe('setNotifyUserEnabled', () => {
     let serverContextConfigured = false;
     let serverMentionsConfigured = false;
 
-    apiMock.setConfig.mockImplementation(async (patch: { experimental?: Record<string, boolean> }) => {
-      if (patch.experimental?.['context_inspector'] === true) {
-        serverContextConfigured = true;
-        localStorage.setItem(STORAGE_KEYS.sessionMentions, '1');
-      }
-      if (patch.experimental?.['session_mentions'] === true) {
-        serverMentionsConfigured = true;
-      }
-      return { providers: {} };
-    });
+    apiMock.setConfig.mockImplementation(
+      async (patch: { experimental?: { cli?: Record<string, boolean> } }) => {
+        if (patch.experimental?.cli?.['context_inspector'] === true) {
+          serverContextConfigured = true;
+          localStorage.setItem(STORAGE_KEYS.sessionMentions, '1');
+        }
+        if (patch.experimental?.cli?.['session_mentions'] === true) {
+          serverMentionsConfigured = true;
+        }
+        return { providers: {} };
+      },
+    );
 
     apiMock.getMeta.mockImplementation(async () => ({
       serverVersion: '1.0.0',
@@ -6363,6 +6381,7 @@ describe('setNotifyUserEnabled', () => {
         session_mentions: serverMentionsConfigured,
       },
       experimentalBeta: {
+        profile: 'cli',
         enabled: false,
         source: 'default',
         env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -6401,10 +6420,10 @@ describe('setNotifyUserEnabled', () => {
     await configStore().refreshServerMeta();
 
     expect(apiMock.setConfig).toHaveBeenNthCalledWith(1, {
-      experimental: { context_inspector: true },
+      experimental: { cli: { context_inspector: true } },
     });
     expect(apiMock.setConfig).toHaveBeenNthCalledWith(2, {
-      experimental: { session_mentions: true },
+      experimental: { cli: { session_mentions: true } },
     });
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
     expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
@@ -6418,12 +6437,14 @@ describe('setNotifyUserEnabled', () => {
     let towerEnabled = true;
     let failMeta = false;
 
-    apiMock.setConfig.mockImplementation(async (patch: { experimental?: Record<string, boolean> }) => {
-      if (patch.experimental?.['tower'] !== undefined) {
-        towerEnabled = patch.experimental['tower'];
-      }
-      return { providers: {} };
-    });
+    apiMock.setConfig.mockImplementation(
+      async (patch: { experimental?: { cli?: Record<string, boolean> } }) => {
+        if (patch.experimental?.cli?.['tower'] !== undefined) {
+          towerEnabled = patch.experimental.cli['tower'];
+        }
+        return { providers: {} };
+      },
+    );
 
     apiMock.getMeta.mockImplementation(async () => {
       if (failMeta) {
@@ -6439,6 +6460,7 @@ describe('setNotifyUserEnabled', () => {
           tower: towerEnabled,
         },
         experimentalBeta: {
+          profile: 'cli',
           enabled: false,
           source: 'default',
           env: 'KIMI_CODE_EXPERIMENTAL_FLAG',

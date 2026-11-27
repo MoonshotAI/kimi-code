@@ -199,7 +199,7 @@ describe('TowerFeature — config-sourced flag assembly', () => {
   }
 
   it('assembles a config-sourced flag at startup', async () => {
-    const { flags } = await makeRealFlags({ experimental: { [TOWER_FLAG_ID]: true } });
+    const { flags } = await makeRealFlags({ experimental: { cli: { [TOWER_FLAG_ID]: true } } });
     const host = createScopedTestHost([[IFlagService, flags]]);
 
     expect(isTowerFeatureAssembled(flags)).toBe(true);
@@ -224,7 +224,7 @@ describe('TowerFeature — config-sourced flag assembly', () => {
     expect(manager.units().map((unit) => unit.name)).toEqual(['tower']);
     expect(isTowerFeatureAssembled(flags)).toBe(false);
 
-    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    await config.set(EXPERIMENTAL_SECTION, { cli: { [TOWER_FLAG_ID]: true } });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(flags.enabled(TOWER_FLAG_ID)).toBe(true);
@@ -282,7 +282,7 @@ describe('tower flag — resolution', () => {
 
   it('uses config unless the dedicated env overrides it', async () => {
     const configured = makeFlags();
-    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    await configured.config.set(EXPERIMENTAL_SECTION, { cli: { [TOWER_FLAG_ID]: true } });
     expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
       enabled: true,
       source: 'config',
@@ -290,7 +290,7 @@ describe('tower flag — resolution', () => {
     });
 
     const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false' });
-    await overridden.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    await overridden.config.set(EXPERIMENTAL_SECTION, { cli: { [TOWER_FLAG_ID]: true } });
     expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
       enabled: false,
       source: 'env',
@@ -306,7 +306,7 @@ describe('tower flag — resolution', () => {
     });
 
     const betaConfigured = makeFlags();
-    await betaConfigured.config.set(EXPERIMENTAL_SECTION, { beta: true });
+    await betaConfigured.config.set(EXPERIMENTAL_SECTION, { cli: { beta: true } });
     expect(betaConfigured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
       enabled: false,
       source: 'default',

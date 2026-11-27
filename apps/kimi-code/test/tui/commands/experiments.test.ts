@@ -41,6 +41,7 @@ function makeHost() {
         feature({ enabled: false, active: false, source: 'config', configValue: false }),
       ]),
       getExperimentalBetaState: vi.fn(async () => ({
+        profile: 'cli' as const,
         enabled: false,
         source: 'default' as const,
         env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -87,7 +88,7 @@ describe('experimental feature command handlers', () => {
     await applyExperimentalFeatureChanges(host, [{ id: 'prompt_prediction', enabled: false }]);
 
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      experimental: { prompt_prediction: false },
+      experimental: { cli: { prompt_prediction: false } },
     });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('prompt_prediction')).toBe(false);
@@ -121,7 +122,7 @@ describe('experimental feature command handlers', () => {
       ]);
       await applyExperimentalFeatureChanges(host, [{ id: 'notify_user', enabled }]);
       expect(host.harness.setConfig).toHaveBeenCalledWith({
-        experimental: { notify_user: enabled },
+        experimental: { cli: { notify_user: enabled } },
       });
       expect(isExperimentalFlagEnabled('notify_user')).toBe(enabled);
       expect(host.harness.reloadSession).not.toHaveBeenCalled();

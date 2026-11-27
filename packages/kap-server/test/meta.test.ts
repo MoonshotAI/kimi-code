@@ -93,7 +93,7 @@ describe('/api/v1/meta experimental_flags', () => {
   });
 
   it('reports a config-enabled flag from the very first response', async () => {
-    const base = await boot('[experimental]\nnotify_user = true\n');
+    const base = await boot('[experimental.cli]\nnotify_user = true\n');
     const flags = await getMetaFlags(base);
     expect(flags['notify_user']).toBe(true);
   });
@@ -105,14 +105,14 @@ describe('/api/v1/meta experimental_flags', () => {
     expect(flags['notify_user']).toBe(true);
   });
 
-  it('flips live when the [experimental] config section is written via POST /config', async () => {
+  it('flips live when the [experimental.cli] config section is written via POST /config', async () => {
     const base = await boot();
     expect((await getMetaFlags(base))['notify_user']).toBe(false);
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'notify_user': true } }),
+      body: JSON.stringify({ experimental: { cli: { notify_user: true } } }),
     });
     expect(res.status).toBe(200);
 
@@ -126,7 +126,7 @@ describe('/api/v1/meta experimental_flags', () => {
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'notify_user': false } }),
+      body: JSON.stringify({ experimental: { cli: { notify_user: false } } }),
     });
     expect(res.status).toBe(200);
 
@@ -134,10 +134,11 @@ describe('/api/v1/meta experimental_flags', () => {
   });
 
   it('publishes surface-scoped experimental_beta and experimental_features and applies beta master non-destructively', async () => {
-    const base = await boot('[experimental]\nprompt_prediction = false\n');
+    const base = await boot('[experimental.cli]\nprompt_prediction = false\n[experimental.desktop]\nbeta = true\nnotify_user = true\n');
     const initialRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
     const initialBody = (await initialRes.json()) as MetaBody;
     expect(initialBody.data.experimental_beta).toEqual({
+      profile: 'cli',
       enabled: false,
       source: 'default',
       env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -145,23 +146,24 @@ describe('/api/v1/meta experimental_flags', () => {
     const initialIds = (initialBody.data.experimental_features ?? []).map((f) => f.id);
     expect(initialIds).toContain('context_inspector');
     expect(initialIds).toContain('prompt_prediction');
-    expect(initialIds).toContain('notify_user_app');
+    expect(initialIds).toContain('notify_user');
     expect(initialIds).toContain('session_mentions');
     expect(initialIds).toContain('sidebar_multi_tab');
     expect(initialIds).toContain('tower');
-    expect(initialIds).not.toContain('notify_user');
     expect(initialIds).not.toContain('wait_for');
+    expect(initialBody.data.experimental_flags?.['notify_user']).toBe(false);
 
     const enableBetaRes = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { beta: true, prompt_prediction: false } }),
+      body: JSON.stringify({ experimental: { cli: { beta: true, prompt_prediction: false } } }),
     });
     expect(enableBetaRes.status).toBe(200);
 
     const betaRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
     const betaBody = (await betaRes.json()) as MetaBody;
     expect(betaBody.data.experimental_beta).toMatchObject({
+      profile: 'cli',
       enabled: true,
       source: 'config',
       config_value: true,
@@ -169,8 +171,8 @@ describe('/api/v1/meta experimental_flags', () => {
     const promptPredictionFeature = betaBody.data.experimental_features?.find(
       (f) => f.id === 'prompt_prediction',
     );
-    const notifyAppFeature = betaBody.data.experimental_features?.find(
-      (f) => f.id === 'notify_user_app',
+    const notifyFeature = betaBody.data.experimental_features?.find(
+      (f) => f.id === 'notify_user',
     );
     const towerFeature = betaBody.data.experimental_features?.find((f) => f.id === 'tower');
     expect(promptPredictionFeature).toMatchObject({
@@ -181,7 +183,7 @@ describe('/api/v1/meta experimental_flags', () => {
       source: 'beta-config',
       config_value: false,
     });
-    expect(notifyAppFeature).toMatchObject({
+    expect(notifyFeature).toMatchObject({
       stage: 'experimental',
       effect_timing: 'next-session',
       enabled: false,
@@ -199,9 +201,16 @@ describe('/api/v1/meta experimental_flags', () => {
     const enableTowerRes = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { tower: true } }),
+      body: JSON.stringify({ experimental: { cli: { tower: true } } }),
     });
     expect(enableTowerRes.status).toBe(200);
+    const echoedConfig = (await enableTowerRes.json()) as {
+      data: { experimental?: Record<string, Record<string, boolean>> };
+    };
+    expect(echoedConfig.data.experimental).toEqual({
+      cli: { beta: true, prompt_prediction: false, tower: true },
+      desktop: { beta: true, notify_user: true },
+    });
 
     const pendingTowerRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
     const pendingTowerBody = (await pendingTowerRes.json()) as MetaBody;
@@ -253,6 +262,7 @@ describe('/api/v1/meta legacy master env tower migration', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as MetaBody;
     expect(body.data.experimental_beta).toMatchObject({
+      profile: 'desktop',
       enabled: true,
       source: 'env',
     });

@@ -795,6 +795,13 @@ export interface AppProviderCopyResult {
   providers: string[];
 }
 
+export type ExperimentalProfile = 'cli' | 'desktop';
+
+export interface AppExperimentalConfig {
+  cli?: Record<string, boolean>;
+  desktop?: Record<string, boolean>;
+}
+
 export interface AppConfig {
   providers: Record<string, AppConfigProvider>;
   defaultProvider?: string;
@@ -820,7 +827,7 @@ export interface AppConfig {
   extraSkillDirs?: string[];
   loopControl?: unknown;
   background?: unknown;
-  experimental?: Record<string, boolean>;
+  experimental?: AppExperimentalConfig;
   telemetry?: boolean;
   disableFeedbackSurvey?: boolean;
   raw?: Record<string, unknown>;
@@ -1039,6 +1046,7 @@ export interface RemoteControlStatus {
 }
 
 export interface ServerExperimentalBeta {
+  profile: ExperimentalProfile;
   enabled: boolean;
   source: 'env' | 'config' | 'default';
   env: string;

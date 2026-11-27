@@ -26,10 +26,10 @@ Tower 是一种实验性多 Agent 协作模式。它把较大的开发任务拆�
 
 Tower 默认关闭，可以通过以下方式启用实验功能。
 
-如需长期启用，在 `config.toml`（默认位于 `~/.kimi-code/config.toml`，详见 [配置文件](../configuration/config-files.md)）中加入：
+如需长期启用，在 `config.toml`（默认位于 `~/.kimi-code/config.toml`——`kimi` / `kimi web` 使用 `[experimental.cli]`，桌面端使用 `[experimental.desktop]`，详见 [配置文件](../configuration/config-files.md#experimental)）中加入：
 
 ```toml
-[experimental]
+[experimental.cli]
 tower = true
 ```
 

@@ -12,7 +12,7 @@ Kimi Code CLI 以交互式 TUI 运行，核心由输入框、对话视图和状�
 
 主 Agent 正常完成轮次后，Kimi Code CLI 可以在空输入框中显示下一条提示词建议。建议通过旁路请求生成，不会自动提交。
 
-启动前设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1`、在 `config.toml` 中写入 `[experimental] prompt_prediction = true`，或在 TUI 的 `/lab` 或桌面端和 Web UI 的设置 > 实验室中开启**提示词预测**（或**开启全部 Beta 功能**）即可启用。按 `Tab` 或 `→` 填入完整建议，编辑后按 `Enter` 提交。输入其他内容时建议暂时隐藏，清空输入后重新显示，可再次填入；开始新轮次或切换会话会清除建议。已取消、失败或阻塞的轮次不会生成建议。
+启动前设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1`、在 `config.toml` 的 `[experimental.cli]`（或 `[experimental.desktop]`）下写入 `prompt_prediction = true`，或在 TUI 的 `/lab` 或桌面端和 Web UI 的设置 > 实验室中开启**提示词预测**（或**开启全部 Beta 功能**）即可启用。按 `Tab` 或 `→` 填入完整建议，编辑后按 `Enter` 提交。输入其他内容时建议暂时隐藏，清空输入后重新显示，可再次填入；开始新轮次或切换会话会清除建议。已取消、失败或阻塞的轮次不会生成建议。
 
 ## 粘贴图片与视频
 

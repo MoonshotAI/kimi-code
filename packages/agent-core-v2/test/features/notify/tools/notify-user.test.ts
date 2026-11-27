@@ -6,11 +6,8 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import {
-  NOTIFY_USER_APP_FLAG_ENV,
-  NOTIFY_USER_APP_FLAG_ID,
   NOTIFY_USER_FLAG_ENV,
   NOTIFY_USER_FLAG_ID,
-  notifyUserAppFlag,
   notifyUserFlag,
 } from '#/features/notify/flag';
 import {
@@ -45,7 +42,7 @@ describe('NotifyUserTool', () => {
   beforeEach(async () => {
     telemetry = [];
     ctx = createTestAgent({ telemetry: recordingTelemetry(telemetry) });
-    ctx.get(IFlagService).setConfigOverrides({ notify_user_app: true });
+    ctx.get(IFlagService).setConfigOverrides({ notify_user: true });
     Object.assign(ctx.get(IBootstrapService).args, {
       uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
       surface: 'desktop',
@@ -90,17 +87,12 @@ describe('NotifyUserTool', () => {
     ]);
   });
 
-  it('is Experimental with separate config keys for TUI vs desktop and web', () => {
+  it('is Experimental across tui, desktop, and web using canonical notify_user flag', () => {
     expect(ctx.get(IAgentToolPolicyService).isToolActive(NOTIFY_USER_TOOL_NAME)).toBe(true);
     expect(notifyUserFlag.id).toBe(NOTIFY_USER_FLAG_ID);
     expect(notifyUserFlag.env).toBe(NOTIFY_USER_FLAG_ENV);
     expect(notifyUserFlag.stages).toEqual({
       tui: 'experimental',
-    });
-    expect(notifyUserAppFlag.id).toBe(NOTIFY_USER_APP_FLAG_ID);
-    expect(notifyUserAppFlag.env).toBe(NOTIFY_USER_APP_FLAG_ENV);
-    expect(notifyUserAppFlag.fallbackEnv).toBe(NOTIFY_USER_FLAG_ENV);
-    expect(notifyUserAppFlag.stages).toEqual({
       desktop: 'experimental',
       web: 'experimental',
     });
@@ -110,16 +102,13 @@ describe('NotifyUserTool', () => {
     flags.setConfigOverrides({});
     expect(notifyUserAvailable(flags, bootstrap)).toBe(false);
 
-    flags.setConfigOverrides({ notify_user: true, beta: true });
-    expect(notifyUserAvailable(flags, bootstrap)).toBe(false);
-
-    flags.setConfigOverrides({ notify_user_app: true });
-    expect(notifyUserAvailable(flags, bootstrap)).toBe(true);
-
-    Object.assign(bootstrap.args, { surface: 'tui' });
+    flags.setConfigOverrides({ beta: true });
     expect(notifyUserAvailable(flags, bootstrap)).toBe(false);
 
     flags.setConfigOverrides({ notify_user: true });
+    expect(notifyUserAvailable(flags, bootstrap)).toBe(true);
+
+    Object.assign(bootstrap.args, { surface: 'tui' });
     expect(notifyUserAvailable(flags, bootstrap)).toBe(true);
   });
 
@@ -274,7 +263,7 @@ describe('NotifyUserTool', () => {
   it('acknowledges without displaying after the feature is disabled', async () => {
     const tool = ctx.get(INotifyUserTool);
     const execution = tool.resolveExecution({ title: 'Starting', message: 'Starting the checks.' });
-    ctx.get(IFlagService).setConfigOverrides({ notify_user_app: false });
+    ctx.get(IFlagService).setConfigOverrides({ notify_user: false });
     const disabled = tool.resolveExecution({ title: 'Hidden', message: 'Should not appear.' });
     if (!('execute' in disabled)) throw new Error('Expected executable tool');
     expect(await disabled.execute({ signal } as never)).toEqual({

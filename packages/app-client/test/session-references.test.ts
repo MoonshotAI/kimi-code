@@ -138,7 +138,7 @@ describe('session mentions lab switch', () => {
 
     expect(await configStore().setExperimentalFlag('session_mentions', true)).toBe(true);
 
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { session_mentions: true } });
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { cli: { session_mentions: true } } });
     expect(localStorage.getItem('kimi-web.session-mentions')).toBeNull();
     expect(client.sessionMentionCandidates.value.map((candidate) => candidate.id)).toEqual(['loaded']);
     expect((await client.searchSessionMentions('found', { signal })).map((candidate) => candidate.id)).toEqual(['found']);

@@ -4,6 +4,7 @@ import { maybe } from '../helpers.js';
 import type { ServiceContract } from '../types.js';
 
 export const betaMasterSwitchStateSchema = z.object({
+  profile: z.enum(['cli', 'desktop']),
   enabled: z.boolean(),
   source: z.enum(['env', 'config', 'default']),
   env: z.string(),

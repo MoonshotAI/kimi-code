@@ -114,14 +114,16 @@ export type {
   ImageCompressionTelemetry,
 } from '#/image';
 
-export { BETA_MASTER_CONFIG_KEY, MASTER_ENV } from '#/flag';
+export { BETA_MASTER_CONFIG_KEY, EXPERIMENTAL_PROFILES, MASTER_ENV } from '#/flag';
 export type {
   BetaMasterSwitchSource,
   BetaMasterSwitchState,
+  ExperimentalBucketConfig,
   ExperimentalEffectTiming,
   ExperimentalFeatureState,
   ExperimentalFlagMap,
   ExperimentalFlagSource,
+  ExperimentalProfile,
   ExperimentalStage,
   ExperimentalSurface,
   FlagDefinition,

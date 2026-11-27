@@ -107,6 +107,7 @@ export async function registerApiV1Routes(
           await core.accessor.get(IConfigService).ready;
           const beta = core.accessor.get(IFlagService).betaState();
           return {
+            profile: beta.profile,
             enabled: beta.enabled,
             source: beta.source,
             env: beta.env,

@@ -26,7 +26,7 @@ async function flush(): Promise<void> {
 }
 
 describe('SettingsDialog Lab two-tier layout', () => {
-  it('renders Beta (context_inspector, prompt_prediction) and Experimental (notify_user_app, session_mentions, sidebar_multi_tab, tower)', async () => {
+  it('renders Beta (context_inspector, prompt_prediction) and Experimental (notify_user, session_mentions, sidebar_multi_tab, tower)', async () => {
     vi.stubGlobal('kimiDesktop', undefined);
     const setConfig = vi.fn().mockResolvedValue({ providers: {} });
     const getMeta = vi.fn().mockResolvedValue(null);
@@ -51,6 +51,7 @@ describe('SettingsDialog Lab two-tier layout', () => {
     } as never);
 
     configStore().experimentalBeta = {
+      profile: 'desktop',
       enabled: false,
       source: 'default',
       env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -80,10 +81,10 @@ describe('SettingsDialog Lab two-tier layout', () => {
         source: 'default',
       },
       {
-        id: 'notify_user_app',
+        id: 'notify_user',
         title: 'Progress updates',
         description: 'Progress updates',
-        env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP',
+        env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
         stage: 'experimental',
         effectTiming: 'next-session',
         enabled: false,
@@ -129,7 +130,7 @@ describe('SettingsDialog Lab two-tier layout', () => {
     configStore().experimentalFlags = {
       context_inspector: false,
       prompt_prediction: false,
-      notify_user_app: false,
+      notify_user: false,
       session_mentions: false,
       sidebar_multi_tab: false,
       tower: false,
@@ -205,7 +206,7 @@ describe('SettingsDialog Lab two-tier layout', () => {
     betaMasterSwitch.click();
     await flush();
 
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { beta: true } });
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { desktop: { beta: true } } });
     expect(contextSwitch.getAttribute('aria-checked')).toBe('true');
     expect(contextSwitch.disabled).toBe(true);
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('true');
@@ -228,24 +229,30 @@ describe('SettingsDialog Lab two-tier layout', () => {
 
     contextSwitch.click();
     await flush();
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { context_inspector: true } });
+    expect(setConfig).toHaveBeenCalledWith({
+      experimental: { desktop: { context_inspector: true } },
+    });
     expect(contextSwitch.getAttribute('aria-checked')).toBe('true');
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
 
     notifySwitch.click();
     await flush();
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { notify_user_app: true } });
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { desktop: { notify_user: true } } });
     expect(notifySwitch.getAttribute('aria-checked')).toBe('true');
 
     sessionMentionsSwitch.click();
     await flush();
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { session_mentions: true } });
+    expect(setConfig).toHaveBeenCalledWith({
+      experimental: { desktop: { session_mentions: true } },
+    });
     expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('true');
     expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
 
     sidebarTabsSwitch.click();
     await flush();
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { sidebar_multi_tab: true } });
+    expect(setConfig).toHaveBeenCalledWith({
+      experimental: { desktop: { sidebar_multi_tab: true } },
+    });
     expect(sidebarTabsSwitch.getAttribute('aria-checked')).toBe('true');
     expect(useSidebarTabs().sidebarTabs.value).toBe(true);
     expect(localStorage.getItem(STORAGE_KEYS.sidebarMultiTab)).toBeNull();
@@ -253,7 +260,9 @@ describe('SettingsDialog Lab two-tier layout', () => {
     promptPredictionSwitch.click();
     await flush();
 
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { prompt_prediction: true } });
+    expect(setConfig).toHaveBeenCalledWith({
+      experimental: { desktop: { prompt_prediction: true } },
+    });
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('true');
 
     configStore().experimentalFeatures = configStore().experimentalFeatures.map((feature) =>

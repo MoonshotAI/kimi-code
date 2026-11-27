@@ -7,11 +7,13 @@ import {
 } from '@moonshot-ai/app-core/composables';
 import type {
   AppConfig,
+  ExperimentalProfile,
   ServerExperimentalBeta,
   ServerExperimentalFeature,
 } from '@moonshot-ai/app-core/api';
 import {
   STORAGE_KEYS,
+  hasDesktopBridge,
   safeGetJson,
   safeGetString,
   safeRemove,
@@ -222,6 +224,10 @@ export const useConfigStore = defineStore('kimi.config', () => {
     }
   }
 
+  function activeExperimentalProfile(): ExperimentalProfile {
+    return experimentalBeta.value?.profile ?? (hasDesktopBridge() ? 'desktop' : 'cli');
+  }
+
   function enqueueLegacyLocalExperimentalMigration(patch: Record<string, boolean>): void {
     for (const [id, enabled] of Object.entries(patch)) {
       if (enabled) pendingLegacyMigrationPatch[id] = true;
@@ -251,7 +257,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
             }
           }
           if (Object.keys(activePatch).length === 0) break;
-          const saved = await updateConfig({ experimental: activePatch });
+          const profile = activeExperimentalProfile();
+          const saved = await updateConfig({ experimental: { [profile]: activePatch } });
           if (!saved || epochAtStart !== storeEpoch) break;
           for (const key of keysToRemove) {
             safeRemove(key);
@@ -346,7 +353,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
   }
 
   async function setExperimentalFlag(id: string, on: boolean): Promise<boolean> {
-    const saved = await updateConfig({ experimental: { [id]: on } });
+    const profile = activeExperimentalProfile();
+    const saved = await updateConfig({ experimental: { [profile]: { [id]: on } } });
     if (!saved) return false;
     const existing = experimentalFeatures.value.find((feature) => feature.id === id);
     syncLegacyLocalExperimentalKey(id, on, existing !== undefined);
@@ -378,10 +386,12 @@ export const useConfigStore = defineStore('kimi.config', () => {
 
   async function setBetaFeaturesEnabled(on: boolean): Promise<boolean> {
     if (experimentalBeta.value === null) return false;
-    const saved = await updateConfig({ experimental: { beta: on } });
+    const profile = activeExperimentalProfile();
+    const saved = await updateConfig({ experimental: { [profile]: { beta: on } } });
     if (!saved) return false;
     metaCommittedGeneration = ++metaRequestGeneration;
     experimentalBeta.value = {
+      profile,
       enabled: on,
       source: 'config',
       env: experimentalBeta.value?.env ?? 'KIMI_CODE_EXPERIMENTAL_FLAG',
@@ -406,22 +416,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
     return true;
   }
 
-  function resolveNotifyUserFlagId(): string {
-    if (experimentalFeatures.value.some((feature) => feature.id === 'notify_user_app')) {
-      return 'notify_user_app';
-    }
-    if (
-      experimentalFeatures.value.length === 0 &&
-      !('notify_user_app' in experimentalFlags.value) &&
-      'notify_user' in experimentalFlags.value
-    ) {
-      return 'notify_user';
-    }
-    return 'notify_user_app';
-  }
-
   async function setNotifyUserEnabled(on: boolean): Promise<boolean> {
-    return setExperimentalFlag(resolveNotifyUserFlagId(), on);
+    return setExperimentalFlag('notify_user', on);
   }
 
   async function setPromptPredictionEnabled(on: boolean): Promise<boolean> {

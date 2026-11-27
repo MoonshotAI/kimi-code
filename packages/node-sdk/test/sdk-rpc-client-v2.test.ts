@@ -2639,7 +2639,7 @@ key = "${titleOAuthRef.key}"
           },
           models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
           defaultModel: 'stub',
-          experimental: { notify_user: enabled },
+          experimental: { cli: { notify_user: enabled } },
         });
         await client.createSession({ id: 'ses_notify', workDir });
         const session = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
@@ -2680,7 +2680,7 @@ key = "${titleOAuthRef.key}"
         ).toBe(originalPrompt);
         const originalTools = structuredClone(main.accessor.get(IAgentToolRegistryService).list());
         for (const [index, nextEnabled] of [!enabled, enabled, !enabled].entries()) {
-          await client.setConfig({ experimental: { notify_user: nextEnabled } });
+          await client.setConfig({ experimental: { cli: { notify_user: nextEnabled } } });
           let current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
           let currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
           expect(currentMain.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(
@@ -2729,7 +2729,7 @@ key = "${titleOAuthRef.key}"
           );
         }
         await client.createSession({ id: 'ses_notify_fresh', workDir });
-        await client.setConfig({ experimental: { notify_user: enabled } });
+        await client.setConfig({ experimental: { cli: { notify_user: enabled } } });
         await client.getStatus({ sessionId: 'ses_notify_fresh' });
         const fresh = getLiveSessionById(client.engineAccessor, 'ses_notify_fresh')!
           .accessor.get(IAgentLifecycleService)
@@ -2754,7 +2754,7 @@ key = "${titleOAuthRef.key}"
             JSON.stringify(fresh.accessor.get(IAgentToolRegistryService).list()),
           ).not.toContain('NotifyUser');
         }
-        await client.setConfig({ experimental: { notify_user: !enabled } });
+        await client.setConfig({ experimental: { cli: { notify_user: !enabled } } });
         const legacy = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
         await legacy.accessor
           .get(IAtomicDocumentStore)
@@ -2773,10 +2773,9 @@ key = "${titleOAuthRef.key}"
     30_000,
   );
 
-  it('isolates CLI notify_user and desktop notify_user_app in shared config.toml', async () => {
+  it('isolates [experimental.cli] notify_user and [experimental.desktop] notify_user in shared config.toml', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP', '');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-home-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-work-'));
     tempDirs.push(homeDir, workDir);
@@ -2796,7 +2795,7 @@ key = "${titleOAuthRef.key}"
         },
         models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
         defaultModel: 'stub',
-        experimental: { notify_user: true, notify_user_app: false },
+        experimental: { cli: { notify_user: true }, desktop: { notify_user: false } },
       });
       await cliClient.createSession({ id: 'ses_notify_cli', workDir });
       const lifecycle = getLiveSessionById(cliClient.engineAccessor, 'ses_notify_cli')!.accessor.get(

@@ -156,8 +156,11 @@ GET /api/v1/config response 200.data.default_permission_mode: string optional
 GET /api/v1/config response 200.data.default_plan_mode: boolean optional
 GET /api/v1/config response 200.data.default_provider: string optional
 GET /api/v1/config response 200.data.disable_feedback_survey: boolean optional
-GET /api/v1/config response 200.data.experimental: object optional
-GET /api/v1/config response 200.data.experimental{*}: boolean optional
+GET /api/v1/config response 200.data.experimental.cli: object optional
+GET /api/v1/config response 200.data.experimental.cli{*}: boolean optional
+GET /api/v1/config response 200.data.experimental.desktop: object optional
+GET /api/v1/config response 200.data.experimental.desktop{*}: boolean optional
+GET /api/v1/config response 200.data.experimental: object closed optional
 GET /api/v1/config response 200.data.extra_skill_dirs: array optional
 GET /api/v1/config response 200.data.extra_skill_dirs[]: string
 GET /api/v1/config response 200.data.hooks: array optional
@@ -327,6 +330,7 @@ GET /api/v1/meta response 200.data.dangerous_bypass_auth: boolean
 GET /api/v1/meta response 200.data.experimental_beta.config_value: boolean optional
 GET /api/v1/meta response 200.data.experimental_beta.enabled: boolean
 GET /api/v1/meta response 200.data.experimental_beta.env: string minLength=1
+GET /api/v1/meta response 200.data.experimental_beta.profile: enum "cli"|"desktop"
 GET /api/v1/meta response 200.data.experimental_beta.source: enum "config"|"default"|"env"
 GET /api/v1/meta response 200.data.experimental_beta: object closed optional
 GET /api/v1/meta response 200.data.experimental_features: array optional
@@ -1525,8 +1529,11 @@ POST /api/v1/config request.default_permission_mode: string optional
 POST /api/v1/config request.default_plan_mode: boolean optional
 POST /api/v1/config request.default_provider: string optional
 POST /api/v1/config request.disable_feedback_survey: boolean optional
-POST /api/v1/config request.experimental: object optional
-POST /api/v1/config request.experimental{*}: boolean optional
+POST /api/v1/config request.experimental.cli: object optional
+POST /api/v1/config request.experimental.cli{*}: boolean optional
+POST /api/v1/config request.experimental.desktop: object optional
+POST /api/v1/config request.experimental.desktop{*}: boolean optional
+POST /api/v1/config request.experimental: object closed optional
 POST /api/v1/config request.extra_skill_dirs: array optional
 POST /api/v1/config request.extra_skill_dirs[]: string
 POST /api/v1/config request.hooks: array optional
@@ -1555,8 +1562,11 @@ POST /api/v1/config response 200<code=0>.data.default_permission_mode: string op
 POST /api/v1/config response 200<code=0>.data.default_plan_mode: boolean optional
 POST /api/v1/config response 200<code=0>.data.default_provider: string optional
 POST /api/v1/config response 200<code=0>.data.disable_feedback_survey: boolean optional
-POST /api/v1/config response 200<code=0>.data.experimental: object optional
-POST /api/v1/config response 200<code=0>.data.experimental{*}: boolean optional
+POST /api/v1/config response 200<code=0>.data.experimental.cli: object optional
+POST /api/v1/config response 200<code=0>.data.experimental.cli{*}: boolean optional
+POST /api/v1/config response 200<code=0>.data.experimental.desktop: object optional
+POST /api/v1/config response 200<code=0>.data.experimental.desktop{*}: boolean optional
+POST /api/v1/config response 200<code=0>.data.experimental: object closed optional
 POST /api/v1/config response 200<code=0>.data.extra_skill_dirs: array optional
 POST /api/v1/config response 200<code=0>.data.extra_skill_dirs[]: string
 POST /api/v1/config response 200<code=0>.data.hooks: array optional
@@ -4153,8 +4163,11 @@ ws server message session_event<config>.config.default_permission_mode: string o
 ws server message session_event<config>.config.default_plan_mode: boolean optional
 ws server message session_event<config>.config.default_provider: string optional
 ws server message session_event<config>.config.disable_feedback_survey: boolean optional
-ws server message session_event<config>.config.experimental: object optional
-ws server message session_event<config>.config.experimental{*}: boolean optional
+ws server message session_event<config>.config.experimental.cli: object optional
+ws server message session_event<config>.config.experimental.cli{*}: boolean optional
+ws server message session_event<config>.config.experimental.desktop: object optional
+ws server message session_event<config>.config.experimental.desktop{*}: boolean optional
+ws server message session_event<config>.config.experimental: object closed optional
 ws server message session_event<config>.config.extra_skill_dirs: array optional
 ws server message session_event<config>.config.extra_skill_dirs[]: string
 ws server message session_event<config>.config.hooks: array optional

@@ -36,6 +36,7 @@ export const metaFeatureSchema = z.object({
 export type MetaFeature = z.infer<typeof metaFeatureSchema>;
 
 export const metaExperimentalBetaSchema = z.object({
+  profile: z.enum(['cli', 'desktop']),
   enabled: z.boolean(),
   source: z.enum(['env', 'config', 'default']),
   env: z.string().min(1),
