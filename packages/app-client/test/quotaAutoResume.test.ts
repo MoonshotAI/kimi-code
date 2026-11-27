@@ -9,8 +9,9 @@ import type {
   PromptSubmission,
   PromptSubmitResult,
 } from '@moonshot-ai/app-core/api';
-import { MANAGED_KIMI_CODE_PROVIDER_ID } from '@moonshot-ai/app-core/api';
+import { DaemonApiError, MANAGED_KIMI_CODE_PROVIDER_ID } from '@moonshot-ai/app-core/api';
 import type { ConversationError, ConversationTurnHeader } from '@moonshot-ai/app-core/conversation';
+import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import {
   createQuotaAutoResume,
   isManagedQuotaError,
@@ -18,7 +19,9 @@ import {
   QUOTA_AUTO_RESUME_GRACE_MS,
   QUOTA_AUTO_RESUME_MAX_WAIT_MS,
   QUOTA_AUTO_RESUME_MIN_JITTER_MS,
+  QUOTA_AUTO_RESUME_RETRY_DELAYS_MS,
 } from '../src/client/quotaAutoResume';
+import { isLocalPromptId, stablePromptId } from '../src/client/promptId';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { agentState } from './agentFrames';
 
@@ -41,31 +44,40 @@ function quotaOk(
 
 function controllerRig(overrides: {
   enabled?: boolean;
-  managed?: boolean;
+  managed?: boolean | ((sessionId: string) => boolean | Promise<boolean>);
   usages?: ManagedQuotaResult[];
   ready?: () => Promise<boolean>;
+  submit?: (sessionId: string, input: { turnId: string; resetAt: string | null; promptId: string }) => Promise<void>;
+  onGiveUp?: (sessionId: string, error: unknown) => void;
 } = {}) {
   let enabled = overrides.enabled ?? true;
   const usageQueue = [...(overrides.usages ?? [])];
-  const getUsage = vi.fn(async (): Promise<ManagedQuotaResult> => {
+  const getUsage = vi.fn(async (_sessionId: string): Promise<ManagedQuotaResult> => {
     return usageQueue.length > 0 ? usageQueue.shift()! : quotaOk({ limit5h: { usedRatio: 0.2 } });
   });
   const checkSessionReady = vi.fn(overrides.ready ?? (async () => true));
-  const submitResume = vi.fn(async () => {});
+  const submitResume = vi.fn(overrides.submit ?? (async () => {}));
+  const isManagedKimiSession = vi.fn((sessionId: string) =>
+    typeof overrides.managed === 'function' ? overrides.managed(sessionId) : (overrides.managed ?? true),
+  );
+  const onGiveUp = vi.fn(overrides.onGiveUp ?? (() => {}));
   const host = {
     enabled: () => enabled,
-    isManagedKimiSession: () => overrides.managed ?? true,
+    isManagedKimiSession,
     getUsage,
     checkSessionReady,
     submitResume,
+    onGiveUp,
     random: () => 0,
   };
   const controller = createQuotaAutoResume(host);
   return {
     controller,
     getUsage,
+    isManagedKimiSession,
     checkSessionReady,
     submitResume,
+    onGiveUp,
     setEnabled: (value: boolean) => {
       enabled = value;
     },
@@ -92,10 +104,23 @@ describe('isManagedQuotaError', () => {
   });
 });
 
+describe('stablePromptId', () => {
+  it('is deterministic, well-formed, and registered as a local prompt', () => {
+    const a = stablePromptId('kimi-quota-auto-resume:s1:t1');
+    const b = stablePromptId('kimi-quota-auto-resume:s1:t1');
+    const c = stablePromptId('kimi-quota-auto-resume:s1:t2');
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+    expect(a).toMatch(/^msg_[0-9a-f]{32}$/);
+    expect(isLocalPromptId(a)).toBe(true);
+  });
+});
+
 describe('createQuotaAutoResume', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(BASE_MS);
+    stubStorage();
   });
 
   afterEach(() => {
@@ -135,7 +160,11 @@ describe('createQuotaAutoResume', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(rig.checkSessionReady).toHaveBeenCalledWith('s1', 't1');
     expect(rig.submitResume).toHaveBeenCalledTimes(1);
-    expect(rig.submitResume).toHaveBeenCalledWith('s1', { turnId: 't1', resetAt });
+    expect(rig.submitResume).toHaveBeenCalledWith('s1', {
+      turnId: 't1',
+      resetAt,
+      promptId: expect.stringMatching(/^msg_[0-9a-f]{32}$/),
+    });
     expect(rig.controller.hasPending()).toBe(false);
   });
 
@@ -150,7 +179,11 @@ describe('createQuotaAutoResume', () => {
     expect(rig.submitResume).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
-    expect(rig.submitResume).toHaveBeenCalledWith('s1', { turnId: 't1', resetAt: reset7d });
+    expect(rig.submitResume).toHaveBeenCalledWith('s1', {
+      turnId: 't1',
+      resetAt: reset7d,
+      promptId: expect.stringMatching(/^msg_[0-9a-f]{32}$/),
+    });
   });
 
   it('falls back to 1m / 5m / 15m usage polling when resetAt is missing or usage fails', async () => {
@@ -173,7 +206,11 @@ describe('createQuotaAutoResume', () => {
     expect(rig.getUsage).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(third + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
     expect(rig.getUsage).toHaveBeenCalledTimes(4);
-    expect(rig.submitResume).toHaveBeenCalledWith('s1', { turnId: 't1', resetAt: null });
+    expect(rig.submitResume).toHaveBeenCalledWith('s1', {
+      turnId: 't1',
+      resetAt: null,
+      promptId: expect.stringMatching(/^msg_[0-9a-f]{32}$/),
+    });
   });
 
   it('keeps only the first pending session and never resumes twice in the same reset window', async () => {
@@ -191,7 +228,11 @@ describe('createQuotaAutoResume', () => {
 
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
     expect(rig.submitResume).toHaveBeenCalledTimes(1);
-    expect(rig.submitResume).toHaveBeenCalledWith('s1', { turnId: 't1', resetAt });
+    expect(rig.submitResume).toHaveBeenCalledWith('s1', {
+      turnId: 't1',
+      resetAt,
+      promptId: expect.stringMatching(/^msg_[0-9a-f]{32}$/),
+    });
 
     rig.controller.handleTurnFailed('s2', 't9', QUOTA_403);
     await flushAsync();
@@ -290,6 +331,178 @@ describe('createQuotaAutoResume', () => {
     expect(rig.submitResume).not.toHaveBeenCalled();
     expect(rig.controller.hasPending()).toBe(false);
   });
+
+  it('treats an empty usage payload as unknown and keeps polling instead of firing', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const rig = controllerRig({
+      usages: [quotaOk({}), quotaOk({ limit5h: { usedRatio: 1, resetAt } })],
+    });
+    rig.controller.handleTurnFailed('s1', 't1', QUOTA_403);
+    await flushAsync();
+    expect(rig.getUsage).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(QUOTA_AUTO_RESUME_MIN_JITTER_MS + 10_000);
+    expect(rig.submitResume).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(QUOTA_AUTO_RESUME_FALLBACK_DELAYS_MS[0]);
+    expect(rig.getUsage).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    expect(rig.submitResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not loop on null-reset resumes when usage keeps reporting quota available', async () => {
+    const rig = controllerRig({
+      usages: [
+        quotaOk({ limit5h: { usedRatio: 0.2 } }),
+        quotaOk({ limit5h: { usedRatio: 0.2 } }),
+        quotaOk({ limit5h: { usedRatio: 0.2 } }),
+      ],
+    });
+    rig.controller.handleTurnFailed('s1', 't1', QUOTA_403);
+    await vi.advanceTimersByTimeAsync(QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    expect(rig.submitResume).toHaveBeenCalledTimes(1);
+    expect(rig.submitResume.mock.calls[0]![1].resetAt).toBeNull();
+
+    rig.controller.handleTurnFailed('s1', 't2', QUOTA_403);
+    await flushAsync();
+    expect(rig.controller.hasPending()).toBe(false);
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+    expect(rig.submitResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('elects a single scheduler across tabs sharing a reset window', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    let lockTail: Promise<unknown> = Promise.resolve();
+    const request = vi.fn(<T,>(_name: string, _opts: { mode: string }, fn: () => Promise<T>): Promise<T> => {
+      const run = lockTail.then(fn, fn);
+      lockTail = run.catch(() => undefined);
+      return run;
+    });
+    vi.stubGlobal('navigator', { locks: { request } });
+    let releaseSubmit!: () => void;
+    let notifySubmitStarted!: () => void;
+    const submitStarted = new Promise<void>((resolve) => {
+      notifySubmitStarted = resolve;
+    });
+    const submitResume = vi.fn(async () => {
+      notifySubmitStarted();
+      await new Promise<void>((resolve) => {
+        releaseSubmit = resolve;
+      });
+    });
+    const tabA = createQuotaAutoResume({
+      enabled: () => true,
+      isManagedKimiSession: () => true,
+      getUsage: async () => quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+      checkSessionReady: async () => true,
+      submitResume,
+      random: () => 0,
+    });
+    const tabB = createQuotaAutoResume({
+      enabled: () => true,
+      isManagedKimiSession: () => true,
+      getUsage: async () => quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+      checkSessionReady: async () => true,
+      submitResume,
+      random: () => 0,
+    });
+    tabA.handleTurnFailed('s1', 't1', QUOTA_403);
+    tabB.handleTurnFailed('s2', 't2', QUOTA_403);
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    await submitStarted;
+    await flushAsync();
+    releaseSubmit();
+    await flushAsync();
+    expect(request).toHaveBeenCalledWith(
+      'kimi-web.quota-auto-resume.fire',
+      { mode: 'exclusive' },
+      expect.any(Function),
+    );
+    expect(submitResume).toHaveBeenCalledTimes(1);
+    expect(submitResume).toHaveBeenCalledWith('s1', expect.objectContaining({ turnId: 't1', resetAt }));
+    expect(tabA.hasPending()).toBe(false);
+    expect(tabB.hasPending()).toBe(false);
+  });
+
+  it('treats a server prompt_id conflict from another client as already resumed', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const rig = controllerRig({
+      usages: [quotaOk({ limit5h: { usedRatio: 1, resetAt } }), quotaOk({ limit5h: { usedRatio: 1, resetAt } })],
+      submit: async () => {
+        throw new DaemonApiError({ code: 40927, msg: 'prompt_id already used', requestId: 'r1' });
+      },
+    });
+    rig.controller.handleTurnFailed('s1', 't1', QUOTA_403);
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    expect(rig.submitResume).toHaveBeenCalledTimes(1);
+    expect(rig.onGiveUp).not.toHaveBeenCalled();
+
+    rig.controller.handleTurnFailed('s2', 't2', QUOTA_403);
+    await flushAsync();
+    expect(rig.controller.hasPending()).toBe(false);
+  });
+
+  it('retries trigger-time network failures with the same idempotent prompt id', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    let failSubmit = true;
+    const rig = controllerRig({
+      usages: [quotaOk({ limit5h: { usedRatio: 1, resetAt } })],
+      submit: async () => {
+        if (failSubmit) {
+          failSubmit = false;
+          throw new Error('network offline');
+        }
+      },
+    });
+    rig.controller.handleTurnFailed('s1', 't1', QUOTA_403);
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    expect(rig.submitResume).toHaveBeenCalledTimes(1);
+    expect(rig.controller.hasPending()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(QUOTA_AUTO_RESUME_RETRY_DELAYS_MS[0]);
+    expect(rig.submitResume).toHaveBeenCalledTimes(2);
+    expect(rig.submitResume.mock.calls[1]![1].promptId).toBe(rig.submitResume.mock.calls[0]![1].promptId);
+    expect(rig.controller.hasPending()).toBe(false);
+    expect(rig.onGiveUp).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a give-up after bounded retries are exhausted', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const rig = controllerRig({
+      usages: [quotaOk({ limit5h: { usedRatio: 1, resetAt } })],
+      ready: async () => {
+        throw new Error('connection refused');
+      },
+    });
+    rig.controller.handleTurnFailed('s1', 't1', QUOTA_403);
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    for (const delay of QUOTA_AUTO_RESUME_RETRY_DELAYS_MS) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    expect(rig.checkSessionReady).toHaveBeenCalledTimes(1 + QUOTA_AUTO_RESUME_RETRY_DELAYS_MS.length);
+    expect(rig.submitResume).not.toHaveBeenCalled();
+    expect(rig.onGiveUp).toHaveBeenCalledTimes(1);
+    expect(rig.onGiveUp).toHaveBeenCalledWith('s1', expect.any(Error));
+    expect(rig.controller.hasPending()).toBe(false);
+  });
+
+  it('cancels if the session is no longer a managed Kimi session at fire time', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    let managed = true;
+    const rig = controllerRig({
+      managed: () => managed,
+      usages: [quotaOk({ limit5h: { usedRatio: 1, resetAt } })],
+    });
+    rig.controller.handleTurnFailed('s1', 't1', QUOTA_403);
+    await flushAsync();
+    managed = false;
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + QUOTA_AUTO_RESUME_MIN_JITTER_MS);
+    expect(rig.checkSessionReady).not.toHaveBeenCalled();
+    expect(rig.submitResume).not.toHaveBeenCalled();
+  });
 });
 
 function stubStorage(initial: Record<string, string> = {}): Map<string, string> {
@@ -336,13 +549,20 @@ async function bootClient(opts: {
   historyFailed?: boolean;
   usage: ManagedQuotaResult;
   trusted?: boolean;
+  sshBackground?: boolean;
+  deferTurns?: boolean;
+  failSubmits?: number;
 }) {
   stubStorage(opts.enabled ? { 'kimi-web.quota-auto-resume': 'true' } : {});
   vi.stubGlobal('WebSocket', function () {});
   vi.resetModules();
-  setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
 
-  const sessions = [clientSession('s1'), clientSession('s2')];
+  const sessions = opts.sshBackground === true
+    ? [
+        { ...clientSession('s1'), workspaceId: 'ws-remote', hostId: 'ssh-remote' },
+        { ...clientSession('s2', 'local-custom'), workspaceId: 'ws-local' },
+      ]
+    : [clientSession('s1'), clientSession('s2')];
   let handlers: KimiEventHandlers | undefined;
   const failedHeader: ConversationTurnHeader = {
     turn_id: 't0',
@@ -374,14 +594,61 @@ async function bootClient(opts: {
     close: vi.fn(),
   };
   const latestTurnBySession = new Map<string, string>([['s1', 't0'], ['s2', 't0']]);
-  const getUsage = vi.fn(async () => opts.usage);
-  const getAgentTurns = vi.fn(async (sid: string) => ({
-    turns: [{ ...failedHeader, turn_id: latestTurnBySession.get(sid) ?? 't0', items: [] }],
-    has_more: false,
-  }));
-  const submitPrompt = vi.fn<(sid: string, input: PromptSubmission) => Promise<PromptSubmitResult>>(
-    async (_sid, input) => ({ promptId: input.promptId!, userMessageId: input.promptId!, status: 'running' }),
+  const pendingTurnLookups: Array<() => void> = [];
+  const getUsage = vi.fn(async () =>
+    opts.sshBackground === true ? { kind: 'error' as const, message: 'not signed in locally' } : opts.usage,
   );
+  const getAgentTurns = vi.fn(async (sid: string) => {
+    if (opts.deferTurns === true) {
+      await new Promise<void>((resolve) => {
+        pendingTurnLookups.push(resolve);
+      });
+    }
+    return {
+      turns: [{ ...failedHeader, turn_id: latestTurnBySession.get(sid) ?? 't0', items: [] }],
+      has_more: false,
+    };
+  });
+  let remainingSubmitFailures = opts.failSubmits ?? 0;
+  const submitPrompt = vi.fn<(sid: string, input: PromptSubmission) => Promise<PromptSubmitResult>>(
+    async (_sid, input) => {
+      if (remainingSubmitFailures > 0) {
+        remainingSubmitFailures -= 1;
+        throw new Error('network offline');
+      }
+      return { promptId: input.promptId!, userMessageId: input.promptId!, status: 'running' };
+    },
+  );
+  const remoteListModels = vi.fn(async () => [
+    { id: 'k2', provider: MANAGED_KIMI_CODE_PROVIDER_ID, model: 'k2', maxContextSize: 200000 },
+  ]);
+  const remoteGetConfig = vi.fn(async () => ({ providers: {}, defaultModel: 'k2' }));
+  const remoteGetUsage = vi.fn(async () => opts.usage);
+  const remoteApi = {
+    listModels: remoteListModels,
+    getConfig: remoteGetConfig,
+    getUsage: remoteGetUsage,
+  } as unknown as KimiWebApi;
+  const routedApi = new Proxy(
+    { deviceApi: (hostId: string | undefined) => (hostId === 'ssh-remote' ? remoteApi : clientApiMock) },
+    {
+      get(target, prop) {
+        if (prop in target) return target[prop as keyof typeof target];
+        return clientApiMock[prop as string];
+      },
+    },
+  );
+  setKimiClientDeps({ api: () => routedApi as unknown as KimiWebApi, t: (key) => key });
+
+  const workspaces = opts.sshBackground === true
+    ? [
+        { id: 'ws-remote', root: '/remote/workspace', name: 'Remote', sessionCount: 1, hostId: 'ssh-remote' },
+        { id: 'ws-local', root: '/workspace', name: 'Local', sessionCount: 1 },
+      ]
+    : [{ id: 'ws1', root: '/workspace', name: 'Workspace', sessionCount: 2 }];
+  const localModels = opts.sshBackground === true
+    ? [{ id: 'local-custom', provider: 'custom-openai', model: 'local-custom', maxContextSize: 128000 }]
+    : [{ id: 'k2', provider: MANAGED_KIMI_CODE_PROVIDER_ID, model: 'k2', maxContextSize: 200000 }];
   const api: Partial<KimiWebApi> = {
     getAuth: vi.fn(async () => ({ modelsReady: true, providersCount: 1, managedProvider: null })),
     getHealth: vi.fn(async () => ({ status: 'ok', uptimeSec: 1 })),
@@ -395,20 +662,32 @@ async function bootClient(opts: {
       experimentalFlags: {},
       backend: 'v2' as const,
     })),
-    getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'k2' })),
-    listModels: vi.fn(async () => [{ id: 'k2', provider: MANAGED_KIMI_CODE_PROVIDER_ID, model: 'k2', maxContextSize: 200000 }]),
+    getConfig: vi.fn(async () => ({
+      providers: {},
+      defaultModel: opts.sshBackground === true ? 'local-custom' : 'k2',
+    })),
+    listModels: vi.fn(async () => localModels),
     listProviders: vi.fn(async () => []),
-    listWorkspaces: vi.fn(async () => [{ id: 'ws1', root: '/workspace', name: 'Workspace', sessionCount: 2 }]),
+    listWorkspaces: vi.fn(async () => workspaces),
     getWorkspaceTrust: vi.fn(async () => ({ trusted: opts.trusted ?? true })),
     getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
     listSessions: vi.fn(async () => ({ items: sessions, hasMore: false, nextPageToken: null, total: sessions.length })),
     listSessionGroups: vi.fn(async () => ({
-      groups: [{ workspaceId: 'ws1', sessions: sessions.map((s) => ({ ...s, lastPrompt: 'hi' })), total: sessions.length }],
+      groups: workspaces.map((w) => ({
+        workspaceId: w.id,
+        sessions: sessions.filter((s) => (s.workspaceId ?? 'ws1') === w.id).map((s) => ({ ...s, lastPrompt: 'hi' })),
+        total: sessions.length,
+      })),
       hasMore: false,
       nextPageToken: null,
       total: sessions.length,
     })),
-    getSession: vi.fn(async (id: string) => clientSession(id)),
+    updateSession: vi.fn(async (id: string, patch: { model?: string }) => {
+      const target = sessions.find((s) => s.id === id);
+      if (target !== undefined && patch.model !== undefined) target.model = patch.model;
+      return target ?? clientSession(id);
+    }),
+    getSession: vi.fn(async (id: string) => sessions.find((s) => s.id === id) ?? clientSession(id)),
     getSessionGoal: vi.fn(async () => null),
     getSessionWarnings: vi.fn(async () => []),
     getGitStatus: vi.fn(async () => ({ branch: '', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null })),
@@ -430,7 +709,11 @@ async function bootClient(opts: {
   Object.assign(clientApiMock, api);
 
   const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
-  const { useQuotaAutoResume } = await import('@moonshot-ai/app-core');
+  const { useQuotaAutoResume } = await import('@moonshot-ai/app-core/composables');
+  const { modelsStore } = await import('../src/stores/models');
+  const { promptStore } = await import('../src/stores/prompt');
+  const { sessionsStore } = await import('../src/stores/sessions');
+  const { warningsStore } = await import('../src/stores/warnings');
   const client = useKimiWebClient();
   await client.load();
   await client.selectSession('s1');
@@ -463,8 +746,14 @@ async function bootClient(opts: {
 
   return {
     client,
+    sessions,
     getUsage,
+    remoteGetUsage,
+    remoteListModels,
     getAgentTurns,
+    releaseTurnLookups: () => {
+      for (const release of pendingTurnLookups.splice(0)) release();
+    },
     submitPrompt,
     startLiveTurn,
     failLiveTurn,
@@ -472,6 +761,10 @@ async function bootClient(opts: {
     removeTurns,
     deleteSession,
     useQuotaAutoResume,
+    modelsStore: modelsStore(),
+    promptStore: promptStore(),
+    sessionsStore: sessionsStore(),
+    warningsStore: warningsStore(),
   };
 }
 
@@ -608,5 +901,176 @@ describe('useKimiWebClient quota auto-resume wiring', () => {
     busy.setAgentStatus('s1', 'running');
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
     expect(busy.submitPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe('useQuotaAutoResume cross-tab storage sync', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('disables the switch in other renderers when a storage event reports opt-out or key removal', async () => {
+    stubStorage({ [STORAGE_KEYS.quotaAutoResume]: 'true' });
+    const listeners = new Set<(event: { key: string | null; newValue: string | null }) => void>();
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn((type: string, listener: (event: { key: string | null; newValue: string | null }) => void) => {
+        if (type === 'storage') listeners.add(listener);
+      }),
+      removeEventListener: vi.fn(),
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    });
+    vi.resetModules();
+    const { useQuotaAutoResume } = await import('@moonshot-ai/app-core/composables');
+    const { quotaAutoResumeEnabled } = useQuotaAutoResume();
+    expect(quotaAutoResumeEnabled.value).toBe(true);
+
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoResume, newValue: 'false' });
+    expect(quotaAutoResumeEnabled.value).toBe(false);
+
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoResume, newValue: 'true' });
+    expect(quotaAutoResumeEnabled.value).toBe(true);
+
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoResume, newValue: null });
+    expect(quotaAutoResumeEnabled.value).toBe(false);
+  });
+});
+
+describe('useKimiWebClient quota auto-resume edge cases', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE_MS);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    resetKimiClientDeps();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('routes quota and model checks through the failed SSH session host while viewing a local workspace', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const h = await bootClient({
+      enabled: true,
+      sshBackground: true,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    await flushAsync();
+    h.startLiveTurn('s1', 't-ssh');
+    await flushAsync();
+    await h.client.selectSession('s2');
+    expect(h.modelsStore.activeHostId).toBeUndefined();
+
+    h.failLiveTurn('s1', 't-ssh');
+    await flushAsync();
+    expect(h.remoteListModels).toHaveBeenCalled();
+    expect(h.remoteGetUsage).toHaveBeenCalledTimes(1);
+    expect(h.getUsage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    expect(h.remoteGetUsage).toHaveBeenCalledTimes(1);
+    expect(h.getUsage).not.toHaveBeenCalled();
+    expect(h.submitPrompt).toHaveBeenCalledTimes(1);
+    expect(h.submitPrompt.mock.calls[0]![0]).toBe('s1');
+  });
+
+  it('does not resume if the session switched to a custom model while waiting or during turn lookup', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const h = await bootClient({
+      enabled: true,
+      deferTurns: true,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    h.modelsStore.setModels([
+      { id: 'k2', provider: MANAGED_KIMI_CODE_PROVIDER_ID, model: 'k2', maxContextSize: 200000 },
+      { id: 'local-custom', provider: 'custom-openai', model: 'local-custom', maxContextSize: 128000 },
+    ]);
+    h.startLiveTurn('s1', 't1');
+    h.failLiveTurn('s1', 't1');
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    expect(h.getAgentTurns).toHaveBeenCalledTimes(1);
+    h.sessionsStore.updateSession('s1', (s) => ({ ...s, model: 'local-custom' }));
+    h.releaseTurnLookups();
+    await flushAsync();
+    expect(h.submitPrompt).not.toHaveBeenCalled();
+  });
+
+  it('cancels immediately on model profile updates while waiting', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const h = await bootClient({
+      enabled: true,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    h.modelsStore.setModels([
+      { id: 'k2', provider: MANAGED_KIMI_CODE_PROVIDER_ID, model: 'k2', maxContextSize: 200000 },
+      { id: 'local-custom', provider: 'custom-openai', model: 'local-custom', maxContextSize: 128000 },
+    ]);
+    h.startLiveTurn('s1', 't1');
+    h.failLiveTurn('s1', 't1');
+    await flushAsync();
+
+    await h.client.setSessionModel('s1', 'local-custom');
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    expect(h.getAgentTurns).not.toHaveBeenCalled();
+    expect(h.submitPrompt).not.toHaveBeenCalled();
+  });
+
+  it('rechecks session activity after the turn lookup and cancels on manual prompt initiation', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const racing = await bootClient({
+      enabled: true,
+      deferTurns: true,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    racing.startLiveTurn('s1', 't1');
+    racing.failLiveTurn('s1', 't1');
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    expect(racing.getAgentTurns).toHaveBeenCalledTimes(1);
+    racing.promptStore.setInFlight('s1', true);
+    racing.releaseTurnLookups();
+    await flushAsync();
+    expect(racing.submitPrompt).not.toHaveBeenCalled();
+
+    vi.resetModules();
+    const manual = await bootClient({
+      enabled: true,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    manual.startLiveTurn('s1', 't1');
+    manual.failLiveTurn('s1', 't1');
+    await flushAsync();
+
+    await manual.client.sendPrompt({ text: 'manual continue', attachments: [], skills: [] });
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    const autoCalls = manual.submitPrompt.mock.calls.filter(
+      ([, input]) => input.metadata?.['kimi_quota_auto_resume'] !== undefined,
+    );
+    expect(autoCalls).toHaveLength(0);
+  });
+
+  it('shows an error notice when all auto-resume retries fail', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const h = await bootClient({
+      enabled: true,
+      failSubmits: 10,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    h.startLiveTurn('s1', 't1');
+    h.failLiveTurn('s1', 't1');
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    for (const delay of QUOTA_AUTO_RESUME_RETRY_DELAYS_MS) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    expect(h.submitPrompt).toHaveBeenCalledTimes(1 + QUOTA_AUTO_RESUME_RETRY_DELAYS_MS.length);
+    const promptIds = new Set(h.submitPrompt.mock.calls.map(([, input]) => input.promptId));
+    expect(promptIds.size).toBe(1);
+    expect(
+      h.warningsStore.warnings.some((notice) => notice.title === 'conversation.quotaAutoResumeFailedTitle'),
+    ).toBe(true);
   });
 });

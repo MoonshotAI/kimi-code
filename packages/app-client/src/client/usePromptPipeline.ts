@@ -61,6 +61,7 @@ export interface PromptPipelineDeps {
   isMainWaitForWaiting?: (sessionId: string) => boolean;
   promptIdToAbort?: (sessionId: string) => string | undefined;
   lastAgentTurnId?: (sessionId: string) => string | undefined;
+  onPromptInitiated?: (sessionId: string) => void;
   selectSession: (
     sessionId: string,
     opts?: {
@@ -358,6 +359,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       resolve: () => resolveSubmitReady(),
     };
     pendingSubmitBySession.set(sid, submitReady);
+    deps.onPromptInitiated?.(sid);
     const sessionGenAtEntry = permissionsStore().sessionTeardownGenFor(sid);
     permissionsStore().noteSubmitPrepStart(sid);
     promptStore().setInFlight(sid, true);
@@ -512,6 +514,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     direct = false,
   ): Promise<'ok' | 'rejected'> {
     const { skills } = prompt;
+    deps.onPromptInitiated?.(sid);
     promptStore().noteSteerStart(sid);
     try {
       if (!mainBusy(sid) && isMainWaitForWaiting?.(sid) !== true) {
@@ -733,6 +736,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   ): void {
     const sid = sessionsStore().activeSessionId;
     if (!sid) return;
+    deps.onPromptInitiated?.(sid);
     promptStore().enqueueForSession(sid, prompt, editText);
   }
 

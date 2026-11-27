@@ -42,6 +42,8 @@ export default {
   turnFailedResume: 'Continue',
   turnFailedResumeText: 'Continue',
   quotaAutoResumePrompt: 'I hit my usage limit while you were working, but it has reset now. Please continue from where you left off.',
+  quotaAutoResumeFailedTitle: 'Auto-continue failed',
+  quotaAutoResumeFailedMessage: 'Could not resume the session after credits reset. Please send a message to continue manually.',
   sessionRatingQuestion: 'How’s Kimi doing in this session?',
   sessionRatingBad: 'Bad',
   sessionRatingFine: 'Fine',

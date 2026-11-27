@@ -42,6 +42,8 @@ export default {
   turnFailedResume: '继续',
   turnFailedResumeText: '继续',
   quotaAutoResumePrompt: '刚才因额度限制中断，现在额度已恢复，请继续',
+  quotaAutoResumeFailedTitle: '额度恢复后自动继续失败',
+  quotaAutoResumeFailedMessage: '额度恢复后未能自动继续会话，请手动发送消息继续。',
   sessionRatingQuestion: '这次会话中，Kimi 表现如何？',
   sessionRatingBad: '差',
   sessionRatingFine: '一般',
