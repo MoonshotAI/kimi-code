@@ -20,6 +20,26 @@ export const McpSectionSchema = z.object({
 
 export type McpSection = z.infer<typeof McpSectionSchema>;
 
+export interface McpTunables {
+  readonly startupTimeoutMs?: number;
+  readonly startupWaitMs?: number;
+  readonly toolTimeoutMs?: number;
+  readonly defaultDeferred?: boolean;
+  readonly reconnectInitialDelayMs?: number;
+  readonly reconnectMaxDelayMs?: number;
+}
+
+export function mcpTunablesFromSection(section: McpSection | undefined): McpTunables {
+  return {
+    startupTimeoutMs: section?.startupTimeoutMs,
+    startupWaitMs: section?.startupWaitMs,
+    toolTimeoutMs: section?.toolTimeoutMs,
+    defaultDeferred: section?.defaultDeferred,
+    reconnectInitialDelayMs: section?.reconnectInitialDelayMs,
+    reconnectMaxDelayMs: section?.reconnectMaxDelayMs,
+  };
+}
+
 export const MCP_STARTUP_TIMEOUT_ENV = 'KIMI_MCP_STARTUP_TIMEOUT_MS';
 export const MCP_STARTUP_WAIT_ENV = 'KIMI_MCP_STARTUP_WAIT_MS';
 export const MCP_TOOL_TIMEOUT_ENV = 'KIMI_MCP_TOOL_TIMEOUT_MS';

@@ -62,6 +62,7 @@ import {
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import {
@@ -72,7 +73,8 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { sessionDisabledMcpSourcesSeed, sessionMcpSourcesSeed } from '#/session/mcp/mcpSource';
+import { ISessionMcpService, SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
@@ -330,7 +332,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
-            [ISessionMcpHandle, workdir.mcp.sessionHandle()],
+            [ISessionMcpService, new SyncDescriptor(SessionMcpService)],
+            ...sessionMcpSourcesSeed(workdir.mcp.sources()),
+            ...sessionDisabledMcpSourcesSeed(opts.disabledMcpSources ?? []),
             [ISessionProjectInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
@@ -342,6 +346,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
           ],
           configureContainer: (container) => {
+            container.invokeFunction((accessor) => {
+              accessor.get(ISessionMcpService);
+            });
             container.anchorKernelEntry(
               () => telemetryBinding.dispose(),
               'telemetry:session-context',
@@ -533,6 +540,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workDir,
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
+      disabledMcpSources: opts?.disabledMcpSources,
     }, environment, await this.openWorkdir(environment, workDir, environment?.environmentId !== LOCAL_ENVIRONMENT_ID));
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);

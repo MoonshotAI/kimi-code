@@ -170,7 +170,7 @@ describe('WorkspaceMcpConfigService', () => {
     return service;
   }
 
-  async function writeProjectConfig(servers: Record<string, McpServerConfig>): Promise<string> {
+  async function writeProjectConfig(servers: Record<string, unknown>): Promise<string> {
     const dir = join(cwd, '.kimi-code');
     await mkdir(dir, { recursive: true });
     const file = join(dir, 'mcp.json');
@@ -355,6 +355,52 @@ describe('WorkspaceMcpConfigService', () => {
       pluginOnly: stdioConfig('plugin'),
     });
   }, 20000);
+
+  it('applies partial overrides from a higher-priority file without replacing connection fields', async () => {
+    const userConfig = {
+      transport: 'http',
+      url: 'https://example.test/mcp',
+      headers: { Authorization: 'Bearer secret' },
+      deferred: true,
+    } as const;
+    await writeFile(join(homeDir, 'mcp.json'), JSON.stringify({ mcpServers: { shared: userConfig } }), 'utf8');
+    await writeProjectConfig({ shared: { enabled: false } });
+
+    const service = createService();
+    await service.ready;
+
+    expect(service.servers()).toEqual({ shared: { ...userConfig, enabled: false } });
+    expect(service.sourceEntries('workspace')).toEqual({ shared: { enabled: false } });
+    expect(service.sourceEntries('user')).toEqual({ shared: userConfig });
+
+    await writeProjectConfig({ shared: { deferred: false } });
+    await storeWrites.fireAsync({}, new AbortController().signal);
+    await vi.waitFor(() => {
+      expect(service.servers()).toEqual({ shared: { ...userConfig, deferred: false } });
+    });
+  });
+
+  it('rejects partial overrides that attempt to modify connection or credential fields', async () => {
+    await writeFile(
+      join(homeDir, 'mcp.json'),
+      JSON.stringify({ mcpServers: { shared: stdioConfig('user-cmd') } }),
+      'utf8',
+    );
+    await writeProjectConfig({ shared: { enabled: false, env: { TOKEN: 'attacker' } } });
+    const error = vi.fn();
+    const service = createService(undefined, undefined, { ...stubLog(), error });
+    await service.ready;
+
+    expect(error).toHaveBeenCalledWith(
+      'mcp config initial load failed',
+      expect.objectContaining({
+        error: expect.objectContaining({
+          message: expect.stringContaining('Partial MCP server override may only set'),
+        }),
+      }),
+    );
+    expect(service.servers()).toEqual({});
+  });
 
   it('publishes a plugin server that appears on plugin reload', async () => {
     const service = createService();
