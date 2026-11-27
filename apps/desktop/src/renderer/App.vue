@@ -35,6 +35,7 @@ import ScreenshotGuidanceDialog from './components/dialogs/ScreenshotGuidanceDia
 import ForcedUpgradeDialog from './components/ForcedUpgradeDialog.vue';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
+import UpdateDialog from './components/UpdateDialog.vue';
 import { AddWorkspaceDialog, WorkspaceEditDialog } from '@moonshot-ai/app-components';
 import { ConfirmDialogHost, PastedTextDialog, openPastedTextDialog, usePastedTextStats } from '@moonshot-ai/app-components';
 import BrowserOverlayConfirmHost from './components/browser-overlay/BrowserOverlayConfirmHost.vue';
@@ -49,7 +50,7 @@ import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, au
 import { FetchTurnFileContentKey, InsertPathMentionKey, ModelDisplayKey, OpenWithDefaultAppKey, ResolveSwarmMembersKey, RevealInFolderKey, SelectionContextMenuKey, SessionRatingKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
-import { useConfirmDialog, useSelectionQuoteBubble } from '@moonshot-ai/app-client/composables';
+import { useConfirmDialog, useSelectionQuoteBubble, useUpdateStatus } from '@moonshot-ai/app-client/composables';
 import { runComposerMenuEdit } from '@moonshot-ai/app-composer/runtime';
 import { startMentionTooltip } from '@moonshot-ai/app-composer/transcript';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
@@ -140,6 +141,7 @@ let offAuthRequired: (() => void) | null = null;
 
 useMenuDragRegions();
 const client = useKimiWebClient();
+const updateTracker = useUpdateStatus();
 const desktopBridge = hasDesktopBridge();
 const sessionViews = sessionViewsStore();
 provide(ComposerNativeMenuHostKey, { register: registerBrowserOverlayMenu });
@@ -376,6 +378,10 @@ onMounted(() => {
   offMenuAction =
     (window as { kimiDesktop?: { onMenuAction?: (cb: (id: string) => void) => () => void } })
       .kimiDesktop?.onMenuAction?.((menuId) => {
+      if (menuId === 'open-update-dialog') {
+        updateTracker.openDialog();
+        return;
+      }
       if (menuId === 'close-panel-tab') {
         if (anyOverlayOpen.value) return;
         if (panel.panelVisible.value && panel.activeTabId.value) {
@@ -2862,6 +2868,7 @@ function openPr(url: string): void {
       @logout="confirmLogout"
     />
     </div>
+    <UpdateDialog v-if="updateTracker.dialogOpen.value" />
     <!-- First-run onboarding wizard (language → appearance → notifications →
          Kimi login). Held back until the first load settled so it can't cover
          the connecting splash. Outside `.app` like LoginDialog — `.app` goes

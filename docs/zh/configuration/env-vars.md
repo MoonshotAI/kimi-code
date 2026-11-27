@@ -179,6 +179,7 @@ kimi
 | `KIMI_CODE_SEARCH_WORKER` | 全局搜索开启时，在独立 worker 线程中运行索引，优先级高于 `[database] search`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用基于 minidb 的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | MCP server 全局默认连接超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `startupTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
+| `KIMI_MCP_STARTUP_WAIT_MS` | 会话初始化时等待首轮 MCP 工具发现的时间上限（毫秒），超时放行但不终止仍在连接的 server；优先级高于 `[mcp] startup_wait_ms`（默认 `2000`，`0` 表示不等待） | `0` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | MCP server 全局默认单次工具调用超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `toolTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` | workspace 级 MCP server 首次连接失败或意外断连后，首次自动重连前的等待时间（毫秒）；优先级高于配置文件 | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_RECONNECT_MAX_DELAY_MS` | workspace 级 MCP server 自动重连退避等待的上限（毫秒）；优先级高于配置文件 | `1` 到 `2147483647` 的整数；非法值被忽略 |

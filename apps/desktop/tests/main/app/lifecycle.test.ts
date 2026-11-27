@@ -243,9 +243,11 @@ describe('app second-instance routing', () => {
 
     void deps.confirmRestart();
     deps.prepareSessionContinue(['s1']);
+    void deps.beforeRestart?.();
 
     expect(mocks.confirmUpdateRestart).toHaveBeenCalledWith(win);
     expect(mocks.prepareSessionContinue).toHaveBeenCalledWith(['s1']);
+    expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
   });
 
   it('starts Preview without either updater', async () => {

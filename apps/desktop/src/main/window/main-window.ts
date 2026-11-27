@@ -161,7 +161,7 @@ export function installWindowsSessionEndWatch(
 }
 
 let rendererReady = false;
-let rendererLaunchActionsReady = false;
+let rendererActionsReady = false;
 let pendingTraySessionSelect: string | null = null;
 
 export function isRendererReady(): boolean {
@@ -174,10 +174,11 @@ export function isAppRendererUrl(url: string): boolean {
 
 export function selectSessionInRenderer(sessionId: string): void {
   pendingTraySessionSelect = sessionId;
-  flushRendererLaunchActions();
+  flushRendererActions();
 }
 
-let pendingLaunchActions: LaunchActionPayload[] = [];
+const pendingLaunchActions: LaunchActionPayload[] = [];
+const pendingMenuActions: string[] = [];
 
 export function drainLaunchActions(actions: LaunchActionPayload[]): LaunchActionPayload[] {
   return actions.splice(0);
@@ -185,18 +186,23 @@ export function drainLaunchActions(actions: LaunchActionPayload[]): LaunchAction
 
 export function sendLaunchAction(action: LaunchActionPayload): void {
   pendingLaunchActions.push(action);
-  flushRendererLaunchActions();
+  flushRendererActions();
+}
+
+export function sendMenuActionWhenReady(action: string): void {
+  pendingMenuActions.push(action);
+  flushRendererActions();
 }
 
 export function markRendererUiMounted(url: string): void {
   if (!isAppRendererUrl(url)) return;
-  rendererLaunchActionsReady = true;
-  flushRendererLaunchActions();
+  rendererActionsReady = true;
+  flushRendererActions();
 }
 
-function flushRendererLaunchActions(): void {
+function flushRendererActions(): void {
   const current = getMainWindow();
-  if (!rendererReady || !rendererLaunchActionsReady || current === null || current.isDestroyed()) return;
+  if (!rendererReady || !rendererActionsReady || current === null || current.isDestroyed()) return;
   const contents = current.webContents;
   if (contents.isDestroyed() || contents.isCrashed() || contents.isLoadingMainFrame()) return;
   if (pendingTraySessionSelect !== null) {
@@ -205,6 +211,9 @@ function flushRendererLaunchActions(): void {
   }
   for (const action of drainLaunchActions(pendingLaunchActions)) {
     sendToRenderer(IPC.launchAction, action);
+  }
+  for (const action of pendingMenuActions.splice(0)) {
+    sendToRenderer(IPC.menuAction, action);
   }
 }
 
@@ -533,7 +542,7 @@ export function createWindow(): void {
   nativeTheme.on('updated', syncBackground);
   win.once('closed', () => nativeTheme.removeListener('updated', syncBackground));
   rendererReady = false;
-  rendererLaunchActionsReady = false;
+  rendererActionsReady = false;
   installEmbeddedServerAuthInjection(win.webContents.session);
   registerAppWebContents(win.webContents);
   attachWindowDiagnostics(win.webContents);
@@ -618,7 +627,7 @@ export function createWindow(): void {
     recordWindowLifecycle('closed');
     if (getMainWindow() === win) {
       setMainWindow(null);
-      rendererLaunchActionsReady = false;
+      rendererActionsReady = false;
     }
     notifyMainWindowGone();
   });
@@ -639,16 +648,16 @@ export function createWindow(): void {
     setTerminalMenuFocus(false);
   });
   win.webContents.on('did-navigate', () => {
-    rendererLaunchActionsReady = false;
+    rendererActionsReady = false;
   });
-  win.webContents.on('did-stop-loading', flushRendererLaunchActions);
+  win.webContents.on('did-stop-loading', flushRendererActions);
   let abortedNavTerminalFocus = false;
   let clearStartupHistoryAfterLoad = false;
   const settleRendererReady = (isMainFrame: boolean): void => {
     if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
     rendererReady = true;
     reportStartupPhase('renderer_ready');
-    flushRendererLaunchActions();
+    flushRendererActions();
   };
   const restoreTerminalFocusOnAbort = (isMainFrame: boolean): void => {
     if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
@@ -662,7 +671,7 @@ export function createWindow(): void {
     if (isMainFrame && !win.isDestroyed() && !win.webContents.isDestroyed()) {
       const frame = win.webContents.mainFrame;
       if (frame.processId === frameProcessId && frame.routingId === frameRoutingId) {
-        rendererLaunchActionsReady = false;
+        rendererActionsReady = false;
       }
     }
     settleRendererReady(isMainFrame);
@@ -675,7 +684,7 @@ export function createWindow(): void {
     if (rendererRecoveryResetTimer !== null) clearTimeout(rendererRecoveryResetTimer);
     rendererRecoveryResetTimer = null;
     rendererReady = false;
-    rendererLaunchActionsReady = false;
+    rendererActionsReady = false;
     notifyMainWindowGone();
     bumpTerminalGeneration();
     killAllTerminals();

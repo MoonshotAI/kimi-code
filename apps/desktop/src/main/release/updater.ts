@@ -72,6 +72,7 @@ export interface RestartDecision {
 export interface UpdateRestartDeps {
   confirmRestart: () => Promise<RestartDecision>;
   prepareSessionContinue: (sessionIds: readonly string[]) => void;
+  beforeRestart?: () => Promise<void>;
 }
 
 export interface StartAutoUpdaterDeps extends UpdateRestartDeps {
@@ -92,6 +93,45 @@ const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const CANARY_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const MANUAL_CHECK_TIMEOUT_MS = 30_000;
 const CHECK_CHAIN_TIMEOUT_MS = 60_000;
+const BEFORE_RESTART_TIMEOUT_MS = 2_000;
+
+async function runBeforeRestart(beforeRestart: (() => Promise<void>) | undefined): Promise<void> {
+  if (beforeRestart === undefined) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const cleanup = Promise.resolve()
+    .then(beforeRestart)
+    .then(
+      () => 'done' as const,
+      (error: unknown) => {
+        if (!timedOut) {
+          log.warn(
+            `[kimi-desktop] update pre-restart cleanup failed (${error instanceof Error ? error.message : String(error)})`,
+          );
+        }
+        return 'failed' as const;
+      },
+    );
+  try {
+    const outcome = await Promise.race([
+      cleanup,
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          resolve('timeout');
+        }, BEFORE_RESTART_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    if (outcome === 'timeout') {
+      log.warn(
+        `[kimi-desktop] update pre-restart cleanup timed out after ${BEFORE_RESTART_TIMEOUT_MS} ms`,
+      );
+    }
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 export function updateChannelFromVersion(version: string): string {
   const tag = version.split('-')[1]?.split('.')[0];
@@ -416,6 +456,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
         } catch (error) {
           log.warn(`[kimi-desktop] sessions will not continue after the update restart (${error instanceof Error ? error.message : String(error)})`);
         }
+        await runBeforeRestart(deps.beforeRestart);
         log.info(`[kimi-desktop] installing update ${current.version ?? 'unknown'} (quitAndInstall)`);
         markQuitting();
         updater.quitAndInstall(true, true);
