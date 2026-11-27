@@ -19,6 +19,7 @@ export interface ProjectInstructions {
 export interface ReviewBinding {
   readonly modelAlias: string;
   readonly effort?: string;
+  readonly cloudEffort?: string;
   readonly timeoutMs: number;
 }
 

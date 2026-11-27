@@ -576,6 +576,21 @@ describe('SessionAutoReviewService', () => {
     expect(loadCloud).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['thinking off when thinking is disabled', { enabled: false }, 'off'],
+    ['the forced effort', { forcedEffort: 'max' }, 'max'],
+    ['the cloud effort when local thinking settings leave it open', undefined, 'low'],
+  ] as const)('keeps local thinking settings over the cloud effort: %s', async (_label, thinking, effort) => {
+    const toggle = managedModel('kimi-toggle', { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' });
+    await execute(makeSessionService({
+      configured: false,
+      catalogModels: { 'kimi-code/kimi-toggle': toggle },
+      cloudConfig: { effort: 'low' },
+      ...(thinking === undefined ? {} : { thinking }),
+    }), signal, 'kimi-code/kimi-toggle');
+    expect(requestedEfforts).toEqual([effort]);
+  });
+
   it('soft-falls back when cloud model is missing, cloud effort is unsupported, or cloud model conflicts with user effort', async () => {
     const primary = managedModel('kimi-primary', { alwaysThinking: true, supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' });
     const narrow = managedModel('kimi-narrow', { alwaysThinking: true, supportEfforts: ['high'], defaultEffort: 'high' });

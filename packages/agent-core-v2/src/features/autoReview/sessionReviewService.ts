@@ -147,14 +147,14 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const cloud = mainModel !== undefined && isManagedKimiModel(mainModel) && needsCloud
       ? await this.cloudConfig.load(signal)
       : undefined;
-    const { modelAlias, effort } = config?.model !== undefined
+    const selection = config?.model !== undefined
       ? { modelAlias: config.model, effort: config.effort }
       : (cloud === undefined || mainModel === undefined
           ? undefined
           : this.cloudModelBinding(cloud, mainModelAlias, mainModel, config?.effort))
         ?? { modelAlias: mainModelAlias, effort: config?.effort };
-    this.assertReviewModelValid(modelAlias);
-    return { modelAlias, effort, timeoutMs: config?.timeoutMs ?? cloud?.timeout_ms ?? DEFAULT_AUTO_REVIEW_TIMEOUT_MS };
+    this.assertReviewModelValid(selection.modelAlias);
+    return { ...selection, timeoutMs: config?.timeoutMs ?? cloud?.timeout_ms ?? DEFAULT_AUTO_REVIEW_TIMEOUT_MS };
   }
 
   assertConfigValid(): void {
@@ -167,12 +167,12 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     mainModelAlias: string,
     mainModel: Model,
     localEffort: string | undefined,
-  ): { readonly modelAlias: string; readonly effort?: string } | undefined {
+  ): Omit<ReviewBinding, 'timeoutMs'> | undefined {
     const target = cloud.model === undefined
       ? { alias: mainModelAlias, model: mainModel }
       : this.resolveManagedModelAlias(cloud.model, mainModel);
     if (target === undefined) return undefined;
-    if (localEffort === undefined) return { modelAlias: target.alias, effort: safeCloudEffort(target.model, cloud.effort) };
+    if (localEffort === undefined) return { modelAlias: target.alias, cloudEffort: safeCloudEffort(target.model, cloud.effort) };
     return safeCloudEffort(target.model, localEffort) === undefined ? undefined : { modelAlias: target.alias, effort: localEffort };
   }
 
@@ -296,7 +296,8 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const overrides = this.configService.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.configService.get<ThinkingConfig>(THINKING_SECTION);
     const strict = requiresStrictThinkingValidation(this.providerCatalog, model.protocol, model.providerType);
-    const requestedEffort = resolveSubagentThinking(this.configService, model, binding.effort);
+    const cloudEffort = thinkingConfig?.enabled === false ? undefined : binding.cloudEffort;
+    const requestedEffort = resolveSubagentThinking(this.configService, model, binding.effort ?? cloudEffort);
     const resolvedEffort = resolveThinkingEffortForModel(requestedEffort, thinkingConfig, model.spec, strict);
     const thinkingEffort = binding.effort !== undefined
       ? resolvedEffort
