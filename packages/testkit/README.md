@@ -61,7 +61,7 @@ With `verifyInvariants: true`, the `kap` fixture also calls `verifyKapInvariants
 - once it is idle, a turn or item of its main agent, of an agent a client subscribed to, or of a subagent a tool call refers to in `agent_refs` is still `running`;
 - a client's frames for an agent it subscribed to, including one whose stream ended when that agent finished, fold into other turns than REST returns; after a paged snapshot (`has_more`), the turns before that page are left out unless they started after it, as after an undo;
 - a client's latest `session` frame disagrees with REST on `activity`, `pending_interaction`, `last_turn_outcome` or `archived`; a frame without `pending_interaction`, like an `archived` frame, counts as `none`;
-- a client got a `session` frame saying nothing is pending while an `interaction` frame it was sent was still pending; unsubscribing from the session, or an `archived` or `deleted` frame, ends that.
+- a client got a `session` frame saying nothing is pending while an `interaction` frame it was sent was still pending; that ends once the client stops receiving the session, because it unsubscribed or the last subagent it subscribed to ended, and on an `archived` or `deleted` frame.
 
 Sessions and agents REST no longer knows (HTTP 404 or a `404xx` code), such as a deleted session or a closed side agent, are skipped. `tests/scenarios` turns this on for every scenario. Call `verifyKapInvariants(kap)` yourself when you start KAP with `startKap()`. A test that calls the `kap` fixture function directly passes its test context with the model: `fixtures.kap({ ...context, model }, run)`.
 

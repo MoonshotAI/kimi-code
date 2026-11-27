@@ -545,6 +545,24 @@ describe('verifyKapInvariants', () => {
     await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
   });
 
+  it('forgets the interactions of a session once the last subagent the client subscribed to ends', async () => {
+    const child = (frame: Readonly<Record<string, unknown>>) => ({ ...live(frame), agent_id: 'child' });
+    const client = await stubKap(
+      {
+        session: idle,
+        turns: [],
+        agents: { child: [] },
+        frames: [
+          { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' },
+          child({ type: 'agent', status: 'ended' }),
+          { type: 'session', change: 'updated', session: idle },
+        ],
+      },
+      { agentIds: ['child'] },
+    );
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
   it('skips an agent that REST no longer knows, as a closed side agent answers with code 40401', async () => {
     const delegation = { item_id: 'c1', type: 'tool_call', status: 'ended', outcome: 'completed', name: 'Agent', agent_refs: [{ agent_id: 'closed', role: 'child' }] };
     const client = await stubKap({ session: idle, turns: [{ ...header, items: [delegation] }], notFoundStatus: 200 }, { subscribe: false });

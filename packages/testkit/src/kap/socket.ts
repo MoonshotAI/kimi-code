@@ -212,6 +212,7 @@ export class KapSocket {
         const ended = this.ended.get(session) ?? new Set<string>();
         ended.add(agent);
         this.ended.set(session, ended);
+        if (agent !== 'main' && this.readyAgents.get(session)?.size === 0) this.left.push({ frame: this.received.length - 1, sessionId: session });
       } else if (frame.type === 'turns.failed') {
         this.readyAgents.get(session)?.delete(agent);
       }
