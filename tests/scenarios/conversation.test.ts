@@ -2,7 +2,7 @@ import { once } from 'node:events';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { bashPathOf, deferred, solidPng } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, deferred, slashPathOf, solidPng } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
 import { agent, bash, call, fakeModelConfig, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
@@ -321,7 +321,7 @@ describe('conversation over KAP', () => {
     model.script(held('slow', say('never sent')));
     const socket = await kap.connect();
     const session = await kap.createSession();
-    expect(session).toMatchObject({ cwd: kap.home.workspace, activity: 'idle' });
+    expect(session).toMatchObject({ cwd: slashPathOf(kap.home.workspace), activity: 'idle' });
     await socket.subscribe(session.id);
 
     await kap.prompt(session.id, 'wait for it');

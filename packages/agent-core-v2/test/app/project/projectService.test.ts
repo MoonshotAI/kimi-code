@@ -253,7 +253,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect(published[2]?.payload).toMatchObject({ workspace: { id: created.id, name: 'renamed' } });
     expect(published[3]?.payload).toEqual({
       workspaceId: created.id,
-      root: homeDir,
+      root: slashPathOf(homeDir),
       workspace: { ...created, name: 'renamed', lastOpenedAt: expect.any(Number) },
     });
   });
@@ -535,7 +535,7 @@ describe('WorkspaceService (file-backed)', () => {
     });
 
     const list = await build().list();
-    const matches = list.filter((w) => w.root === root);
+    const matches = list.filter((w) => w.root === slashPathOf(root));
     expect(matches).toHaveLength(1);
     expect(matches[0]?.id).toBe(canonicalId);
   });
@@ -924,7 +924,7 @@ describe('WorkspaceService (file-backed)', () => {
       code: ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE,
     });
     expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
-    expect(await registry.update(implicit.id, { name: 'renamed' })).toMatchObject({ name: 'renamed', root: homeDir });
+    expect(await registry.update(implicit.id, { name: 'renamed' })).toMatchObject({ name: 'renamed', root: slashPathOf(homeDir) });
   });
 
   it('setPrimary rejects a path outside the dir set, a missing path, or an unknown id', async () => {
@@ -1370,7 +1370,7 @@ describe('implicit project resolution', () => {
 
     const resolved = await build().resolveImplicit(original);
 
-    expect(resolved).toMatchObject({ id, root: moved });
+    expect(resolved).toMatchObject({ id, root: slashPathOf(moved) });
   });
 
   it('keeps worktrees and subdirectories out of a project whose primary an older version moved out of their repository', async () => {
@@ -1384,8 +1384,8 @@ describe('implicit project resolution', () => {
     for (const dir of [worktree, subdir]) {
       expect(await registry.resolveImplicit(dir)).toMatchObject({ id: encodeWorkDirKey(dir), root: slashPathOf(dir) });
     }
-    expect(await registry.resolveImplicit(main)).toMatchObject(moved);
-    expect(await registry.resolveImplicit(lab.dir('other', 'src'))).toMatchObject(moved);
+    expect(await registry.resolveImplicit(main)).toMatchObject({ ...moved, root: slashPathOf(moved.root) });
+    expect(await registry.resolveImplicit(lab.dir('other', 'src'))).toMatchObject({ ...moved, root: slashPathOf(moved.root) });
   });
 
   it('sends a deleted worktree project to the main checkout and revives it for its old sessions', async () => {
@@ -1402,7 +1402,7 @@ describe('implicit project resolution', () => {
     expect((await registry.resolveImplicit(worktree)).id).toBe(encodeWorkDirKey(main));
 
     const revived = await registry.reviveImplicit(worktreeId, worktree);
-    expect(revived).toMatchObject({ id: worktreeId, root: worktree, kind: 'implicit' });
+    expect(revived).toMatchObject({ id: worktreeId, root: slashPathOf(worktree), kind: 'implicit' });
     expect((await readRegistry()).deleted_workspace_ids).toEqual([]);
   });
 
@@ -1441,7 +1441,7 @@ describe('implicit project resolution', () => {
     await registry.delete(id);
     await fsp.rm(main, { recursive: true });
 
-    expect(await registry.reviveImplicit(id, subdir)).toMatchObject({ id, root: main, kind: 'implicit' });
+    expect(await registry.reviveImplicit(id, subdir)).toMatchObject({ id, root: slashPathOf(main), kind: 'implicit' });
     expect((await readRegistry()).deleted_workspace_ids).toEqual([]);
     expect(await registry.reviveImplicit(windowsId, 'C:\\code\\app\\src')).toMatchObject({ id: windowsId, root: 'C:/code/app' });
   });
@@ -1477,8 +1477,8 @@ describe('implicit project resolution', () => {
     expect(rebuilt.map((ws) => [ws.id, ws.root]).toSorted()).toEqual(
       [
         [mainId, real(main)],
-        [literalId, other.main],
-        [legacyWorktreeId, other.worktree],
+        [literalId, slashPathOf(other.main)],
+        [legacyWorktreeId, slashPathOf(other.worktree)],
         [encodeWorkDirKey('/gone/app'), '/gone/app'],
       ].toSorted(),
     );
@@ -1511,7 +1511,7 @@ describe('implicit project resolution', () => {
 
     const resolved = await build(new HostFileSystem(), undefined, home).resolveImplicit(notes);
 
-    expect(resolved).toMatchObject({ id: encodeWorkDirKey(notes), root: notes });
+    expect(resolved).toMatchObject({ id: encodeWorkDirKey(notes), root: slashPathOf(notes) });
   });
 
   it('keeps a directory under an empty .git directory on its own project', async () => {
@@ -1520,7 +1520,7 @@ describe('implicit project resolution', () => {
 
     const resolved = await build().resolveImplicit(subdir);
 
-    expect(resolved).toMatchObject({ id: encodeWorkDirKey(subdir), root: subdir });
+    expect(resolved).toMatchObject({ id: encodeWorkDirKey(subdir), root: slashPathOf(subdir) });
     expect(tracked).toEqual([{ event: 'project_locate_degraded', properties: { reason: 'unreadable-dotgit' } }]);
   });
 
@@ -1733,7 +1733,7 @@ describe('projects.json migration and patch', () => {
 
     expect((await build().list()).map((workspace) => workspace.id)).toEqual([id]);
     const migrated = await readProjects();
-    expect(migrated.projects[id]?.root).toBe(workDir);
+    expect(migrated.projects[id]?.root).toBe(slashPathOf(workDir));
     expect(migrated.deleted_project_ids).toEqual([]);
   });
 

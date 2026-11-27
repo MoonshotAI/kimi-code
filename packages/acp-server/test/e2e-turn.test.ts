@@ -6,6 +6,7 @@ import { RequestError, type NewSessionResponse, type RequestPermissionRequest } 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus, type Interaction } from '@moonshot-ai/agent-core-v2';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { askUserQuestion, call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
+import { slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AcpInteractionBridge } from '../src/interaction-bridge';
@@ -1002,7 +1003,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     expect(chunk).toContain(`Session: ${sessionId}`);
     expect(chunk).toContain('Model: fake');
     expect(chunk).toContain('Mode: default');
-    expect(chunk).toContain(`Working directory: ${homeDir}`);
+    expect(chunk).toContain(`Working directory: ${slashPathOf(homeDir)}`);
     expect(model!.requests().length).toBe(0);
   }, 30_000);
 

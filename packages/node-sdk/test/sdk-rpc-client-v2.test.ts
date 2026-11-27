@@ -3703,7 +3703,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
 
         const asked = await harness.getWorkspaceTrustInfo(worktree, ofSession);
 
-        expect(asked).toMatchObject({ trusted: false, projectRoot: worktree });
+        expect(asked).toMatchObject({ trusted: false, projectRoot: slashPathOf(worktree) });
         expect(asked.gatedMcpServers.map((server) => server.name)).toEqual(['worktree-server']);
         expect((await harness.getWorkspaceTrustInfo(worktree)).trusted).toBe(true);
         await harness.trustWorkspace(worktree, ofSession);
@@ -3743,10 +3743,10 @@ describe('SDKRpcClientV2 workspace trust', () => {
         const inWorktree = await harness.getWorkspaceTrustInfo(worktree, { sessionId: 'ses_worktree' });
         const atPrimary = await harness.getWorkspaceTrustInfo(main, { sessionId: 'ses_primary' });
 
-        expect(inWorktree).toMatchObject({ trusted: false, projectRoot: main });
+        expect(inWorktree).toMatchObject({ trusted: false, projectRoot: slashPathOf(main) });
         expect(inWorktree.gatedMcpServers.map((server) => server.name)).toEqual(['worktree-server']);
         expect(inWorktree.instructionSources.agentsMdPaths).toEqual([await realpath(join(worktree, 'AGENTS.md'))]);
-        expect(atPrimary).toMatchObject({ trusted: false, projectRoot: main });
+        expect(atPrimary).toMatchObject({ trusted: false, projectRoot: slashPathOf(main) });
         expect(atPrimary.gatedMcpServers.map((server) => server.name)).toEqual(['main-server']);
         expect(atPrimary.instructionSources.agentsMdPaths).toEqual([]);
       } finally {

@@ -454,7 +454,7 @@ describe('acp-server session lifecycle', () => {
       try {
         const dirs = lease.instance.program.dirs;
         await dirs.ready;
-        expect(dirs.additionalDirs).toContain(extraDir);
+        expect(dirs.additionalDirs).toContain(slashPathOf(extraDir));
       } finally {
         lease.dispose();
       }
@@ -617,7 +617,7 @@ describe('acp-server session lifecycle', () => {
           (s) => [s.sessionId, s.cwd],
         );
 
-      expect(workdirs).toEqual([undefined, worktree]);
+      expect(workdirs).toEqual([undefined, slashPathOf(worktree)]);
       expect(await listed(main)).toEqual([[atMain, main]]);
       expect(await listed(worktree)).toEqual([[inWorktree, worktree]]);
     },

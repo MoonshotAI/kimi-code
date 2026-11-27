@@ -253,7 +253,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       `/api/v1/debug/workspace/${workspaceId}/snapshot`,
     );
     expect(workspace.body.data).toMatchObject({
-      metadata: { id: workspaceId, root: home },
+      metadata: { id: workspaceId, root: slashPathOf(home) },
       lifecycle: 'active',
       program: {
         binding: { environmentId: 'local' },
