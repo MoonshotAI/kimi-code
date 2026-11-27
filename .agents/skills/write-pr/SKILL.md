@@ -54,7 +54,7 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
    |---|---|---|---|---|
    | reasoning parsing when `reasoning_details` is an array | string `reasoning` also read | string ignored | OpenAI-compatible gateways that send both (OpenRouter dialect) | none |
 
-2. 人群要具名，不要写"部分用户"。从 `.agents/skills/review-pr/surfaces.md` 里取：客户端（TUI、print 模式、desktop 与 web、VS Code、ACP、SDK）、模型服务的接口格式、平台、配置状态、数据年代、外部脚本。
+2. 受影响的用户要写具体，不要写"部分用户"。从 `.agents/skills/review-pr/users.md` 里找：客户端（TUI、print 模式、desktop 与 web、VS Code、ACP、SDK）、不同的模型服务、平台、配置、旧数据、外部脚本。
 
 3. 改了 prompt 文本（system prompt、工具描述、提醒）的，每一句单独成行，写清这句改动前约束了什么行为、谁依赖、现在由什么来约束。"没有测试引用这句"不是无影响的证据。
 
