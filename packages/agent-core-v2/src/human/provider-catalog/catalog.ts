@@ -56,6 +56,7 @@ export interface CatalogProviderInfo {
   readonly apiKeyEnv?: string;
   readonly baseUrl?: string;
   readonly customHeaders?: Readonly<Record<string, string>>;
+  readonly cacheTtl?: '5m' | '1h';
   readonly defaultModel?: string;
   readonly oauth?: CatalogOAuthRef;
   readonly env?: Readonly<Record<string, string>>;

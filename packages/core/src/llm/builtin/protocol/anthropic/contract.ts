@@ -1,35 +1,35 @@
 export const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 
 export type AnthropicWireContentBlock =
-  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
+  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' } }
   | {
       type: 'image';
       source: { type: 'base64'; data: string; media_type: string } | { type: 'url'; url: string };
-      cache_control?: { type: 'ephemeral' };
+      cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
     }
   | {
       type: 'video';
       source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string };
-      cache_control?: { type: 'ephemeral' };
+      cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
     }
   | {
       type: 'thinking';
       thinking: string;
       signature?: string;
-      cache_control?: { type: 'ephemeral' };
+      cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
     }
   | {
       type: 'tool_use';
       id: string;
       name: string;
       input: unknown;
-      cache_control?: { type: 'ephemeral' };
+      cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
     }
   | {
       type: 'tool_result';
       tool_use_id: string;
       content: AnthropicWireContentBlock[];
-      cache_control?: { type: 'ephemeral' };
+      cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
     };
 
 export type AnthropicWireMessage = {

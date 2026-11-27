@@ -13,6 +13,7 @@ export interface ProtocolProviderOptions {
   readonly offEffort?: string;
   readonly adaptiveThinking?: boolean;
   readonly betaApi?: boolean;
+  readonly cacheTtl?: '5m' | '1h';
   readonly metadata?: Readonly<Record<string, string>>;
   readonly vertexai?: boolean;
   readonly project?: string;

@@ -63,7 +63,7 @@ export function routeFor(model: Model, presets: ProviderRequesterPresets): Adapt
     case 'anthropic':
       return {
         requester: definition?.requester ?? presets.anthropic,
-        options: { betaApi: model.providerOptions?.betaApi === true },
+        options: { betaApi: model.providerOptions?.betaApi === true, cacheTtl: model.providerOptions?.cacheTtl },
         providerId: 'anthropic',
       };
     case 'google-genai':

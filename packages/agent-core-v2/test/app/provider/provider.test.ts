@@ -5,6 +5,7 @@ import {
   ENV_MODEL_PROVIDER_KEY,
   PROVIDERS_SECTION,
   providersEnvBindings,
+  ProviderConfigSchema,
   providersFromToml,
   providersToToml,
   stripProvidersEnv,
@@ -88,5 +89,13 @@ describe('provider config section helpers', () => {
         oauth: { storage: 'file', key: 'token', oauth_host: 'https://auth.example.com' },
       },
     });
+  });
+
+  it('maps and validates cache_ttl', () => {
+    expect(providersFromToml({ kimi: { cache_ttl: '1h' } })).toEqual({ kimi: { cacheTtl: '1h' } });
+    expect(providersToToml({ kimi: { cacheTtl: '1h' } }, {})).toEqual({ kimi: { cache_ttl: '1h' } });
+    expect(ProviderConfigSchema.safeParse({ type: 'kimi', cacheTtl: '5m' }).success).toBe(true);
+    expect(ProviderConfigSchema.safeParse({ type: 'kimi', cacheTtl: '1h' }).success).toBe(true);
+    expect(ProviderConfigSchema.safeParse({ type: 'kimi', cacheTtl: '2h' }).success).toBe(false);
   });
 });

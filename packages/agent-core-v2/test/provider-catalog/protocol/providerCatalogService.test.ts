@@ -244,6 +244,14 @@ describe('ProviderCatalogService routes', () => {
     });
   });
 
+  it('passes cache TTL through provider options', () => {
+    const requester = requesterFactory.createRequester(
+      modelWith({ protocol: 'anthropic', providerOptions: { cacheTtl: '1h' } }),
+    );
+
+    expect(contentsOf(requester).protocol?.options).toMatchObject({ cacheTtl: '1h' });
+  });
+
   it('routes kimi+anthropic with media and explicit beta opt-in', async () => {
     const resolved = requesterFactory.createRequester(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('anthropic');

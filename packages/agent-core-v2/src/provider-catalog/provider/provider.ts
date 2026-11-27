@@ -15,6 +15,7 @@ export interface ProviderConfig {
   searchUrl?: string;
   feedbackUrl?: string;
   customHeaders?: Record<string, string>;
+  cacheTtl?: '5m' | '1h';
   defaultModel?: string;
 
   type?: ProviderType;

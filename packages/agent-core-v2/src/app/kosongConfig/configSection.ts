@@ -51,6 +51,7 @@ export const ProviderConfigSchema = z.object({
   searchUrl: z.string().optional(),
   feedbackUrl: z.string().optional(),
   customHeaders: StringRecordSchema.optional(),
+  cacheTtl: z.enum(['5m', '1h']).optional(),
   defaultModel: z.string().optional(),
 
   type: ProviderTypeSchema.optional(),

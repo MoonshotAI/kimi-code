@@ -33,6 +33,7 @@ export {
 
 export interface AnthropicOptions {
   readonly betaApi?: boolean;
+  readonly cacheTtl?: '5m' | '1h';
   readonly extras?: AnthropicExtraParams;
 }
 

@@ -210,7 +210,9 @@ export function lowerMessage(
 
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
 
-const CACHE_CONTROL = { type: 'ephemeral' as const };
+function cacheControl(ttl?: '5m' | '1h') {
+  return ttl === undefined ? { type: 'ephemeral' as const } : { type: 'ephemeral' as const, ttl };
+}
 
 const CACHEABLE_TYPES: ReadonlySet<string> = new Set([
   'text',
@@ -231,13 +233,33 @@ function annotateCache(module: AnthropicNativeModule): AnthropicNativeModule {
   if (lastMessage !== undefined && lastBlock !== undefined && CACHEABLE_TYPES.has(lastBlock.type)) {
     messages[messages.length - 1] = {
       ...lastMessage,
-      content: [...content.slice(0, -1), { ...lastBlock, cache_control: CACHE_CONTROL }],
+      content: [...content.slice(0, -1), { ...lastBlock, cache_control: cacheControl() }],
     };
   }
   const tools = module.tools.map((tool, index) =>
-    index === module.tools.length - 1 ? { ...tool, cache_control: CACHE_CONTROL } : tool,
+    index === module.tools.length - 1 ? { ...tool, cache_control: cacheControl() } : tool,
   );
   return { ...module, messages, tools };
+}
+
+function applyCacheTtl(
+  system: Request['params']['system'],
+  messages: readonly NativeMessage[],
+  tools: readonly NativeTool[] | undefined,
+  ttl?: '5m' | '1h',
+) {
+  if (ttl === undefined || !Array.isArray(system)) return { system, messages, tools };
+  const lastMessage = messages.at(-1);
+  const lastBlock = lastMessage?.content.at(-1);
+  return {
+    system: system.map((block, index) => (index === system.length - 1 ? ({ ...block, cache_control: cacheControl(ttl) } as const) : block)),
+    messages: messages.map((message, index) =>
+      index === messages.length - 1 && typeof lastBlock === 'object' && CACHEABLE_TYPES.has(lastBlock.type)
+        ? { ...message, content: [...message.content.slice(0, -1), { ...lastBlock, cache_control: cacheControl(ttl) }] }
+        : message,
+    ),
+    tools: tools?.map((tool, index) => (index === tools.length - 1 ? { ...tool, cache_control: cacheControl(ttl) } : tool)),
+  };
 }
 
 function isToolResultOnly(message: NativeMessage): boolean {
@@ -378,7 +400,7 @@ function flatten(native: AnthropicNativeModule, module: AnthropicModule): Reques
       max_tokens: resolveDefaultMaxTokens(module.model.spec.name),
       ...rest,
       system: native.system
-        ? [{ type: 'text', text: native.system, cache_control: CACHE_CONTROL }]
+        ? [{ type: 'text' as const, text: native.system, cache_control: cacheControl() }]
         : undefined,
       messages: native.messages,
       tools: native.tools.length === 0 ? undefined : native.tools,
@@ -386,7 +408,13 @@ function flatten(native: AnthropicNativeModule, module: AnthropicModule): Reques
     },
     module.options?.extras,
   );
-  return { params: params as unknown as Request['params'], betas, useBetaApi };
+  const { system, messages, tools } = applyCacheTtl(
+    params.system,
+    [...params.messages],
+    params.tools,
+    module.options?.cacheTtl,
+  );
+  return { params: { ...params, system, messages, tools } as unknown as Request['params'], betas, useBetaApi };
 }
 
 export const anthropicMedia: MediaSupport = {

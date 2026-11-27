@@ -133,6 +133,9 @@ timeout = 5
 | `oauth` | `table` | 否 | OAuth 凭据引用（`storage`、`key` 两个字段），由登录流程自动注入，通常无需手写 |
 | `env` | `table<string, string>` | 否 | 供应商凭证的备用来源，见 `env` 子表 |
 | `custom_headers` | `table<string, string>` | 否 | 每次请求附加的自定义 HTTP 头 |
+| `cache_ttl` | `"5m"` 或 `"1h"` | 否 | 支持的 Anthropic 和 Kimi 端点的提示词缓存有效期；默认 `"5m"`，仅在显式设置时附加 TTL |
+
+`cache_ttl` 决定可复用提示词前缀在缓存中的保留时间。未设置时沿用供应商默认的 5 分钟。如果同一前缀的请求间隔可能超过 5 分钟但在 1 小时内到达，可以选择 `"1h"`。每次缓存命中都会续期。更长的缓存时间可能提高 cache write 成本，请结合请求频率和价格选择。
 
 **`env` 子表**：可以把供应商惯用的键名（如 `KIMI_API_KEY`）写在 `[providers.<name>.env]` 里，作为 `api_key` / `base_url` 的备用来源。这个子表**只在配置文件里读取**，不会修改 shell 环境：
 

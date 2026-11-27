@@ -133,6 +133,9 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 | `oauth` | `table` | No | OAuth credential reference (`storage` and `key` fields); injected automatically by the login flow, so you normally never write this by hand |
 | `env` | `table<string, string>` | No | Fallback source for provider credentials; see the `env` sub-table |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |
+| `cache_ttl` | `"5m"` or `"1h"` | No | Prompt cache lifetime for supported Anthropic and Kimi endpoints; defaults to `"5m"` and only adds an explicit TTL when set |
+
+`cache_ttl` selects how long a reusable prompt prefix can remain cached. Omitting it preserves the provider's default 5-minute behavior. Choose `"1h"` when requests with the same prefix can arrive more than five minutes apart but within one hour. Each cache hit renews the selected lifetime. Longer cache lifetimes can cost more per cache write, so choose based on your request cadence and pricing.
 
 **`env` sub-table**: You can write provider-conventional key names (such as `KIMI_API_KEY`) inside `[providers.<name>.env]` as a fallback source for `api_key` / `base_url`. This sub-table is **read only from the config file** and does not modify the shell environment:
 

@@ -896,6 +896,7 @@ function buildProtocolProviderOptions(
       if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
+      if (provider?.cacheTtl !== undefined) options.cacheTtl = provider.cacheTtl;
       break;
     case 'openai': {
       const reasoningKey = nonEmpty(model.reasoningKey);

@@ -24,6 +24,32 @@ describe('Anthropic decode fixtures', () => {
 describe('Anthropic transport fixtures', () => {
   runTransportFixtures(anthropicProtocol, anthropicTransportFixtures, 'anthropic');
 });
+describe('cache TTL', () => {
+  it('keeps the existing cache marker when no TTL is configured', () => {
+    const request = anthropicProtocol.encode(testModule({
+      profile: { systemPrompt: 'Cache this system prompt.' },
+    }));
+
+    expect(request.params.system).toMatchObject([{ cache_control: { type: 'ephemeral' } }]);
+  });
+
+  it('adds the selected TTL to system, tool, and message cache markers', () => {
+    const request = anthropicProtocol.encode(testModule({
+      options: { cacheTtl: '1h' },
+      profile: {
+        systemPrompt: 'Cache this system prompt.',
+        tools: [{ name: 'example', description: 'Example tool', parameters: { type: 'object' } }],
+      },
+    }));
+
+    expect(request.params.system).toMatchObject([{ cache_control: { type: 'ephemeral', ttl: '1h' } }]);
+    expect(request.params.tools?.at(-1)?.cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+    expect(request.params.messages.at(-1)?.content.at(-1)).toMatchObject({
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    });
+  });
+});
+
 describe('Anthropic output token ceilings', () => {
   it.each([
     { model: 'claude-opus-5-5' },
