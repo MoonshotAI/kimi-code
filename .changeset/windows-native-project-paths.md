@@ -2,4 +2,4 @@
 "kimi-code-app": patch
 ---
 
-Show Windows project folder paths with backslashes.
+Show and copy Windows project folder paths with backslashes. Copied paths of projects inside a git repository no longer use forward slashes.
