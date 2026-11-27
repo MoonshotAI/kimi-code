@@ -14,7 +14,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
+import { isMcpToolName, mcpServerPrefix, type ToolInfo } from '#/tool/toolContract';
 import { toLegacyToolReturn } from '#/tool/executor';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { legacyRejectedResult, runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
@@ -178,12 +178,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       return result;
     }
     const present = new Set(result.map((tool) => tool.name));
-    const lateMcp = this.currentTools().filter(
-      (info) =>
-        info.source === 'mcp' &&
-        !present.has(info.name) &&
-        this.toolPolicy.isToolActive(info.name, info.source),
-    );
+    const baselineServers = new Set(result.flatMap((tool) => mcpServerPrefix(tool.name) ?? []));
+    const lateMcp = this.currentTools().filter((info) => {
+      if (info.source !== 'mcp' || present.has(info.name)) return false;
+      const server = mcpServerPrefix(info.name);
+      if (server !== undefined && baselineServers.has(server)) return false;
+      return this.toolPolicy.isToolActive(info.name, info.source);
+    });
     if (lateMcp.length === 0) return result;
     return [
       ...result,

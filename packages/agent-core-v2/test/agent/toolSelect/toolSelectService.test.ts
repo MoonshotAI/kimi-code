@@ -771,6 +771,26 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     expect(explicit.profile?.tools?.map((tool) => tool.name)).toEqual(['explicit']);
   });
 
+  it('keeps the baseline request tools when an MCP server already in the baseline adds a tool', async () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool('Base'));
+    registerMcp(h, new StubMcpTool('mcp__docs__search'));
+    const baseline = h.contextMemory.baselineTools();
+    const capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
+    const first = await resolveWith(h, { messages: [userMessage('go')], tools: [...baseline], capabilities });
+    expect(first.profile?.tools?.map((tool) => tool.name)).toEqual(['Base', 'mcp__docs__search']);
+
+    registerMcp(h, new StubMcpTool('mcp__docs__lookup'));
+    registerMcp(h, new StubMcpTool('mcp__slow__fetch'));
+    const next = await resolveWith(h, { messages: [userMessage('go')], tools: [...baseline], capabilities });
+
+    expect(next.profile?.tools?.map((tool) => tool.name)).toEqual([
+      'Base',
+      'mcp__docs__search',
+      'mcp__slow__fetch',
+    ]);
+  });
+
   it('shapeTools returns the identical array when dynamically_loaded_tools is absent', () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool());

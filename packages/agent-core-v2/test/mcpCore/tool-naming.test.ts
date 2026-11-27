@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isMcpToolName } from '#/tool/toolContract';
+import { isMcpToolName, mcpServerPrefix } from '#/tool/toolContract';
 import { qualifyMcpToolName, sanitizeMcpNamePart } from '#/mcpCore/tool-naming';
 
 describe('sanitizeMcpNamePart', () => {
@@ -53,5 +53,19 @@ describe('isMcpToolName', () => {
     expect(isMcpToolName('mcp__github__list')).toBe(true);
     expect(isMcpToolName('Read')).toBe(false);
     expect(isMcpToolName('mcp_one_underscore__no')).toBe(false);
+  });
+});
+
+describe('mcpServerPrefix', () => {
+  it('returns the same server prefix for every tool of a server', () => {
+    expect(mcpServerPrefix(qualifyMcpToolName('docs', 'search'))).toBe('mcp__docs__');
+    expect(mcpServerPrefix(qualifyMcpToolName('docs', 'lookup'))).toBe('mcp__docs__');
+    expect(mcpServerPrefix(qualifyMcpToolName('my__server', 'foo'))).toBe('mcp__my_server__');
+    expect(mcpServerPrefix(qualifyMcpToolName('gh', 'x'.repeat(80)))).toBe('mcp__gh__');
+  });
+
+  it('returns undefined for non-MCP names and names whose server part was cut by the length cap', () => {
+    expect(mcpServerPrefix('Read')).toBeUndefined();
+    expect(mcpServerPrefix(qualifyMcpToolName('a'.repeat(60), 'tool'))).toBeUndefined();
   });
 });
