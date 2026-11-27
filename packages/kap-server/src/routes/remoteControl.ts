@@ -68,6 +68,7 @@ export interface RemoteControlRouteOptions {
   readonly devices: RemoteControlDeviceClient;
   readonly homeDir: string;
   readonly staticEnableError?: string;
+  readonly persistPreference?: (enabled: boolean) => Promise<void>;
   readonly telemetry?: ITelemetryService;
 }
 
@@ -134,6 +135,9 @@ export function registerRemoteControlRoutes(
       const { enabled } = req.body as { enabled: boolean };
       if (!enabled) {
         try {
+          await opts.persistPreference?.(false).catch((persistError: unknown) => {
+            requestLog(req)?.warn({ err: persistError }, 'remote-control preference clear failed');
+          });
           const status = await opts.service.disable();
           opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
           reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
@@ -152,6 +156,9 @@ export function registerRemoteControlRoutes(
       }
       try {
         const status = await opts.service.enable();
+        await opts.persistPreference?.(true).catch((persistError: unknown) => {
+          requestLog(req)?.warn({ err: persistError }, 'remote-control preference save failed');
+        });
         opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
         reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
       } catch (error) {
@@ -198,6 +205,36 @@ export function registerRemoteControlRoutes(
         ),
       );
     }
+  };
+
+  const mutateDevice = async (
+    req: { id: string; params: { id: string } },
+    mutate: (deviceId: string) => Promise<unknown>,
+  ): Promise<{ ok: true }> => {
+    const status = opts.service.status();
+    const holder = await inspectRemoteControlLock(opts.homeDir);
+    const isLocal =
+      req.params.id === createKimiDeviceId(opts.homeDir) ||
+      status.deviceId === req.params.id ||
+      holder?.deviceId === req.params.id;
+    if (!isLocal) {
+      await mutate(req.params.id);
+      return { ok: true };
+    }
+    await opts.persistPreference?.(false).catch((persistError: unknown) => {
+      requestLog(req)?.warn({ err: persistError }, 'remote-control preference clear failed');
+    });
+    if (status.state !== 'off') {
+      await opts.service.disable();
+    }
+    const gate = await acquireRemoteControlStartGate(opts.homeDir, opts.devices);
+    try {
+      await mutate(req.params.id);
+      await opts.service.disable();
+    } finally {
+      await gate.release();
+    }
+    return { ok: true };
   };
 
   const listDevicesRoute = defineRoute(
@@ -260,29 +297,9 @@ export function registerRemoteControlRoutes(
       tags: ['remote-control'],
     },
     async (req, reply) => {
-      await handleDeviceRoute(req, reply, async () => {
-        const status = opts.service.status();
-        const holder = await inspectRemoteControlLock(opts.homeDir);
-        const isLocal =
-          req.params.id === createKimiDeviceId(opts.homeDir) ||
-          status.deviceId === req.params.id ||
-          holder?.deviceId === req.params.id;
-        if (!isLocal) {
-          await opts.devices.deactivateDevice(req.params.id);
-          return { ok: true };
-        }
-        if (status.state !== 'off') {
-          await opts.service.disable();
-        }
-        const gate = await acquireRemoteControlStartGate(opts.homeDir, opts.devices);
-        try {
-          await opts.devices.deactivateDevice(req.params.id);
-          await opts.service.disable();
-        } finally {
-          await gate.release();
-        }
-        return { ok: true };
-      });
+      await handleDeviceRoute(req, reply, () =>
+        mutateDevice(req, (deviceId) => opts.devices.deactivateDevice(deviceId)),
+      );
     },
   );
   app.post(
@@ -305,29 +322,9 @@ export function registerRemoteControlRoutes(
       tags: ['remote-control'],
     },
     async (req, reply) => {
-      await handleDeviceRoute(req, reply, async () => {
-        const status = opts.service.status();
-        const holder = await inspectRemoteControlLock(opts.homeDir);
-        const isLocal =
-          req.params.id === createKimiDeviceId(opts.homeDir) ||
-          status.deviceId === req.params.id ||
-          holder?.deviceId === req.params.id;
-        if (!isLocal) {
-          await opts.devices.deleteDevice(req.params.id);
-          return { ok: true };
-        }
-        if (status.state !== 'off') {
-          await opts.service.disable();
-        }
-        const gate = await acquireRemoteControlStartGate(opts.homeDir, opts.devices);
-        try {
-          await opts.devices.deleteDevice(req.params.id);
-          await opts.service.disable();
-        } finally {
-          await gate.release();
-        }
-        return { ok: true };
-      });
+      await handleDeviceRoute(req, reply, () =>
+        mutateDevice(req, (deviceId) => opts.devices.deleteDevice(deviceId)),
+      );
     },
   );
   app.delete(

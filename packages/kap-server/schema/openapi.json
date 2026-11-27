@@ -10424,6 +10424,11 @@
                           "minLength": 1,
                           "type": "string"
                         },
+                        "kap_version": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
                         "kimi_agent_protocol_version": {
                           "minLength": 1,
                           "type": "string"
@@ -10460,6 +10465,7 @@
                       },
                       "required": [
                         "kimi_agent_protocol_version",
+                        "kap_version",
                         "server_version",
                         "capabilities",
                         "server_id",

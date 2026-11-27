@@ -42,7 +42,7 @@ describe('kimi web foreground shutdown', () => {
             entry: failingHook ? failingHookEntry : command.entry,
             imports: [...(command.imports ?? []), ...signalPreloads],
           },
-          args: failingHook ? [] : ['web', '--port', '0', '--no-open'],
+          args: failingHook ? [] : ['web', '--port', '0', '--no-open', '--no-daemon'],
           cwd: home.workspace,
           env: kimiCliEnv(home, { FORCE_COLOR: '0' }),
           logDir: home.root,

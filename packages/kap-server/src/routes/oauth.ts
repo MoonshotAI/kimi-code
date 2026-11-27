@@ -71,6 +71,7 @@ export function registerOAuthRoutes(
   remoteControl: RemoteControlManager,
   remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear' | 'deactivateDevice'>,
   homeDir: string,
+  persistRemoteControlPreference?: (enabled: boolean) => Promise<void>,
 ): void {
   const loginStartRoute = defineRoute(
     {
@@ -160,6 +161,9 @@ export function registerOAuthRoutes(
       }
       const serialized = kimiLogoutQueue.then(async () => {
         try {
+          await persistRemoteControlPreference?.(false).catch((persistError: unknown) => {
+            requestLog(req)?.warn({ err: persistError }, 'remote-control preference clear failed');
+          });
           const status = remoteControl.status();
           if (status.state === 'on') {
             remoteControlDevices.clear();

@@ -98,7 +98,7 @@
     "apps/kimi-code/test/cli/update/native-swap.test.ts": 1,
     "apps/kimi-code/test/cli/update/preflight.test.ts": 1,
     "apps/kimi-code/test/cli/v2-run-print.test.ts": 10,
-    "apps/kimi-code/test/cli/web/web.test.ts": 2,
+    "apps/kimi-code/test/cli/web/web.test.ts": 1,
     "apps/kimi-code/test/migration/migration-screen.test.ts": 1,
     "apps/kimi-code/test/postinstall/takeover.test.ts": 2,
     "apps/kimi-code/test/tui/commands/reload.test.ts": 1,

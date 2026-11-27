@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { Duplex, duplexPair, PassThrough } from 'node:stream';
-import type { OutgoingHttpHeaders } from 'node:http';
+import { request as httpRequest, type OutgoingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -15,7 +15,12 @@ import { IConfigService, IOAuthService, hostIdSchema, hostsSectionSchema } from 
 import { describe, expect, it, vi } from 'vitest';
 import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
+import { KAP_VERSION } from '../src/protocol/version';
+import { HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
+import {
+  readDaemonRemoteControlPreference,
+  writeDaemonRemoteControlPreference,
+} from '../src/services/daemonSettings';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
 import { hostWireSchema } from '../src/services/hosts/hostsConfig';
@@ -129,7 +134,7 @@ describe('ssh bootstrap', () => {
   });
 
   it('finds the marker line among shell startup noise', () => {
-    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.0.0"}\n`;
+    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"kap_version":${String(KAP_VERSION)},"version":"1.0.0"}\n`;
     expect(checkBootstrapOutput(stdout)).toBe(true);
     expect(checkBootstrapOutput('command output without a marker\n')).toBe(false);
   });
@@ -144,16 +149,45 @@ describe('ssh bootstrap', () => {
     expect(thrown(() => checkBootstrapOutput('0.40.0\n__KIMI_ENSURE_DAEMON__{"protocol":0}\n')).remoteVersion).toBe('0.40.0');
   });
 
-  it('reports a remote below the host API level as outdated and accepts a newer one', () => {
-    const marker = (apiLevel: number | undefined): string =>
-      `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: apiLevel, version: '2.5.2' })}\n`;
-    for (const apiLevel of [undefined, HOST_API_LEVEL - 1]) {
-      const error = thrown(() => checkBootstrapOutput(marker(apiLevel)));
+  it('rejects KAP version mismatches in both directions (remote older -> executor_outdated, remote newer -> client_outdated)', () => {
+    const marker = (kapVersion: number | undefined, protocol = HOST_PROTOCOL_VERSION): string =>
+      `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol, api_level: kapVersion, kap_version: kapVersion, version: '2.5.2' })}\n`;
+    for (const kapVersion of [undefined, KAP_VERSION - 1]) {
+      const error = thrown(() => checkBootstrapOutput(marker(kapVersion)));
       expect(error.failure).toBe('executor_outdated');
       expect(error.remoteVersion).toBe('2.5.2');
       expect(error.message).toContain('kimi upgrade');
     }
-    expect(checkBootstrapOutput(marker(HOST_API_LEVEL + 1))).toBe(true);
+    const newerKap = thrown(() => checkBootstrapOutput(marker(KAP_VERSION + 1)));
+    expect(newerKap.failure).toBe('client_outdated');
+    expect(newerKap.remoteVersion).toBe('2.5.2');
+    expect(newerKap.message).toContain('update this app');
+
+    const newerProtocol = thrown(() => checkBootstrapOutput(marker(KAP_VERSION, HOST_PROTOCOL_VERSION + 1)));
+    expect(newerProtocol.failure).toBe('client_outdated');
+    expect(newerProtocol.remoteVersion).toBe('2.5.2');
+  });
+
+  it('reports remote_busy when remote CLI was upgraded while an older incompatible daemon is still running work', () => {
+    const busyIncompatible = `__KIMI_ENSURE_DAEMON__${JSON.stringify({
+      protocol: HOST_PROTOCOL_VERSION,
+      api_level: KAP_VERSION - 1,
+      kap_version: KAP_VERSION - 1,
+      version: '2.6.0',
+      cli_version: '2.8.0',
+    })}\n`;
+    const error = thrown(() => checkBootstrapOutput(busyIncompatible));
+    expect(error.failure).toBe('remote_busy');
+    expect(error.remoteVersion).toBe('2.6.0');
+
+    const busyCompatible = `__KIMI_ENSURE_DAEMON__${JSON.stringify({
+      protocol: HOST_PROTOCOL_VERSION,
+      api_level: KAP_VERSION,
+      kap_version: KAP_VERSION,
+      version: '2.7.2',
+      cli_version: '2.7.3',
+    })}\n`;
+    expect(checkBootstrapOutput(busyCompatible)).toBe(true);
   });
 
   it.each([
@@ -162,14 +196,14 @@ describe('ssh bootstrap', () => {
     ['lock_timeout', 'remote_start_failed'],
     ['something_new', 'unknown'],
   ] as const)('maps the ensure-daemon error %s to %s', (code, failure) => {
-    const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
+    const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
     const error = thrown(() => checkBootstrapOutput(stdout));
     expect(error.failure).toBe(failure);
     expect(error.remoteVersion).toBe('2.0.0');
   });
 
   it('accepts a probe with a supported protocol and API level', () => {
-    expect(checkBootstrapOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0"}\n`)).toBe(true);
+    expect(checkBootstrapOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"2.0.0"}\n`)).toBe(true);
   });
 
   it.skipIf(process.platform === 'win32')('reports an older kimi without the probe as outdated with its version', () =>
@@ -221,7 +255,7 @@ describe('ssh bootstrap', () => {
   it.skipIf(process.platform === 'win32')('continues after an unmatched frame in the same stdout chunk as the marker', () =>
     withFakeSsh(
       `#!/bin/sh
-printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
+printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
 read line
 printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
 `,
@@ -241,7 +275,7 @@ printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
   it.skipIf(process.platform === 'win32')('preserves UTF-8 bytes when the handshake splits a character', () =>
     withFakeSsh(
       `#!/usr/bin/env node
-const output = Buffer.from(${JSON.stringify(`__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: '版本1.2.3' })}\n`)});
+const output = Buffer.from(${JSON.stringify(`__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: KAP_VERSION, version: '版本1.2.3' })}\n`)});
 const split = output.indexOf(Buffer.from('版本')) + 1;
 process.stdout.write(output.subarray(0, split));
 setImmediate(() => {
@@ -276,7 +310,7 @@ process.stdin.resume();
     withFakeSsh(
       (dir) => `#!/bin/sh
 echo x >> '${join(dir, 'count')}'
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"1.2.3"}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.req"'*)
@@ -334,7 +368,7 @@ if [ "$attempt" = 2 ]; then
   echo 'ssh: connect to host dev port 22: Connection refused' >&2
   exit 255
 fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"1.2.3"}'
 if [ "$attempt" = 1 ]; then exit 1; fi
 while IFS= read -r line; do :; done
 `,
@@ -364,7 +398,7 @@ if [ -e '${join(dir, 'down')}' ]; then
   echo 'ssh: connect to host dev port 22: Connection refused' >&2
   exit 255
 fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"1.2.3"}'
 while IFS= read -r line; do :; done
 `,
       async (ssh, dir) => {
@@ -496,7 +530,7 @@ describe('host HTTP session', () => {
   it('cancels a timed out request and ignores its late response', () =>
     withFakeSsh(
       (dir) => `#!/bin/sh
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"1.2.3"}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.cancel"'*)
@@ -644,7 +678,7 @@ async function serve() {
   while (waking && existsSync(${JSON.stringify(join(dir, 'hold'))})) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  console.log('__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}');
+  console.log('__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(KAP_VERSION)},"version":"1.2.3"}');
   for await (const line of createInterface({ input: process.stdin })) {
     const frame = JSON.parse(line);
     if (!waking) process.exit(0);
@@ -1239,6 +1273,163 @@ describe('stdio rpc transport', () => {
       await app.close();
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('dual-listener daemon (daemon.sock + loopback TCP)', () => {
+  it.skipIf(process.platform === 'win32')(
+    'enforces bearer auth on TCP while allowing unauthenticated JSONL RPC and HTTP over daemon.sock',
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), 'kimi-dual-daemon-'));
+      const socketPath = join(home, 'server', 'daemon.sock');
+      const env = {
+        KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0',
+        KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0',
+      };
+      const events: string[] = [];
+      let didCloseCount = 0;
+      const server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        socketPath,
+        managedBy: 'daemon',
+        logLevel: 'silent',
+        serverVersion: '2.7.3',
+        env,
+        onBeforeSocketListen: ({ port }) => {
+          expect(port).toBeGreaterThan(0);
+          events.push('before_socket_listen');
+        },
+        onDidClose: () => {
+          didCloseCount += 1;
+        },
+      });
+      try {
+        expect(events).toEqual(['before_socket_listen']);
+        expect(server.port).toBeGreaterThan(0);
+        const tcpOrigin = `http://${server.host}:${String(server.port)}`;
+
+        const unauthTcp = await fetch(`${tcpOrigin}/api/v1/meta`);
+        expect(unauthTcp.status).toBe(401);
+
+        const tcpImportProviders = await fetch(`${tcpOrigin}/api/v1/hosts:import-providers`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${server.authTokenService.getToken()}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ providers: {}, models: {} }),
+        });
+        expect(tcpImportProviders.status).toBe(404);
+
+        const authTcp = await fetch(`${tcpOrigin}/api/v1/meta`, {
+          headers: { Authorization: `Bearer ${server.authTokenService.getToken()}` },
+        });
+        expect(authTcp.status).toBe(200);
+        const tcpBody = (await authTcp.json()) as { data: { kap_version: number; server_version: string } };
+        expect(tcpBody.data.kap_version).toBe(KAP_VERSION);
+        expect(tcpBody.data.server_version).toBe('2.7.3');
+
+        const udsHttp = (method: string, path: string, host = '127.0.0.1') =>
+          new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
+            const req = httpRequest({ socketPath, method, path, headers: { host } }, (res) => {
+              const chunks: Buffer[] = [];
+              res.on('data', (chunk: Buffer) => chunks.push(chunk));
+              res.on('end', () =>
+                resolve({ status: res.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown> }),
+              );
+            });
+            req.on('error', reject);
+            req.end();
+          });
+        const udsJsonl = (frame: Record<string, unknown>, prefix = '') =>
+          new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
+            const sock = createConnection(socketPath);
+            createInterface({ input: sock, crlfDelay: Infinity }).once('line', (line) => {
+              sock.destroy();
+              const res = JSON.parse(line) as { status: number; body: string };
+              resolve({ status: res.status, body: JSON.parse(Buffer.from(res.body, 'base64').toString('utf8')) as Record<string, unknown> });
+            });
+            sock.once('error', reject);
+            sock.write(`${prefix}${JSON.stringify(frame)}\n`);
+          });
+
+        const metaUds = await udsHttp('GET', '/api/v1/meta', 'unix');
+        expect(metaUds.status).toBe(200);
+        expect(metaUds.body['data']).toMatchObject({ kap_version: KAP_VERSION, server_version: '2.7.3' });
+
+        const metaJsonl = await udsJsonl(
+          { type: 'http.req', id: 'm1', method: 'GET', path: '/api/v1/meta', headers: { host: '127.0.0.1' } },
+          '  ',
+        );
+        expect(metaJsonl.status).toBe(200);
+        expect(metaJsonl.body['data']).toMatchObject({ kap_version: KAP_VERSION });
+
+        const importJsonl = await udsJsonl({
+          type: 'http.req',
+          id: 'imp1',
+          method: 'POST',
+          path: '/api/v1/hosts:import-providers',
+          headers: { host: '127.0.0.1', 'content-type': 'application/json' },
+          body: Buffer.from(JSON.stringify({ providers: {}, models: {} })).toString('base64'),
+        });
+        expect(importJsonl.status).toBe(200);
+        expect(importJsonl.body['code']).toBe(0);
+
+        const shutdownUds = await udsHttp('POST', '/api/v1/shutdown');
+        expect(shutdownUds.status).toBe(200);
+        expect(shutdownUds.body).toMatchObject({ code: 0, data: { ok: true } });
+
+        await Promise.all([server.close(), server.close()]);
+        expect(didCloseCount).toBe(1);
+      } finally {
+        await server.close();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'closes idle UDS connections that never send a first byte within sniffTimeoutMs',
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), 'kimi-uds-sniff-timeout-'));
+      const socketPath = join(home, 'server', 'daemon.sock');
+      const app = Fastify();
+      await app.listen({ host: '127.0.0.1', port: 0 });
+      const wssV1 = new WebSocketServer({ noServer: true });
+      const rpcServer = await startUnixRpcServer(socketPath, {
+        app: app as never,
+        wssV1,
+        httpServer: app.server,
+        sniffTimeoutMs: 50,
+      });
+      try {
+        const client = createConnection(socketPath);
+        await once(client, 'connect');
+        await once(client, 'close');
+        expect(client.closed).toBe(true);
+      } finally {
+        await rpcServer.close();
+        wssV1.close();
+        await app.close();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('persists and clears the daemon Remote Control preference atomically', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-daemon-rc-pref-'));
+    try {
+      expect(await readDaemonRemoteControlPreference(home)).toBe(false);
+      await writeDaemonRemoteControlPreference(home, true);
+      expect(await readDaemonRemoteControlPreference(home)).toBe(true);
+      await writeDaemonRemoteControlPreference(home, false);
+      expect(await readDaemonRemoteControlPreference(home)).toBe(false);
+    } finally {
+      await rm(home, { recursive: true, force: true });
     }
   });
 });

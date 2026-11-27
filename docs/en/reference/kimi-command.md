@@ -178,7 +178,7 @@ kimi -S "$SID" -p "Run the unit tests and fix any failures"
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (start or reuse the local service and open the web UI), `rc` (manage the Remote Control tunnel), `daemon` (inspect or manage the shared background daemon), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -200,35 +200,46 @@ kimi acp
 
 ### `kimi web`
 
-Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down on `SIGINT` or `SIGTERM`, for example when you press `Ctrl-C`. A successful shutdown exits with code `0`. On a cleanup failure, the command reports the error on `stderr` even with server logging off and exits with code `1`.
+On macOS and Linux, `kimi web` starts or reuses the shared background daemon (a single process listening on both local loopback TCP and `~/.kimi-code/server/daemon.sock`, shared across Web, Remote Control, and SSH), prints the access URL, opens the web UI in the default browser, and returns immediately. Pass `--no-daemon` to run an independent server in the foreground (for example when binding a LAN address or custom port; Windows runs in the foreground by default). A foreground server stays attached to the terminal and shuts down on `SIGINT` or `SIGTERM`, for example when you press `Ctrl-C`. A successful shutdown exits with code `0`. On a cleanup failure, the command reports the error on `stderr` even with server logging off and exits with code `1`.
 
 When the server is running, `GET /api/v1/kap.md` returns the version-matched KAP runtime guide, `GET /openapi.json` returns the REST OpenAPI document, and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For interacting with or handing off sessions from other agents, see [Using in Other Agents (Agent to Agent)](../guides/other-agents.md).
 
 ```sh
-kimi web                 # run the server in the foreground and open the browser
-kimi web --no-open       # don't open the browser
-kimi web --port 58628    # pick a specific bind port
+kimi web                             # start or reuse the background daemon and open the browser
+kimi web --no-open                   # ensure the daemon is running without opening a browser
+kimi web --no-daemon --port 58628    # run an independent foreground server on a custom port
 ```
-
-Multiple instances can share one home directory: each registers itself under `~/.kimi-code/server/instances/`, and a busy port is retried with `port + 1` (58628, 58629, …).
 
 | Option | Description |
 | --- | --- |
-| `--port <port>` | Bind port; defaults to `58627`; a busy port is retried with `+1` |
-| `--host [host]` | Bind host; omit for `127.0.0.1` (this machine only), pass a bare `--host` for `0.0.0.0` (all interfaces) |
-| `--allowed-host <host...>` | Extra Host header values allowed through the DNS-rebinding check; repeatable or comma-separated |
-| `--log-level <level>` | Enable server logs at the selected level; omitted by default |
-| `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
-| `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
-| `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
+| `--no-daemon` | Run an independent server in the foreground instead of sharing the background daemon; shuts down on `SIGINT` / `SIGTERM` (`Ctrl-C`) |
+| `--port <port>` | Bind port (requires `--no-daemon` or `--json`); defaults to `58627`; a busy port is retried with `+1` |
+| `--host [host]` | Bind host (requires `--no-daemon`); omit for `127.0.0.1` (this machine only), pass a bare `--host` for `0.0.0.0` (all interfaces) |
+| `--allowed-host <host...>` | Extra Host header values allowed through the DNS-rebinding check (requires `--no-daemon`); repeatable or comma-separated |
+| `--log-level <level>` | Enable foreground server logs at the selected level (requires `--no-daemon`); background daemon logs write to `~/.kimi-code/server/daemon.log` |
+| `--debug-endpoints` | Mount `/api/v1/debug/*` routes (requires `--no-daemon`, off by default) |
+| `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes (requires `--no-daemon`); only for trusted networks or behind an authenticating proxy |
+| `--web-title <title>` | Custom browser tab title for the web UI (requires `--no-daemon`); defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
 | `--json` | Machine-readable startup mode: skips opening the browser, mints an in-memory bearer token for this process, prints a single JSON line (`{ origin, ws_url, token, kimi_agent_protocol_version }`) on `stdout` once ready, and routes logs to `stderr` |
 
-`kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
+`kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment. If managed `KIMI_*` or proxy environment variables in the current shell differ from the running daemon, the command fails with an explicit message instructing you to run `kimi daemon restart` or pass `--no-daemon`.
 
 ::: danger
-`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with `Ctrl+C` when you are done.
+`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it with `--no-daemon` on a trusted network or behind your own authenticating reverse proxy, and stop the server with `Ctrl+C` when you are done.
 :::
+
+#### `kimi rc` / `kimi rc stop`
+
+`kimi rc` (alias `kimi remote`) ensures the background daemon is running, enables and persists the Remote Control tunnel, prints the QR code and access URL, and returns immediately; `kimi rc stop` stops the tunnel and clears the saved preference. Pass `--no-daemon` to run in the foreground.
+
+#### `kimi daemon`
+
+Inspect or manage the shared background daemon (macOS and Linux):
+
+- `kimi daemon status`: show version, KAP protocol version, `PID`, start time, listener addresses, Remote Control status, active sessions, and log path.
+- `kimi daemon stop [--force]`: gracefully stop the background daemon (escalating after timeout); prompts for confirmation in an interactive terminal when sessions are actively running, or requires `--force` non-interactively.
+- `kimi daemon restart [--force]`: stop and restart the background daemon with the current environment, restoring Remote Control when previously enabled.
 
 #### `kimi server kill`
 

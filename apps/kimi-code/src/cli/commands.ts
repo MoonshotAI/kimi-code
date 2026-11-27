@@ -16,6 +16,7 @@ import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 import { registerSessionCommand } from './sub/session';
 import { registerVisCommand } from './sub/vis';
+import { registerDaemonCommand } from './sub/daemon';
 import { registerWebCommand } from './sub/web';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
@@ -154,6 +155,7 @@ export function createProgram(
   registerSessionCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
+  registerDaemonCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);

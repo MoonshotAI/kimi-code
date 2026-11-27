@@ -180,7 +180,7 @@ export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<Surface
   const server = await TerminalProcess.start({
     label: 'kimi web',
     command: kimiCliCommand(),
-    args: ['web', '--port', reopen?.state.port ?? String(ownPorts.low), '--no-open'],
+    args: ['web', '--port', reopen?.state.port ?? String(ownPorts.low), '--no-open', '--no-daemon'],
     cwd: home.workspace,
     env: productEnv(home, { FORCE_COLOR: '0' }),
     logDir: home.root,

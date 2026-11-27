@@ -178,7 +178,7 @@ kimi -S "$SID" -p "运行单测，如果有失败请一并修掉"
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`import-sessions`（导入 Claude Code 和 Codex 会话）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（启动或复用本地服务并打开 web UI）、`rc`（管理远程控制隧道）、`daemon`（查看或管理共享后台 daemon）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`import-sessions`（导入 Claude Code 和 Codex 会话）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -200,35 +200,46 @@ kimi acp
 
 ### `kimi web`
 
-在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令收到 `SIGINT` 或 `SIGTERM`（例如按 `Ctrl-C`）时开始关闭。成功关闭时退出码为 `0`。清理失败时，即使关闭了服务日志，命令也会将错误写入 `stderr` 并以退出码 `1` 退出。
+在 macOS 和 Linux 上，`kimi web` 会自动拉起或复用共享后台 daemon（同一个进程同时监听本机 loopback TCP 与 `~/.kimi-code/server/daemon.sock`，承载 Web、Remote Control 与 SSH 会话），打印访问地址并在默认浏览器中打开 web UI 后立即返回。需要运行独立的前台服务（例如绑定局域网地址或自定义端口）时，显式传入 `--no-daemon`（Windows 上默认以前台模式运行）。前台服务保持在当前终端运行，收到 `SIGINT` 或 `SIGTERM`（例如按 `Ctrl-C`）时开始关闭。成功关闭时退出码为 `0`。清理失败时，即使关闭了服务日志，命令也会将错误写入 `stderr` 并以退出码 `1` 退出。
 
 服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[在其他 Agent 中使用（Agent to Agent）](../guides/other-agents.md)。
 
 ```sh
-kimi web                 # 前台运行服务并打开浏览器
-kimi web --no-open       # 不打开浏览器
-kimi web --port 58628    # 指定绑定端口
+kimi web                             # 拉起或复用后台 daemon 并打开浏览器
+kimi web --no-open                   # 确保 daemon 运行，不打开浏览器
+kimi web --no-daemon --port 58628    # 在前台运行独立服务并指定端口
 ```
-
-同一 home 目录下可以同时运行多个实例：每个实例注册到 `~/.kimi-code/server/instances/`，端口被占用时自动 +1 重试（58628、58629……）。
 
 | 选项 | 说明 |
 | --- | --- |
-| `--port <port>` | 绑定端口；默认 `58627`；被占用时自动 +1 重试 |
-| `--host [host]` | 绑定地址；缺省 `127.0.0.1`（仅本机），裸 `--host` 绑 `0.0.0.0`（所有网卡） |
-| `--allowed-host <host...>` | DNS 重绑定检查额外允许的 Host 头，可重复或逗号分隔 |
-| `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
-| `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
-| `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
-| `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
+| `--no-daemon` | 不复用后台 daemon，在当前终端前台启动独立服务，收到 `SIGINT` / `SIGTERM`（如 `Ctrl-C`）时退出 |
+| `--port <port>` | 绑定端口（需配合 `--no-daemon` 或 `--json`）；默认 `58627`；被占用时自动 +1 重试 |
+| `--host [host]` | 绑定地址（需配合 `--no-daemon`）；缺省 `127.0.0.1`（仅本机），裸 `--host` 绑 `0.0.0.0`（所有网卡） |
+| `--allowed-host <host...>` | DNS 重绑定检查额外允许的 Host 头（需配合 `--no-daemon`），可重复或逗号分隔 |
+| `--log-level <level>` | 按所选级别开启前台服务日志（需配合 `--no-daemon`）；后台 daemon 日志写入 `~/.kimi-code/server/daemon.log` |
+| `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（需配合 `--no-daemon`，默认关闭） |
+| `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权（需配合 `--no-daemon`）；仅用于可信网络或自有鉴权代理之后 |
+| `--web-title <title>` | 自定义 web UI 的浏览器标签页标题（需配合 `--no-daemon`）；默认为工作区目录名 |
 | `--no-open` | 就绪后不自动打开浏览器 |
 | `--json` | 以机器可读模式启动：不自动打开浏览器，为当前进程生成一次性内存 token，就绪后向 `stdout` 输出单行 JSON（含 `origin`、`ws_url`、`token`、`kimi_agent_protocol_version`），日志输出到 `stderr` |
 
-`kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
+`kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。若当前 shell 的受管理 `KIMI_*` 或代理环境变量与运行中的 daemon 不一致，命令会明确报错提示运行 `kimi daemon restart` 或加上 `--no-daemon`。
 
 ::: danger 警告
-`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 `Ctrl+C` 停止服务。
+`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后配合 `--no-daemon` 使用，用完后按 `Ctrl+C` 停止服务。
 :::
+
+#### `kimi rc` / `kimi rc stop`
+
+`kimi rc`（别名 `kimi remote`）确保后台 daemon 运行，开启并持久化 Remote Control 隧道，打印二维码与访问地址后立即返回；`kimi rc stop` 关闭隧道并清除持久化偏好。传入 `--no-daemon` 可在前台独立运行。
+
+#### `kimi daemon`
+
+查看或管理共享后台 daemon（macOS 与 Linux）：
+
+- `kimi daemon status`：显示版本、KAP 协议版本、`PID`、启动时间、监听地址、Remote Control 状态、正在运行的会话以及日志路径。
+- `kimi daemon stop [--force]`：优雅停止后台 daemon（超时后强制终止）；若有正在运行轮次的会话，交互终端会先询问确认，非交互环境需显式传入 `--force`。
+- `kimi daemon restart [--force]`：停止并按当前环境重启后台 daemon，同时按持久化偏好恢复 Remote Control。
 
 #### `kimi server kill`
 

@@ -519,30 +519,42 @@ describe('server-v2 /api/v1/remote-control', () => {
     } as unknown as RemoteControlManager;
     const devices = {
       deactivateDevice: async () => {},
+      deleteDevice: async () => {},
     } as unknown as RemoteControlDeviceClient;
-    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
+    const persisted: boolean[] = [];
+    const handlers = new Map<string, (req: unknown, reply: unknown) => unknown>();
     const app = {
       get: () => {},
       post: (path: string, _options: unknown, next: unknown) => {
-        if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
+        if (path === '/remote-control/devices/:id/deactivate') handlers.set('deactivate', next as never);
       },
       patch: () => {},
-      delete: () => {},
-    };
-    registerRemoteControlRoutes(app as never, { service, devices, homeDir });
-
-    let payload: unknown;
-    await handler!(
-      { id: 'req-1', params: { id: createKimiDeviceId(homeDir) } },
-      {
-        send: (value: unknown) => {
-          payload = value;
-        },
+      delete: (path: string, _options: unknown, next: unknown) => {
+        if (path === '/remote-control/devices/:id') handlers.set('delete', next as never);
       },
-    );
+    };
+    registerRemoteControlRoutes(app as never, {
+      service,
+      devices,
+      homeDir,
+      persistPreference: async (enabled) => {
+        persisted.push(enabled);
+      },
+    });
 
+    const localId = createKimiDeviceId(homeDir);
+    let payload: unknown;
+    const reply = {
+      send: (value: unknown) => {
+        payload = value;
+      },
+    };
+    await handlers.get('deactivate')!({ id: 'req-1', params: { id: localId } }, reply);
     expect(disabled).toBe(true);
     expect((payload as Envelope<{ ok: true }>).data.ok).toBe(true);
+    await handlers.get('delete')!({ id: 'req-2', params: { id: 'other-device' } }, reply);
+    await handlers.get('delete')!({ id: 'req-3', params: { id: localId } }, reply);
+    expect(persisted).toEqual([false, false]);
     await rm(homeDir, { recursive: true, force: true });
   });
 

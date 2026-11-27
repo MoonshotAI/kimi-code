@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   createServerLogger,
+  KAP_VERSION,
   KIMI_AGENT_PROTOCOL_VERSION,
   startServer,
   type IAuthTokenService,
@@ -32,10 +33,22 @@ import {
   isLoopbackHost,
   splitTokenFragment,
 } from './access-urls';
+import {
+  computeManagedDaemonEnvHashes,
+  daemonLogPath,
+  daemonSocketPath,
+  enableDaemonRemoteControl,
+  ensureSharedDaemon,
+  isSharedDaemonSupported,
+  removeDaemonStateForPid,
+  writeDaemonState,
+} from './daemon-client';
 import { type NetworkAddress } from './networks';
 import {
+  formatRemoteControlAlreadyRunning,
   formatRemoteControlOutput,
   formatRemoteControlStatus,
+  RemoteControlAlreadyRunningError,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
@@ -44,6 +57,7 @@ import {
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
   DEFAULT_LAN_HOST,
+  DEFAULT_LOG_LEVEL,
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
@@ -55,6 +69,18 @@ import {
 
 const WEB_ASSETS_DIR = 'web-dist';
 
+const FOREGROUND_ONLY_OPTION_ENTRIES = [
+  ['host', '--host'],
+  ['port', '--port'],
+  ['allowedHost', '--allowed-host'],
+  ['insecureNoTls', '--insecure-no-tls'],
+  ['allowRemoteShutdown', '--allow-remote-shutdown'],
+  ['dangerousBypassAuth', '--dangerous-bypass-auth'],
+  ['logLevel', '--log-level'],
+  ['debugEndpoints', '--debug-endpoints'],
+  ['webTitle', '--web-title'],
+] as const;
+
 interface RoutedServer {
   readonly address: string;
   readonly logger: ServerLogger;
@@ -65,6 +91,9 @@ export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
   json?: boolean;
   remoteControl?: boolean;
+  daemon?: boolean;
+  daemonServer?: boolean;
+  explicitServerFlags?: readonly string[];
 }
 
 export interface ForegroundControls {
@@ -77,6 +106,11 @@ export interface StartForegroundHooks {
 }
 
 export interface WebCommandDeps {
+  platform?: NodeJS.Platform;
+  homeDir?: () => string;
+  env?: NodeJS.ProcessEnv;
+  ensureSharedDaemon?: typeof ensureSharedDaemon;
+  enableDaemonRemoteControl?: typeof enableDaemonRemoteControl;
   startServerForeground?: (
     options: ParsedServerOptions,
     hooks?: StartForegroundHooks,
@@ -93,25 +127,47 @@ export function buildWebUrl(origin: string, token: string): string {
   return buildOpenableUrl(origin, token);
 }
 
+export function collectExplicitForegroundFlags(opts: WebCliOptions): string[] {
+  if (opts.explicitServerFlags !== undefined) {
+    return [...opts.explicitServerFlags];
+  }
+  const flags: string[] = [];
+  if (opts.host !== undefined && opts.host !== false) flags.push('--host');
+  if (opts.port !== undefined && opts.port !== String(DEFAULT_SERVER_PORT)) flags.push('--port');
+  if (opts.allowedHost !== undefined && opts.allowedHost.length > 0) flags.push('--allowed-host');
+  if (opts.insecureNoTls === false) flags.push('--no-insecure-no-tls');
+  if (opts.allowRemoteShutdown === true) flags.push('--allow-remote-shutdown');
+  if (opts.dangerousBypassAuth === true) flags.push('--dangerous-bypass-auth');
+  if (opts.logLevel !== undefined) flags.push('--log-level');
+  if (opts.debugEndpoints === true) flags.push('--debug-endpoints');
+  if (opts.webTitle !== undefined) flags.push('--web-title');
+  return flags;
+}
+
 export function buildWebCommand(
   cmd: Command,
-  opts: { forceRemoteControl?: boolean; defaultOpen?: boolean } = {},
+  opts: {
+    forceRemoteControl?: boolean;
+    defaultOpen?: boolean;
+    includeHiddenDaemonServerFlag?: boolean;
+  } = {},
 ): Command {
   const forceRemoteControl = opts.forceRemoteControl === true;
   const defaultOpen = opts.defaultOpen ?? true;
   const withServerOptions = cmd
+    .allowExcessArguments(false)
     .option(
       '--port <port>',
-      `Bind port (default ${DEFAULT_SERVER_PORT})`,
+      `Bind port (default ${DEFAULT_SERVER_PORT}; requires --no-daemon or --json)`,
       String(DEFAULT_SERVER_PORT),
     )
     .option(
       '--host [host]',
-      `Bind host. Omit to bind ${DEFAULT_SERVER_HOST} (this machine only); pass --host to bind ${DEFAULT_LAN_HOST} (all interfaces), or --host <host> for a specific host. The bearer token is printed at startup.`,
+      `Bind host (requires --no-daemon or --json). Omit to bind ${DEFAULT_SERVER_HOST}; pass --host to bind ${DEFAULT_LAN_HOST}, or --host <host> for a specific host.`,
     )
     .option(
       '--allowed-host <host...>',
-      'Extra Host header value to allow through the DNS-rebinding check. Repeat or comma-separate; a leading dot matches a domain suffix (e.g. .example.com).',
+      'Extra Host header value to allow through the DNS-rebinding check (requires --no-daemon or --json).',
     )
     .option(
       '--insecure-no-tls',
@@ -120,29 +176,36 @@ export function buildWebCommand(
     )
     .option(
       '--allow-remote-shutdown',
-      'On a non-loopback bind, keep POST /api/v1/shutdown enabled (default: route is disabled → 404).',
+      'On a non-loopback bind, keep POST /api/v1/shutdown enabled (requires --no-daemon).',
       false,
     )
     .option(
       '--dangerous-bypass-auth',
-      'Disable bearer-token auth on every REST and WebSocket route, and advertise it via /api/v1/meta so the web UI connects without a token. Only use on a trusted network or behind your own authenticating proxy.',
+      'Disable bearer-token auth on every REST and WebSocket route (requires --no-daemon).',
       false,
     )
     .option(
       '--log-level <level>',
-      `Server log level: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
+      `Server log level: ${VALID_LOG_LEVELS.join('|')} (requires --no-daemon or --json).`,
     )
     .option(
       '--debug-endpoints',
-      'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
+      'Mount /api/v1/debug/* routes for test introspection (requires --no-daemon).',
       false,
     )
     .option(
       '--web-title <title>',
-      'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
+      'Set a custom browser tab title for this web UI instance (requires --no-daemon).',
+    )
+    .option(
+      '--no-daemon',
+      'Run an independent server in the foreground until Ctrl+C instead of sharing the background daemon.',
     );
   withServerOptions.addOption(new Option('--socket <path>').hideHelp());
   withServerOptions.addOption(new Option('--managed-by <owner>').hideHelp());
+  if (opts.includeHiddenDaemonServerFlag === true) {
+    withServerOptions.addOption(new Option('--daemon-server').hideHelp());
+  }
   if (!forceRemoteControl) {
     withServerOptions.addOption(
       new Option(
@@ -160,20 +223,31 @@ export function buildWebCommand(
   if (!forceRemoteControl) {
     withServerOptions.option(
       '--json',
-      'Start with an in-memory ephemeral bearer token (implies --no-open) and emit a single ready JSON line on stdout.',
+      'Start with an in-memory ephemeral bearer token (implies --no-open and --no-daemon) and emit a single ready JSON line on stdout.',
       false,
     );
   }
-  return withServerOptions.action(async (opts: WebCliOptions) => {
-      try {
-        await handleWebCommand(
-          forceRemoteControl ? { ...opts, remoteControl: true } : opts,
-        );
-      } catch (error) {
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-        process.exit(1);
-      }
-    });
+  return withServerOptions.action(async (cliOpts: WebCliOptions, command: Command) => {
+    const explicitServerFlags = FOREGROUND_ONLY_OPTION_ENTRIES.filter(
+      ([name]) => command.getOptionValueSource(name) === 'cli',
+    ).map(([, flag]) => flag);
+    try {
+      await handleWebCommand({
+        ...cliOpts,
+        ...(forceRemoteControl ? { remoteControl: true } : {}),
+        explicitServerFlags,
+      });
+    } catch (error) {
+      const text =
+        error instanceof RemoteControlAlreadyRunningError
+          ? formatRemoteControlAlreadyRunning(error.holder)
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      process.stderr.write(`${text}\n`);
+      process.exit(1);
+    }
+  });
 }
 
 function createEphemeralAuthTokenService(secret: string): IAuthTokenService {
@@ -220,6 +294,12 @@ export async function handleWebCommand(
   opts: WebCliOptions,
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
+  const homeDir = (deps.homeDir ?? getDataDir)();
+  if (opts.daemonServer === true) {
+    await runDaemonServerInProcess(homeDir, deps.env ?? process.env);
+    return;
+  }
+
   const parsed = parseServerOptions(opts);
   const jsonMode = opts.json === true;
   if (jsonMode && opts.remoteControl === true) {
@@ -243,6 +323,70 @@ export async function handleWebCommand(
   if (opts.remoteControl === true && !isLoopbackHost(parsed.host)) {
     throw new Error('--remote-control requires a loopback host.');
   }
+
+  const useForeground =
+    opts.daemon === false ||
+    jsonMode ||
+    parsed.socketPath !== undefined ||
+    deps.startServerForeground !== undefined ||
+    !isSharedDaemonSupported(deps.platform ?? process.platform);
+
+  if (!useForeground) {
+    const incompatibleFlags = collectExplicitForegroundFlags(opts);
+    if (incompatibleFlags.length > 0) {
+      throw new Error(
+        `Cannot apply ${incompatibleFlags.join(', ')} to the shared background daemon. Re-run with '--no-daemon' to start an independent foreground server with these options.`,
+      );
+    }
+    const env = deps.env ?? process.env;
+    const ensured = await (deps.ensureSharedDaemon ?? ensureSharedDaemon)({
+      homeDir,
+      env,
+      checkEnv: true,
+    });
+    if (ensured.reusedBusyMismatch) {
+      deps.stderr.write(
+        `Note: Kimi daemon ${ensured.daemon.version} has active work; continuing with the running daemon. Run 'kimi daemon restart' after work finishes to switch to ${getVersion()}.\n`,
+      );
+    }
+    const token = (deps.resolveToken ?? (() => tryResolveServerToken(homeDir)))();
+    if (opts.remoteControl === true) {
+      if (token === undefined) throw new Error('Unable to read the local server token.');
+      const rc = await (deps.enableDaemonRemoteControl ?? enableDaemonRemoteControl)(
+        ensured.daemon.socketPath,
+        env,
+      );
+      const qrCode = await generateRemoteControlQr(rc.url, homeDir);
+      deps.stdout.write(
+        formatRemoteControlOutput({
+          url: rc.url,
+          localOrigin: ensured.daemon.origin,
+          localServerToken: token,
+          deviceName: rc.deviceName,
+          qrCode: qrCode.terminal,
+          pngPath: qrCode.pngPath,
+          logPath: ensured.daemon.logPath,
+          stopCommand: 'kimi rc stop',
+        }),
+      );
+      if (opts.open === true) deps.openUrl(rc.url);
+      return;
+    }
+    deps.stdout.write(
+      formatReadyBanner(ensured.daemon.origin, ensured.daemon.host, {
+        token,
+        networkAddresses: deps.networkAddresses,
+        logPath: ensured.daemon.logPath,
+        stopCommand: 'kimi daemon stop',
+      }),
+    );
+    if (opts.open === true) {
+      const openOrigin = browserOpenOrigin(ensured.daemon.origin);
+      deps.openUrl(token !== undefined ? buildWebUrl(openOrigin, token) : openOrigin);
+    }
+    return;
+  }
+
   const ephemeralToken = jsonMode ? randomBytes(32).toString('base64url') : undefined;
   const runOptions: ParsedServerOptions = jsonMode
     ? {
@@ -261,10 +405,11 @@ export async function handleWebCommand(
         deps.stdout.write(formatJsonBootLine(origin, ephemeralToken!));
         return;
       }
-      const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
+      const token = parsed.dangerousBypassAuth
+        ? undefined
+        : (deps.resolveToken ?? (() => tryResolveServerToken(homeDir)))();
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
-        const dataDir = getDataDir();
         const persisted = persistedKimiOAuthRef();
         let outputReady = false;
         const pendingStatuses: string[] = [];
@@ -274,7 +419,7 @@ export async function handleWebCommand(
           else pendingStatuses.push(line);
         };
         remoteControl = await (deps.startRemoteControl ?? startRemoteControl)({
-          homeDir: dataDir,
+          homeDir,
           localOrigin: origin,
           localServerToken: token,
           clientVersion: `${CLI_USER_AGENT_PRODUCT}/${getVersion()}`,
@@ -297,7 +442,7 @@ export async function handleWebCommand(
             controls?.requestShutdown('remote_control_closed');
           },
         );
-        const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
+        const qrCode = await generateRemoteControlQr(remoteControl.url, homeDir);
         deps.stdout.write(
           formatRemoteControlOutput({
             url: remoteControl.url,
@@ -359,6 +504,104 @@ export async function startServerForeground(
   hooks: StartForegroundHooks = {},
 ): Promise<never> {
   return runServerInProcess(options, hooks);
+}
+
+async function runDaemonServerInProcess(
+  homeDir: string,
+  env: NodeJS.ProcessEnv,
+): Promise<never> {
+  const version = getVersion();
+  const startedAt = new Date().toISOString();
+  const socketPath = daemonSocketPath(homeDir);
+  const logPath = daemonLogPath(homeDir);
+  initializeServerTelemetry({ version });
+
+  const logger = createServerLogger({ level: DEFAULT_LOG_LEVEL });
+  const webAssetsDir = serverWebAssetsDir(env);
+  if (webAssetsDir === undefined) {
+    logger.info('dev mode: web assets not built; starting the daemon without the web UI');
+  }
+
+  let exiting = false;
+  let ready = false;
+  const envHashes = computeManagedDaemonEnvHashes(env);
+
+  const finalizeExit = async (): Promise<void> => {
+    if (exiting) return;
+    exiting = true;
+    await removeDaemonStateForPid(homeDir, process.pid).catch(() => {});
+    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
+    process.exit(0);
+  };
+
+  const v2 = await startServer({
+    homeDir,
+    env,
+    host: DEFAULT_SERVER_HOST,
+    port: DEFAULT_SERVER_PORT,
+    socketPath,
+    persistRemoteControl: true,
+    managedBy: 'daemon',
+    serverVersion: version,
+    hostIdentity: {
+      ...createKimiCodeHostIdentity(version),
+      userAgentSuffix: WEB_USER_AGENT_SUFFIX,
+    },
+    logLevel: DEFAULT_LOG_LEVEL,
+    logger,
+    telemetry: true,
+    webAssetsDir,
+    onBeforeSocketListen: async ({ host: boundHost, port: boundPort }) => {
+      await writeDaemonState(homeDir, {
+        pid: process.pid,
+        host: boundHost,
+        port: boundPort,
+        origin: `http://${boundHost}:${String(boundPort)}`,
+        socketPath,
+        logPath,
+        startedAt,
+        version,
+        kapVersion: KAP_VERSION,
+        envHashes,
+      });
+    },
+    onDidClose: async () => {
+      await removeDaemonStateForPid(homeDir, process.pid).catch(() => {});
+      if (ready) {
+        setImmediate(() => {
+          void finalizeExit();
+        });
+      }
+    },
+  });
+  ready = true;
+
+  const shutdownFromSignal = async (reason: string): Promise<void> => {
+    if (exiting) return;
+    logger.info({ reason }, 'daemon shutting down');
+    try {
+      await v2.close();
+    } catch (error) {
+      logger.error(
+        { err: error instanceof Error ? error : new Error(String(error)) },
+        'daemon shutdown error',
+      );
+    }
+    await finalizeExit();
+  };
+
+  const origin = `http://${v2.host}:${String(v2.port)}`;
+
+  track('server_started', { daemon: true });
+  process.once('SIGINT', () => {
+    void shutdownFromSignal('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdownFromSignal('SIGTERM');
+  });
+  logger.info({ origin, socketPath }, 'daemon ready');
+
+  return new Promise<never>(() => {});
 }
 
 async function runServerInProcess(
@@ -426,6 +669,7 @@ async function runServerInProcess(
     disableAuth: options.dangerousBypassAuth,
     webTitle: options.webTitle,
     socketPath: options.socketPath,
+    listenTcp: options.socketPath === undefined,
     managedBy: options.managedBy,
     telemetry: true,
     webAssetsDir,
@@ -487,6 +731,8 @@ interface FormatReadyBannerOptions {
   token?: string;
   networkAddresses?: NetworkAddress[];
   dangerousBypassAuth?: boolean;
+  logPath?: string;
+  stopCommand?: string;
 }
 
 export function formatReadyBanner(
@@ -527,7 +773,9 @@ export function formatReadyBanner(
     lines.push(`  ${label(text)}${urlWithDimToken(href)}`);
   }
   if (isLoopbackHost(host)) {
-    lines.push(`  ${label('Network:  ')}${muted('off')}${dim('  use --host to enable')}`);
+    lines.push(
+      `  ${label('Network:  ')}${muted('off')}${dim(opts.stopCommand !== undefined ? '  use --no-daemon --host to enable' : '  use --host to enable')}`,
+    );
   }
   if (opts.token !== undefined) {
     lines.push('');
@@ -535,14 +783,17 @@ export function formatReadyBanner(
     lines.push('');
   }
 
-  lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
-  lines.push(`  ${label('Stop:     ')}${muted('Ctrl+C')}`);
+  if (opts.logPath !== undefined) {
+    lines.push(`  ${label('Logs:     ')}${opts.logPath}`);
+  } else {
+    lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
+  }
+  lines.push(`  ${label('Stop:     ')}${muted(opts.stopCommand ?? 'Ctrl+C')}`);
   lines.push('');
   return lines.join('\n');
 }
 
 const DEFAULT_WEB_COMMAND_DEPS: WebCommandDeps = {
-  startServerForeground,
   openUrl: defaultOpenUrl,
   resolveToken: () => {
     return tryResolveServerToken(getDataDir());

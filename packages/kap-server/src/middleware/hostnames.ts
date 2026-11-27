@@ -9,6 +9,7 @@ export interface HostCheckOptions {
   readonly boundHost?: string;
   readonly extra?: readonly string[];
   readonly disable?: boolean;
+  readonly isTrustedRequest?: (req: FastifyRequest) => boolean;
 }
 
 export interface HostCheck {
@@ -99,6 +100,9 @@ export function createHostCheck(opts: HostCheckOptions): HostCheck {
     req: FastifyRequest,
     reply: FastifyReply,
   ): Promise<FastifyReply | void> => {
+    if (opts.isTrustedRequest?.(req) === true) {
+      return;
+    }
     if (!isAllowed(req.headers.host)) {
       return reply.code(403).send(errEnvelope(ErrorCode.HOST_NOT_ALLOWED, formatHostErrorMessage(req.headers.host), req.id));
     }

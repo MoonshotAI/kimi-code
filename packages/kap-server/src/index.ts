@@ -2,6 +2,7 @@ export { startServer } from './start';
 export type { ServerHostIdentity, ServerStartOptions, RunningServer } from './start';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
+export { ErrorCode } from './protocol/error-codes';
 export { classify } from './security/bindClassify';
 export type { BindClass } from './security/bindClassify';
 export {
@@ -9,8 +10,13 @@ export {
   rotateServerToken,
   serverTokenPath,
 } from './services/auth/persistentToken';
-export { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './services/hosts/hostProtocol';
-export { KIMI_AGENT_PROTOCOL_VERSION } from './routes/meta';
+export { HOST_PROTOCOL_VERSION } from './services/hosts/hostProtocol';
+export {
+  daemonSettingsPath,
+  readDaemonRemoteControlPreference,
+  writeDaemonRemoteControlPreference,
+} from './services/daemonSettings';
+export { KAP_VERSION, KIMI_AGENT_PROTOCOL_VERSION } from './protocol/version';
 export type { IAuthTokenService } from './services/auth/authTokenService';
 export { createServerLogger } from './services/pinoLoggerService';
 export type {

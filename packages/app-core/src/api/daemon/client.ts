@@ -233,6 +233,7 @@ interface WireHealth {
 
 interface WireMeta {
   kimi_agent_protocol_version?: string;
+  kap_version?: number;
   server_version: string;
   server_id: string;
   started_at: string;
@@ -367,6 +368,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async getMeta(): Promise<{
     protocolVersion: string;
+    kapVersion: number;
     serverVersion: string;
     serverId: string;
     startedAt: string;
@@ -381,6 +383,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const data = await this.http.get<WireMeta>('/meta');
     return {
       protocolVersion: data.kimi_agent_protocol_version ?? '',
+      kapVersion: data.kap_version ?? 1,
       serverVersion: data.server_version,
       serverId: data.server_id,
       startedAt: data.started_at,

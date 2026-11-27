@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { contractDigest, expectContractGolden } from '@moonshot-ai/testkit/contract';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
+import { KAP_VERSION, KIMI_AGENT_PROTOCOL_VERSION, startServer, type RunningServer } from '../src';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
-const HOST_CONTRACT = { apiLevel: 1, digest: '8a158c8c59efc16c4a29044665c14dde48e902cc14956cba1656b30f25ca4087' };
+const KAP_CONTRACT = { kapVersion: 1, digest: 'd7e92821ec2af8a9284fd426879e139f4be9e3204cc95646a38e6c267f782d9a' };
 
 const DEBUG_ROUTES = [
   'GET /api/v1/debug/channels',
@@ -86,12 +86,13 @@ describe('KAP API surface', () => {
     );
   });
 
-  it('pins the host API level to the reviewed contract', () => {
+  it('pins KAP_VERSION to the reviewed contract and aligns its major with KIMI_AGENT_PROTOCOL_VERSION', () => {
     const { openapi, asyncapi } = started();
+    expect(Number(KIMI_AGENT_PROTOCOL_VERSION.split('.')[0])).toBe(KAP_VERSION);
     expect(
-      { apiLevel: HOST_API_LEVEL, digest: contractDigest(withoutDebugRoutes(openapi), asyncapi) },
-      'The client-visible API contract changed; review packages/kap-server/schema/contract.txt. If the current client would break against a remote running the previous release, bump HOST_API_LEVEL; then update HOST_CONTRACT to the new level and digest.',
-    ).toEqual(HOST_CONTRACT);
+      { kapVersion: KAP_VERSION, digest: contractDigest(withoutDebugRoutes(openapi), asyncapi) },
+      'The client-visible API contract changed; review packages/kap-server/schema/contract.txt. If the client and remote host can no longer interoperate across releases, bump KAP_VERSION (and KIMI_AGENT_PROTOCOL_VERSION major); then update KAP_CONTRACT to the new version and digest.',
+    ).toEqual(KAP_CONTRACT);
   });
 
   it('lists the internal debug routes outside the reviewed contract', () => {
