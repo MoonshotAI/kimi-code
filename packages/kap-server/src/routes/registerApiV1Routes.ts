@@ -204,7 +204,6 @@ export async function registerApiV1Routes(
       );
       registerMediaSignatureRoutes(
         apiV1 as unknown as Parameters<typeof registerMediaSignatureRoutes>[0],
-        core,
         opts.mediaSignatures,
       );
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);

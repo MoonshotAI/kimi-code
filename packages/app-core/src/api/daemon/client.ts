@@ -1547,9 +1547,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async getSessionMediaSignature(
     sessionId: string,
+    path: string,
+    opts?: { allowExternalSymlinks?: boolean },
   ): Promise<{ signature: string; expiresAt: number }> {
+    const query: Record<string, string> = { path };
+    if (opts?.allowExternalSymlinks === true) query['allow_external_symlinks'] = 'true';
     const data = await this.http.get<WireMediaSignature>(
       `/sessions/${encodeURIComponent(sessionId)}/media-signature`,
+      query,
     );
     return { signature: data.signature, expiresAt: Date.parse(data.expires_at) };
   }

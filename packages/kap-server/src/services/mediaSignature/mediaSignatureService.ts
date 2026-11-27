@@ -1,9 +1,15 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import {
   MEDIA_SIGNATURE_REUSE_THRESHOLD_MS,
   MEDIA_SIGNATURE_TTL_MS,
 } from './constants';
+
+export interface MediaSignatureTarget {
+  readonly sessionId: string;
+  readonly path: string;
+  readonly allowExternalSymlinks: boolean;
+}
 
 export interface MediaSignature {
   readonly signature: string;
@@ -11,8 +17,8 @@ export interface MediaSignature {
 }
 
 export interface MediaSignatureService {
-  issue(): MediaSignature;
-  validate(candidate: string): boolean;
+  issue(target: MediaSignatureTarget): MediaSignature;
+  validate(target: MediaSignatureTarget, candidate: string): boolean;
 }
 
 export interface MediaSignatureServiceOptions {
@@ -21,12 +27,20 @@ export interface MediaSignatureServiceOptions {
   readonly reuseThresholdMs?: number;
 }
 
-interface SignatureEntry {
-  readonly value: string;
+interface SignatureKey {
+  readonly secret: Buffer;
   readonly expiresAt: number;
 }
 
-function matches(expected: string, candidate: string): boolean {
+function payloadOf(target: MediaSignatureTarget): string {
+  return `${target.sessionId}\n${target.path}\n${target.allowExternalSymlinks ? '1' : '0'}`;
+}
+
+function sign(key: SignatureKey, target: MediaSignatureTarget): string {
+  return createHmac('sha256', key.secret).update(payloadOf(target)).digest('base64url');
+}
+
+function equalSignatures(expected: string, candidate: string): boolean {
   const expectedBytes = Buffer.from(expected);
   const candidateBytes = Buffer.from(candidate);
   return expectedBytes.length === candidateBytes.length && timingSafeEqual(expectedBytes, candidateBytes);
@@ -39,44 +53,32 @@ export function createMediaSignatureService(
   const ttlMs = opts.ttlMs ?? MEDIA_SIGNATURE_TTL_MS;
   const reuseThresholdMs = opts.reuseThresholdMs ?? MEDIA_SIGNATURE_REUSE_THRESHOLD_MS;
 
-  let current: SignatureEntry | undefined;
-  let previous: SignatureEntry | undefined;
-
-  function isLive(entry: SignatureEntry | undefined, at: number): entry is SignatureEntry {
-    return entry !== undefined && entry.expiresAt > at;
-  }
+  let keys: SignatureKey[] = [];
 
   function prune(at: number): void {
-    if (!isLive(current, at)) current = undefined;
-    if (!isLive(previous, at)) previous = undefined;
+    keys = keys.filter((key) => key.expiresAt > at);
   }
 
-  function expose(entry: SignatureEntry): MediaSignature {
-    return { signature: entry.value, expiresAt: entry.expiresAt };
+  function keyFor(at: number): SignatureKey {
+    const newest = keys.at(-1);
+    if (newest !== undefined && newest.expiresAt - at > reuseThresholdMs) return newest;
+    const created = { secret: randomBytes(32), expiresAt: at + ttlMs };
+    keys.push(created);
+    return created;
   }
 
   return {
-    issue() {
+    issue(target) {
       const at = now();
       prune(at);
-      if (isLive(current, at) && current.expiresAt - at > reuseThresholdMs) {
-        return expose(current);
-      }
-      previous = current;
-      current = {
-        value: randomBytes(32).toString('base64url'),
-        expiresAt: at + ttlMs,
-      };
-      return expose(current);
+      const key = keyFor(at);
+      return { signature: sign(key, target), expiresAt: key.expiresAt };
     },
 
-    validate(candidate) {
+    validate(target, candidate) {
       const at = now();
-      const accepted = [current, previous].some(
-        (entry) => isLive(entry, at) && matches(entry.value, candidate),
-      );
       prune(at);
-      return accepted;
+      return keys.some((key) => equalSignatures(sign(key, target), candidate));
     },
   };
 }

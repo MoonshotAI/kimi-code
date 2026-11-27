@@ -8,7 +8,7 @@ import { FILE_PREVIEW_MAX_BYTES, type FileData, type FilePreviewRequest } from '
 export interface FilePreviewClient {
   status: Ref<{ cwd: string }>;
   getFileDownloadUrl(path: string): string | null;
-  getSignedFileDownloadUrl(path: string): Promise<string | null>;
+  getSignedFileDownloadUrl(path: string): Promise<{ url: string; expiresAt: number } | null>;
   readHostFileContent(path: string): Promise<FileData>;
   readFileContent(path: string): Promise<FileData | null>;
   readWorkspaceFileBlob(path: string, opts?: { prefixBytes?: number }): Promise<Blob | null>;
@@ -19,6 +19,7 @@ export interface FilePreviewClient {
 const FS_PATH_NOT_FOUND = 40409;
 const FS_TOO_LARGE = 41302;
 const FS_TOO_LARGE_SIZE_PATTERN = /\((\d+) bytes >/;
+const MEDIA_SIGNATURE_RENEW_LEAD_MS = 60_000;
 
 function isNotFoundError(err: unknown): boolean {
   return isDaemonApiError(err) && err.code === FS_PATH_NOT_FOUND;
@@ -99,6 +100,14 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
 
   const previewMediaUrl = ref<string | null>(null);
   let previewObjectUrl: string | null = null;
+  let mediaRenewalTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelMediaRenewal(): void {
+    if (mediaRenewalTimer !== null) {
+      clearTimeout(mediaRenewalTimer);
+      mediaRenewalTimer = null;
+    }
+  }
 
   function revokeMediaUrl(): void {
     if (previewObjectUrl !== null) {
@@ -125,6 +134,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
   if (getCurrentScope() !== undefined) {
     onScopeDispose(() => {
       previewRequestSeq += 1;
+      cancelMediaRenewal();
       setMediaBlob(null);
     });
   }
@@ -203,6 +213,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
     opts?: { preserveCurrent?: boolean },
   ): Promise<void> {
     const requestSeq = ++previewRequestSeq;
+    cancelMediaRenewal();
     const preserve = opts?.preserveCurrent === true && previewFile.value !== null;
     if (!preserve) previewRoot.value = root?.value ?? client.status.value.cwd;
     if (preserve) {
@@ -371,13 +382,13 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
     preserve: boolean,
   ): Promise<void> {
     try {
-      const url = await client.getSignedFileDownloadUrl(toClientPath(path));
+      const signed = await client.getSignedFileDownloadUrl(toClientPath(path));
       if (requestSeq !== previewRequestSeq) return;
-      if (url === null) {
-        if (!preserve) previewError.value = t('filePreview.errors.loadFailed');
+      if (signed === null) {
+        await openStreamedMediaPreview(path, mime, requestSeq, preserve);
         return;
       }
-      setMediaUrl(url);
+      setMediaUrl(signed.url);
       previewFile.value = {
         path,
         content: '',
@@ -387,6 +398,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
         size: 0,
       };
       previewLoadedSeq.value += 1;
+      scheduleMediaRenewal(path, signed.expiresAt, requestSeq);
     } catch (err) {
       if (requestSeq !== previewRequestSeq) return;
       if (!preserve) {
@@ -399,6 +411,25 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
         settleLoadingState(preserve);
       }
     }
+  }
+
+  function scheduleMediaRenewal(path: string, expiresAt: number, requestSeq: number): void {
+    cancelMediaRenewal();
+    const delay = Math.max(0, expiresAt - Date.now() - MEDIA_SIGNATURE_RENEW_LEAD_MS);
+    mediaRenewalTimer = setTimeout(() => {
+      mediaRenewalTimer = null;
+      void renewMediaSignature(path, requestSeq);
+    }, delay);
+  }
+
+  async function renewMediaSignature(path: string, requestSeq: number): Promise<void> {
+    if (requestSeq !== previewRequestSeq) return;
+    try {
+      const signed = await client.getSignedFileDownloadUrl(toClientPath(path));
+      if (requestSeq !== previewRequestSeq || signed === null) return;
+      setMediaUrl(signed.url);
+      scheduleMediaRenewal(path, signed.expiresAt, requestSeq);
+    } catch {}
   }
 
   async function openTruncatedTextPreview(
@@ -455,6 +486,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
     previewError.value = null;
     previewLoading.value = false;
     previewRefreshing.value = false;
+    cancelMediaRenewal();
     setMediaBlob(null);
   }
 

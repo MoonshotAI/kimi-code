@@ -1,8 +1,6 @@
-import type { Scope } from '@moonshot-ai/agent-core-v2/_base/di/scope';
-import { resumeSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import { z } from 'zod';
 
-import { errEnvelope, okEnvelope } from '../envelope';
+import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { mediaSignatureSchema } from '../protocol/rest-media-signature';
@@ -19,20 +17,27 @@ interface MediaSignatureRouteHost {
 interface MediaSignatureRequest {
   readonly id: string;
   readonly params: { readonly session_id: string };
+  readonly query: {
+    readonly path: string;
+    readonly allow_external_symlinks?: 'true' | 'false';
+  };
 }
 
 interface MediaSignatureReply {
   send(payload: unknown): unknown;
-  code(status: number): MediaSignatureReply;
 }
 
 const mediaSignatureParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
+const mediaSignatureQuerySchema = z.object({
+  path: z.string().min(1),
+  allow_external_symlinks: z.enum(['true', 'false']).optional(),
+});
+
 export function registerMediaSignatureRoutes(
   app: MediaSignatureRouteHost,
-  core: Scope,
   mediaSignatures: MediaSignatureService,
 ): void {
   const route = defineRoute(
@@ -40,26 +45,21 @@ export function registerMediaSignatureRoutes(
       method: 'GET',
       path: '/sessions/{session_id}/media-signature',
       params: mediaSignatureParamSchema,
+      querystring: mediaSignatureQuerySchema,
       success: { data: mediaSignatureSchema },
       errors: {
-        [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
-      description: 'Issue a short-lived signature that authorizes workspace media reads without a bearer token',
+      description: 'Issue a short-lived signature bound to one workspace file for bearer-less range reads',
       tags: ['fs'],
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      const session = await resumeSessionById(core.accessor, session_id);
-      if (session === undefined) {
-        const r = reply as unknown as MediaSignatureReply;
-        return r
-          .code(404)
-          .send(
-            errEnvelope(ErrorCode.SESSION_NOT_FOUND, 'session not found', req.id),
-          ) as unknown as void;
-      }
-      const issued = mediaSignatures.issue();
+      const issued = mediaSignatures.issue({
+        sessionId: session_id,
+        path: req.query.path,
+        allowExternalSymlinks: req.query.allow_external_symlinks === 'true',
+      });
       reply.send(
         okEnvelope(
           { signature: issued.signature, expires_at: new Date(issued.expiresAt).toISOString() },

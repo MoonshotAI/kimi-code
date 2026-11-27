@@ -1,13 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import { useFilePreview, type FilePreviewClient } from '../src/composables/useFilePreview';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function makeClient(overrides: Partial<FilePreviewClient>): FilePreviewClient {
   return {
     status: ref({ cwd: '/ws/a' }),
     getFileDownloadUrl: () => null,
-    getSignedFileDownloadUrl: vi.fn(),
+    getSignedFileDownloadUrl: vi.fn().mockResolvedValue(null),
     readHostFileContent: vi.fn(),
     readFileContent: vi.fn(),
     readWorkspaceFileBlob: vi.fn(),
@@ -96,7 +100,10 @@ describe('useFilePreview streamed media', () => {
 
   it('resolves a signed URL for videos instead of downloading the whole file', async () => {
     const signedUrl = '/api/v1/sessions/s1/fs/media/clip.mp4:download?allow_external_symlinks=true&signature=sig';
-    const getSignedFileDownloadUrl = vi.fn().mockResolvedValue(signedUrl);
+    const getSignedFileDownloadUrl = vi.fn().mockResolvedValue({
+      url: signedUrl,
+      expiresAt: Date.now() + 10 * 60_000,
+    });
     const client = makeClient({ getSignedFileDownloadUrl });
     const preview = useFilePreview({ client, t });
     await preview.openFilePreview({ path: 'media/clip.mp4' });
@@ -111,11 +118,34 @@ describe('useFilePreview streamed media', () => {
     expect(preview.previewMediaUrl.value).toBe(signedUrl);
   });
 
-  it('reports a load failure when no signed URL can be resolved for a video', async () => {
-    const client = makeClient({ getSignedFileDownloadUrl: vi.fn().mockResolvedValue(null) });
+  it('falls back to a streamed blob when no signed URL can be resolved', async () => {
+    const createObjectURL = vi.fn(() => 'blob:fallback-video');
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL: vi.fn() });
+    const blob = new Blob([new Uint8Array([0, 0, 0, 0x18])], { type: 'video/mp4' });
+    const client = makeClient({
+      getSignedFileDownloadUrl: vi.fn().mockResolvedValue(null),
+      readWorkspaceFileBlob: vi.fn().mockResolvedValue(blob),
+    });
     const preview = useFilePreview({ client, t });
     await preview.openFilePreview({ path: 'media/clip.mp4' });
-    expect(preview.previewError.value).toBe('filePreview.errors.loadFailed');
+    expect(client.readWorkspaceFileBlob).toHaveBeenCalledWith('media/clip.mp4');
+    expect(preview.previewMediaUrl.value).toBe('blob:fallback-video');
+    vi.unstubAllGlobals();
+  });
+
+  it('renews the signed URL before it expires', async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const getSignedFileDownloadUrl = vi.fn()
+      .mockResolvedValueOnce({ url: '/download?sig=one', expiresAt: now + 120_000 })
+      .mockResolvedValueOnce({ url: '/download?sig=two', expiresAt: now + 240_000 });
+    const client = makeClient({ getSignedFileDownloadUrl });
+    const preview = useFilePreview({ client, t });
+    await preview.openFilePreview({ path: 'media/clip.mp4' });
+    expect(preview.previewMediaUrl.value).toBe('/download?sig=one');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getSignedFileDownloadUrl).toHaveBeenCalledTimes(2);
+    expect(preview.previewMediaUrl.value).toBe('/download?sig=two');
   });
 
   it('streams PDFs through a blob object URL', async () => {

@@ -4,6 +4,7 @@ import { errEnvelope } from '../envelope';
 import type { IAuthTokenService } from '../services/auth/authTokenService';
 import type { CredentialValidator } from '../services/auth/credentials';
 import { MEDIA_SIGNATURE_QUERY_PARAM } from '../services/mediaSignature/constants';
+import type { MediaSignatureTarget } from '../services/mediaSignature/mediaSignatureService';
 import {
   AUTH_RATE_LIMIT_CODE,
   AUTH_RATE_LIMIT_MSG,
@@ -14,13 +15,16 @@ const AUTH_ERROR_CODE = 40101;
 const AUTH_ERROR_MSG = 'Unauthorized';
 const REDACTED = '[redacted]';
 const BEARER_PREFIX = 'Bearer ';
-const SIGNED_MEDIA_PATH_RE = /^\/api\/v1\/sessions\/[^/]+\/fs\/.+:download$/;
+const SIGNED_MEDIA_PATH_RES = [
+  /^\/api\/v1\/sessions\/([^/]+)\/fs\/(.+):download$/,
+  /^\/api\/v1\/hosts\/[^/]+\/proxy\/api\/v1\/sessions\/([^/]+)\/fs\/(.+):download$/,
+];
 
 export interface AuthHookOptions {
   readonly isBypassed?: (req: FastifyRequest) => boolean;
   readonly limiter?: Pick<AuthFailureLimiter, 'recordFailure' | 'isBanned'>;
   readonly validateCredential?: CredentialValidator;
-  readonly validateMediaSignature?: (candidate: string) => boolean;
+  readonly validateMediaSignature?: (target: MediaSignatureTarget, candidate: string) => boolean;
 }
 
 function decodeRequestPath(rawUrl: string): string | null {
@@ -56,17 +60,31 @@ function extractBearer(header: string | undefined): string | null {
   return token.length === 0 ? null : token;
 }
 
-function querySignature(rawUrl: string): string | null {
+function queryParam(rawUrl: string, name: string): string | null {
   const queryIndex = rawUrl.indexOf('?');
   if (queryIndex < 0) return null;
-  const value = new URLSearchParams(rawUrl.slice(queryIndex + 1)).get(MEDIA_SIGNATURE_QUERY_PARAM);
+  return new URLSearchParams(rawUrl.slice(queryIndex + 1)).get(name);
+}
+
+function signatureOf(rawUrl: string): string | null {
+  const value = queryParam(rawUrl, MEDIA_SIGNATURE_QUERY_PARAM);
   return value === null || value.length === 0 ? null : value;
 }
 
-function isSignedMediaRequest(req: FastifyRequest): boolean {
-  if (req.method !== 'GET') return false;
+function signedMediaTarget(req: FastifyRequest): MediaSignatureTarget | null {
+  if (req.method !== 'GET') return null;
   const path = decodeRequestPath(req.url);
-  return path !== null && SIGNED_MEDIA_PATH_RE.test(path);
+  if (path === null) return null;
+  for (const pattern of SIGNED_MEDIA_PATH_RES) {
+    const match = pattern.exec(path);
+    if (match === null) continue;
+    return {
+      sessionId: match[1]!,
+      path: match[2]!,
+      allowExternalSymlinks: queryParam(req.url, 'allow_external_symlinks') === 'true',
+    };
+  }
+  return null;
 }
 
 export function createAuthHook(
@@ -95,10 +113,14 @@ export function createAuthHook(
 
     if (token === null) {
       const validateSignature = opts?.validateMediaSignature;
-      const signature = validateSignature !== undefined && isSignedMediaRequest(req)
-        ? querySignature(req.url)
-        : null;
-      if (signature !== null && validateSignature !== undefined && validateSignature(signature)) {
+      const target = validateSignature === undefined ? null : signedMediaTarget(req);
+      const signature = target === null ? null : signatureOf(req.url);
+      if (
+        target !== null &&
+        signature !== null &&
+        validateSignature !== undefined &&
+        validateSignature(target, signature)
+      ) {
         return;
       }
       if (signature === null) opts?.limiter?.recordFailure(req.ip);

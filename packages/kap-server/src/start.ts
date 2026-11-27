@@ -355,7 +355,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       createAuthHook(authTokenService, {
         limiter: authFailureLimiter,
         validateCredential,
-        validateMediaSignature: (candidate) => mediaSignatures.validate(candidate),
+        validateMediaSignature: (target, candidate) => mediaSignatures.validate(target, candidate),
       }),
     );
   } else if (opts.disableAuth === true) {

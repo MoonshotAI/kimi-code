@@ -1255,6 +1255,8 @@ GET /api/v1/sessions/{session_id}/interactions response 200<code=40001>: shape d
 GET /api/v1/sessions/{session_id}/interactions response 200<code=40401>: shape 2bda561c
 GET /api/v1/sessions/{session_id}/interactions: operation
 GET /api/v1/sessions/{session_id}/media-signature param path:session_id: string minLength=1
+GET /api/v1/sessions/{session_id}/media-signature param query:allow_external_symlinks: enum "false"|"true" optional
+GET /api/v1/sessions/{session_id}/media-signature param query:path: string minLength=1
 GET /api/v1/sessions/{session_id}/media-signature response 200: oneOf
 GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.code: enum 0
 GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.data.expires_at: any
@@ -1264,7 +1266,6 @@ GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.details: 
 GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.msg: string
 GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.request_id: string
 GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>: object closed
-GET /api/v1/sessions/{session_id}/media-signature response 200<code=40401>: shape 2bda561c
 GET /api/v1/sessions/{session_id}/media-signature response 200<code=40930>: shape 9d70335c
 GET /api/v1/sessions/{session_id}/media-signature: operation
 GET /api/v1/sessions/{session_id}/media/{file_id} param path:file_id: string minLength=1

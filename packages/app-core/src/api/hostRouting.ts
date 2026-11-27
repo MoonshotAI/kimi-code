@@ -98,7 +98,7 @@ const ROUTES = {
   getPullRequestBatch: 'session',
   getFileDiff: 'session',
   getFileDownloadUrl: 'sessionSync',
-  getSessionMediaSignature: 'sessionSync',
+  getSessionMediaSignature: 'local',
   downloadSessionFile: 'session',
   openFile: 'localSession',
   revealFile: 'localSession',

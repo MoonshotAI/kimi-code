@@ -16316,8 +16316,29 @@
     },
     "/api/v1/sessions/{session_id}/media-signature": {
       "get": {
-        "description": "Issue a short-lived signature that authorizes workspace media reads without a bearer token",
+        "description": "Issue a short-lived signature bound to one workspace file for bearer-less range reads",
         "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "allow_external_symlinks",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          },
           {
             "in": "path",
             "name": "session_id",
@@ -16374,68 +16395,7 @@
                       "type": "object"
                     },
                     {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40401
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40930
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
+                      "$ref": "#/components/schemas/ErrorWireVersionTooLow"
                     }
                   ]
                 }

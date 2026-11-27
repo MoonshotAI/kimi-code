@@ -242,6 +242,38 @@ const videoSrc = computed<string | null>(() => {
   return null;
 });
 
+const videoEl = ref<HTMLVideoElement | null>(null);
+let resumeTime: number | null = null;
+let resumePlaying = false;
+
+function mediaPathOf(url: string): string {
+  try {
+    return new URL(url, 'http://localhost').pathname;
+  } catch {
+    return url;
+  }
+}
+
+watch(videoSrc, (next, prev) => {
+  const el = videoEl.value;
+  if (el === null || next === null || prev === null || mediaPathOf(next) !== mediaPathOf(prev)) {
+    resumeTime = null;
+    resumePlaying = false;
+    return;
+  }
+  resumeTime = Number.isFinite(el.currentTime) ? el.currentTime : null;
+  resumePlaying = !el.paused;
+});
+
+function onVideoLoadedMetadata(): void {
+  const el = videoEl.value;
+  if (el === null || resumeTime === null) return;
+  el.currentTime = resumeTime;
+  if (resumePlaying) void el.play().catch(() => {});
+  resumeTime = null;
+  resumePlaying = false;
+}
+
 const PDF_VIEWER_PARAMS = '#toolbar=0&navpanes=0';
 
 const pdfSrc = computed<string | null>(() => {
@@ -632,7 +664,7 @@ function menuDownload(): void {
 
         <!-- Body: Video -->
         <div v-else-if="contentKind === 'video'" class="fp-body fp-video-wrap" data-panel-content>
-          <video v-if="videoSrc" class="fp-video" :src="videoSrc" :title="file.path" controls playsinline></video>
+          <video v-if="videoSrc" ref="videoEl" class="fp-video" :src="videoSrc" :title="file.path" controls playsinline @loadedmetadata="onVideoLoadedMetadata"></video>
           <div v-else class="fp-binary-card">
             <span class="fp-binary-icon">
               <Icon name="file-off" size="lg" />
