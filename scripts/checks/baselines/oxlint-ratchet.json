@@ -414,8 +414,6 @@
     "packages/agent-core-v2/test/session/agentLifecycle/agentLifecycle.test.ts": 1,
     "packages/agent-core-v2/test/session/workspaceContext/agentWorkspaceContext.test.ts": 1,
     "packages/app-client/src/composables/useIsMobile.ts": 3,
-    "packages/app-client/src/lib/imeComposition.ts": 1,
-    "packages/app-client/test/imeComposition.test.ts": 1,
     "packages/app-composer/src/transcript/clipboardBridge.ts": 2,
     "packages/app-core/src/lib/clipboard.ts": 2,
     "packages/app-core/test/daemon-client.test.ts": 2,
@@ -790,10 +788,7 @@
     "packages/app-client/src/lib/trace.ts": 1,
     "packages/app-core/src/api/daemon/mappers.ts": 1,
     "packages/app-markdown/src/lib/markdownWorkers.ts": 4,
-    "packages/app-markdown/src/lib/taskListSpacing.ts": 2,
-    "packages/app-ui/src/components/ui/useToastTimer.ts": 1,
-    "packages/app-ui/src/composables/useImeComposition.ts": 4,
-    "packages/app-ui/src/composables/viewportDismiss.ts": 2
+    "packages/app-markdown/src/lib/taskListSpacing.ts": 2
   },
   "typescript/no-unsafe-enum-comparison": {
     "packages/agent-core-v2/test/harness/agent.ts": 1
@@ -828,9 +823,6 @@
     "packages/app-core/src/api/daemon/mappers.ts": 19,
     "packages/app-markdown/src/lib/markdownWorkers.ts": 4,
     "packages/app-markdown/src/lib/taskListSpacing.ts": 6,
-    "packages/app-ui/src/components/ui/useToastTimer.ts": 2,
-    "packages/app-ui/src/composables/useImeComposition.ts": 6,
-    "packages/app-ui/src/composables/viewportDismiss.ts": 2,
     "packages/core/src/llm/endpoint.ts": 4,
     "packages/session-import/src/rollout.ts": 6
   },
@@ -858,7 +850,6 @@
     "packages/agent-core-v2/src/state/state.ts": 6,
     "packages/app-components/src/chat/tool-calls/toolRegistry.ts": 21,
     "packages/app-core/src/client/toolCalls.ts": 1,
-    "packages/app-ui/src/composables/useImeComposition.ts": 1,
     "packages/core/src/llm/endpoint.ts": 2,
     "packages/klient/src/transports/memory/dispatcher.ts": 1,
     "packages/minidb/src/query.ts": 1,

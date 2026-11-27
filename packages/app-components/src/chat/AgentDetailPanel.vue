@@ -4,7 +4,8 @@ import { useI18n } from 'vue-i18n';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 
 import { usePanelScroll } from '@moonshot-ai/app-client/composables';
-import { ModelDisplayKey, PinScrollKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
+import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
+import { PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { ComposerText } from '@moonshot-ai/app-composer/transcript';
 import type { AgentMember, ChatTurn, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';

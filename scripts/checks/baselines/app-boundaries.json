@@ -45,10 +45,8 @@
     "packages/app-client/src/stores/workspaces.ts": 6
   },
   "upward-package-import": {
-    "packages/app-markdown/src/Markdown.vue": 1,
-    "packages/app-markdown/src/lib/codeScrollbars.ts": 1,
     "packages/app-markdown/src/lib/codeWrap.ts": 1,
-    "packages/app-markdown/src/lib/linkTooltip.ts": 2,
+    "packages/app-markdown/src/lib/linkTooltip.ts": 1,
     "packages/app-markdown/src/lib/tableWide.ts": 1,
     "packages/app-ui/src/components/ui/toastTypes.ts": 1
   },

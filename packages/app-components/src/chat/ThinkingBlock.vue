@@ -4,7 +4,8 @@ import { computed, inject, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import { formatDuration } from '@moonshot-ai/app-core/lib';
-import { PinScrollKey, track } from '@moonshot-ai/app-client/contracts';
+import { track } from '@moonshot-ai/app-client/contracts';
+import { PinScrollKey } from '@moonshot-ai/app-core/contracts';
 
 const props = withDefaults(
   defineProps<{

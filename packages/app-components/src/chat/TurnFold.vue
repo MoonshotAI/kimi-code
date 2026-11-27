@@ -2,9 +2,8 @@
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
+import { HistoryStateKey, PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import BlockList from './BlockList.vue';
-import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
