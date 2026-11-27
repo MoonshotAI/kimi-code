@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { NewSessionEnvironment } from '@moonshot-ai/app-core/lib';
 import { toastWithManage, useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
 import { formatWorktreeSize } from '@moonshot-ai/app-client/lib';
 import { worktreesStore } from '@moonshot-ai/app-client/stores';
-import { Icon, Spinner, menuNavigationIndex } from '@moonshot-ai/app-ui';
+import { Icon, MenuItem, Spinner, menuNavigationIndex } from '@moonshot-ai/app-ui';
 import CreatePicker from './CreatePicker.vue';
 
 const props = defineProps<{
@@ -61,6 +61,7 @@ const current = computed(() => options.value.find((option) => option.id === view
 const picker = ref<InstanceType<typeof CreatePicker> | null>(null);
 const open = ref(false);
 const activeIndex = ref(0);
+const rowId = `${useId()}-option`;
 
 watch(open, async (isOpen) => {
   if (!isOpen) return;
@@ -143,34 +144,34 @@ function onPanelKeydown(event: KeyboardEvent): void {
     :label="`${t('worktreeCreate.environment.label')}: ${current.label}`"
     :panel-label="t('worktreeCreate.environment.label')"
     :data-environment="current.id"
+    :active-descendant="open ? `${rowId}-${activeIndex}` : undefined"
     @panel-keydown="onPanelKeydown"
   >
     <template #chip>
       <Icon class="wce-chip-icon" :name="current.icon" size="md" />
       <span class="wce-chip-name">{{ current.label }}</span>
     </template>
-    <button
+    <MenuItem
       v-for="(option, index) in options"
       :key="option.id"
-      type="button"
-      class="wce-row cp-row"
-      :class="{ on: option.id === current.id, active: index === activeIndex, disabled: option.disabled }"
+      :id="`${rowId}-${index}`"
+      class="wce-row"
       role="menuitemradio"
       tabindex="-1"
-      :aria-checked="option.id === current.id"
-      :aria-disabled="option.disabled"
+      :selected="option.id === current.id"
+      :active="index === activeIndex"
+      :disabled="option.disabled"
       :data-option="option.id"
       @mousemove="hover(option, index)"
       @click.stop="select(option)"
     >
-      <Icon class="wce-row-icon" :name="option.icon" size="md" />
+      <template #icon><Icon :name="option.icon" size="md" /></template>
       <span class="wce-row-text">
         <span class="wce-row-label">{{ option.label }}</span>
         <span class="wce-row-desc">{{ option.description }}</span>
       </span>
-      <Spinner v-if="option.loading" class="wce-row-end" size="sm" :label="t('worktreeCreate.environment.checking')" />
-      <Icon v-else-if="option.id === current.id" class="wce-row-end" name="check" size="sm" />
-    </button>
+      <Spinner v-if="option.loading" class="wce-row-spinner" size="sm" :label="t('worktreeCreate.environment.checking')" />
+    </MenuItem>
   </CreatePicker>
 </template>
 
@@ -185,21 +186,16 @@ function onPanelKeydown(event: KeyboardEvent): void {
   font-weight: var(--weight-option-label);
 }
 .wce :deep(.wce-panel) {
-  gap: 2px;
+  gap: var(--space-05);
   width: max-content;
   min-width: calc(var(--space-8) * 8);
   max-width: min(calc(var(--space-8) * 13), calc(100vw - var(--space-8)));
 }
-.wce-row.disabled {
-  cursor: default;
-}
-.wce-row.cp-row {
+.wce-row.ui-menu-item {
   align-items: flex-start;
 }
-.wce-row-icon {
-  flex: none;
-  margin-top: calc((var(--text-base) * var(--leading-normal) - 16px) / 2);
-  color: var(--color-text-muted);
+.wce-row > :deep(svg) {
+  margin-top: calc((var(--text-base) * var(--leading-normal) - var(--p-ic-md)) / 2);
 }
 .wce-row-text {
   display: flex;
@@ -210,26 +206,16 @@ function onPanelKeydown(event: KeyboardEvent): void {
 .wce-row-label {
   color: var(--color-text);
   font-size: var(--text-base);
-  font-weight: var(--weight-option-label);
   line-height: var(--leading-normal);
 }
 .wce-row-desc {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
-  font-weight: var(--weight-option-label);
   line-height: var(--leading-normal);
 }
-.wce-row.disabled .wce-row-icon,
-.wce-row.disabled .wce-row-label {
-  color: var(--color-text-faint);
-}
-.wce-row-end {
+.wce-row-spinner {
   flex: none;
-  margin-top: calc((var(--text-base) * var(--leading-normal) - 14px) / 2);
+  margin-top: calc((var(--text-base) * var(--leading-normal) - var(--p-ic-sm)) / 2);
   margin-left: var(--space-3);
-  color: var(--color-text);
-}
-.wce-row.disabled .wce-row-end {
-  color: var(--color-text-faint);
 }
 </style>

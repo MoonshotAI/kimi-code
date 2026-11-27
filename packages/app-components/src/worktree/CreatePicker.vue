@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onScopeDispose, ref, watch } from 'vue';
-import { Icon, trackMenuSurface } from '@moonshot-ai/app-ui';
+import { computed, onScopeDispose, ref, watch } from 'vue';
+import { Icon, Menu } from '@moonshot-ai/app-ui';
 
 const props = defineProps<{
   label: string;
@@ -9,6 +9,7 @@ const props = defineProps<{
   chipClass: string;
   panelClass: string;
   panelWidth?: number;
+  activeDescendant?: string;
 }>();
 
 const emit = defineEmits<{
@@ -22,12 +23,16 @@ const ANCHOR_GAP = 4;
 const ALIGN_MARGIN = 16;
 
 const anchorRef = ref<HTMLElement | null>(null);
-const panelRef = ref<HTMLElement | null>(null);
+const panelRef = ref<InstanceType<typeof Menu> | null>(null);
 const triggerRef = ref<HTMLButtonElement | null>(null);
 const up = ref(false);
 const alignRight = ref(false);
 const maxHeight = ref<number | null>(null);
-trackMenuSurface(open, panelRef);
+const panelStyle = computed(() => ({
+  maxHeight: maxHeight.value === null ? undefined : `${maxHeight.value}px`,
+  transformOrigin: `${up.value ? 'bottom' : 'top'} ${alignRight.value ? 'right' : 'left'}`,
+  '--menu-pop-shift': up.value ? 'var(--space-05)' : undefined,
+}));
 
 function place(): void {
   const el = anchorRef.value;
@@ -90,7 +95,7 @@ function close(options?: { focusTrigger?: boolean }): void {
 }
 
 function focusPanel(): void {
-  panelRef.value?.focus({ preventScroll: true });
+  panelRef.value?.el?.focus({ preventScroll: true });
 }
 
 defineExpose({ close, focusPanel });
@@ -112,19 +117,22 @@ defineExpose({ close, focusPanel });
       <Icon class="cp-chip-chev" name="chevron-down" size="sm" />
     </button>
     <slot name="extra" />
-    <div
-      v-if="open"
-      ref="panelRef"
-      class="cp-panel"
-      :class="[panelClass, { up, 'align-right': alignRight }]"
-      :style="maxHeight === null ? undefined : { maxHeight: `${maxHeight}px` }"
-      :role="popup"
-      tabindex="-1"
-      :aria-label="panelLabel"
-      @keydown="emit('panelKeydown', $event)"
-    >
-      <slot />
-    </div>
+    <Transition name="ui-menu-pop">
+      <Menu
+        v-if="open"
+        ref="panelRef"
+        class="cp-panel"
+        :class="[panelClass, { up, 'align-right': alignRight }]"
+        :style="panelStyle"
+        :role="popup"
+        tabindex="-1"
+        :aria-label="panelLabel"
+        :aria-activedescendant="activeDescendant"
+        @keydown="emit('panelKeydown', $event)"
+      >
+        <slot />
+      </Menu>
+    </Transition>
   </div>
 </template>
 
@@ -137,11 +145,11 @@ defineExpose({ close, focusPanel });
 .cp-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   max-width: 100%;
   min-width: 0;
   height: 28px;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   padding: 0 var(--space-2);
   border: none;
   border-radius: 10px;
@@ -150,7 +158,7 @@ defineExpose({ close, focusPanel });
   backdrop-filter: blur(30px);
   color: var(--color-text);
   font-family: inherit;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   white-space: nowrap;
   cursor: pointer;
   transition: color var(--duration-base) var(--ease-out);
@@ -176,35 +184,6 @@ defineExpose({ close, focusPanel });
   left: 0;
   z-index: var(--z-dropdown);
   box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  padding: var(--menu-pad);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-menu-bg);
-  -webkit-backdrop-filter: var(--p-menu-backdrop);
-  backdrop-filter: var(--p-menu-backdrop);
-  box-shadow: var(--shadow-sm);
-  animation: cp-pop var(--duration-base) var(--ease-out);
-}
-:slotted(.cp-row) {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  border-radius: var(--radius-dropdown-row);
-  background: none;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-:slotted(.cp-row.active) {
-  background: var(--color-hover);
-}
-:slotted(.cp-row.on) {
-  background: var(--color-selected);
 }
 .cp-panel:focus {
   outline: none;
@@ -216,15 +195,5 @@ defineExpose({ close, focusPanel });
 .cp-panel.up {
   top: auto;
   bottom: calc(100% + var(--space-1));
-}
-@keyframes cp-pop {
-  from {
-    opacity: 0;
-    transform: scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 </style>

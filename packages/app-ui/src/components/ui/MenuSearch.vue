@@ -8,6 +8,8 @@ defineProps<{
   placeholder?: string;
   ariaLabel?: string;
   divider?: boolean;
+  activeDescendant?: string;
+  controls?: string;
 }>();
 
 const emit = defineEmits<{
@@ -48,6 +50,8 @@ function onKeydown(event: KeyboardEvent): void {
       :value="modelValue"
       :placeholder="placeholder"
       :aria-label="ariaLabel ?? placeholder"
+      :aria-activedescendant="activeDescendant"
+      :aria-controls="controls"
       @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       @compositionstart="handleCompositionStart"
       @compositionend="handleCompositionEnd"

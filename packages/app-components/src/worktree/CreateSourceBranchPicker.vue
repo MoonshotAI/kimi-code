@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
-import { Icon, MenuItem, MenuSearch, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
+import { Icon, MenuItem, MenuSearch, StatusDot, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
 import CreatePicker from './CreatePicker.vue';
 
 const props = defineProps<{
@@ -74,13 +74,36 @@ const branchRows = computed<BranchRow[]>(() =>
 
 const rows = computed<BranchRow[]>(() => (localRow.value === null ? branchRows.value : [localRow.value, ...branchRows.value]));
 
-function groupLabel(row: BranchRow): string {
-  return row.includeLocalChanges ? 'worktreeCreate.branch.localFileStatus' : 'worktreeCreate.branch.localBranches';
+interface BranchGroup {
+  key: string;
+  label: string;
+  rows: { row: BranchRow; index: number }[];
 }
 
-function startsGroup(index: number): boolean {
-  return index === 0 || rows.value[index - 1]!.includeLocalChanges !== rows.value[index]!.includeLocalChanges;
+const groups = computed<BranchGroup[]>(() => {
+  const result: BranchGroup[] = [];
+  rows.value.forEach((row, index) => {
+    const key = row.includeLocalChanges ? 'local' : 'branches';
+    const last = result.at(-1);
+    if (last?.key === key) last.rows.push({ row, index });
+    else
+      result.push({
+        key,
+        label: row.includeLocalChanges ? 'worktreeCreate.branch.localFileStatus' : 'worktreeCreate.branch.localBranches',
+        rows: [{ row, index }],
+      });
+  });
+  return result;
+});
+
+const baseId = useId();
+const listId = `${baseId}-list`;
+
+function rowId(index: number): string {
+  return `${baseId}-option-${index}`;
 }
+
+const activeDescendant = computed(() => (activeIndex.value >= 0 && activeIndex.value < rows.value.length ? rowId(activeIndex.value) : undefined));
 
 function updateFades(): void {
   const el = listRef.value;
@@ -94,7 +117,7 @@ function updateFades(): void {
 }
 
 function revealActive(): void {
-  const row = listRef.value?.querySelector<HTMLElement>('.wsb-row.active');
+  const row = listRef.value?.querySelector<HTMLElement>('.wsb-row.is-active');
   row?.scrollIntoView?.({ block: 'nearest' });
 }
 
@@ -195,19 +218,23 @@ onUnmounted(hideHover);
     @panel-keydown="onPanelKeydown"
   >
     <template #chip>
-      <span class="wsb-glyph" :class="{ 'has-dot': includesLocalChanges }" :data-glyph="glyphIcon">
+      <span class="wsb-glyph" :data-glyph="glyphIcon">
         <Icon :name="glyphIcon" size="md" />
+        <StatusDot v-if="includesLocalChanges" class="wsb-dot" status="unread" size="sm" />
       </span>
       <span class="wsb-chip-name">{{ branchName }}</span>
     </template>
     <template #extra>
-      <div v-if="hoverOpen && !open" class="wsb-hover" role="tooltip">
+      <div v-if="hoverOpen && !open" class="wsb-hover ui-tip-surface" role="tooltip">
         <div class="wsb-hover-row wsb-hover-main">
           <Icon :name="glyphIcon" size="sm" />
           <span>{{ hoverRef }}</span>
         </div>
         <div v-if="includesLocalChanges" class="wsb-hover-row">
-          <span class="wsb-glyph has-dot"><Icon name="worktree-branch" size="sm" /></span>
+          <span class="wsb-glyph">
+            <Icon name="worktree-branch" size="sm" />
+            <StatusDot class="wsb-dot" status="unread" size="sm" />
+          </span>
           <span>{{ t('worktreeCreate.branch.includeLocalChanges') }}</span>
         </div>
       </div>
@@ -218,39 +245,50 @@ onUnmounted(hideHover);
       class="wsb-search"
       divider
       :placeholder="t('worktreeCreate.branch.searchPlaceholder')"
+      :active-descendant="activeDescendant"
+      :controls="listId"
       @keydown="onSearchKeydown"
       @navigate="onSearchNavigate"
     />
     <div
+      :id="listId"
       ref="listRef"
       class="wsb-list"
       :class="{ 'fade-top': fadeTop, 'fade-bottom': fadeBottom }"
       role="listbox"
+      :aria-label="t('worktreeCreate.branch.label')"
       @scroll.passive="updateFades"
     >
       <div v-if="rows.length === 0" class="wsb-empty">{{ t('worktreeCreate.branch.empty') }}</div>
-      <template v-for="(row, index) in rows" :key="row.key">
-        <div v-if="startsGroup(index)" class="wsb-group">{{ t(groupLabel(row)) }}</div>
-        <button
-          type="button"
-          class="wsb-row cp-row"
-          :class="{ on: row.selected, active: activeIndex === index, 'has-desc': row.includeLocalChanges }"
+      <div v-for="group in groups" :key="group.key" role="group" :aria-labelledby="`${baseId}-${group.key}`">
+        <div :id="`${baseId}-${group.key}`" class="wsb-group">{{ t(group.label) }}</div>
+        <MenuItem
+          v-for="{ row, index } in group.rows"
+          :id="rowId(index)"
+          :key="row.key"
+          class="wsb-row"
+          :class="{ 'has-desc': row.includeLocalChanges }"
           role="option"
           tabindex="-1"
-          :aria-selected="row.selected"
+          :selected="row.selected"
+          :active="activeIndex === index"
           :data-row="row.includeLocalChanges ? 'local' : row.branch"
           @mousemove="activeIndex = index"
           @click.stop="selectRow(row)"
         >
-          <span class="wsb-glyph" :class="{ 'has-dot': row.includeLocalChanges }"><Icon name="worktree-branch" size="md" /></span>
+          <template #icon>
+            <span class="wsb-glyph">
+              <Icon name="worktree-branch" size="md" />
+              <StatusDot v-if="row.includeLocalChanges" class="wsb-dot" status="unread" size="sm" />
+            </span>
+          </template>
           <span class="wsb-row-text">
             <span class="wsb-row-name">{{ row.branch }}</span>
             <span v-if="row.includeLocalChanges" class="wsb-row-desc">{{ t('worktreeCreate.branch.includeLocalChangesHint') }}</span>
           </span>
           <span v-if="row.remote" class="wsb-row-remote" data-remote>{{ row.remote }}</span>
-          <Icon v-if="row.selected" class="wsb-row-check" name="check" size="sm" />
-        </button>
-      </template>
+        </MenuItem>
+      </div>
     </div>
     <MenuItem class="wsb-sep" separator />
     <div class="wsb-foot">
@@ -289,31 +327,20 @@ onUnmounted(hideHover);
   flex: none;
   line-height: 0;
 }
-.wsb-glyph.has-dot::after {
-  content: '';
+.wsb-dot {
   position: absolute;
-  top: -2px;
-  right: -3px;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
+  top: calc(-1 * var(--space-05));
+  right: calc(-1 * var(--space-05));
 }
 .wsb-hover {
   position: absolute;
   bottom: calc(100% + var(--space-1));
   left: 0;
-  z-index: var(--z-tooltip);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-05);
   width: max-content;
   max-width: min(320px, calc(100vw - var(--space-8)));
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--color-text);
-  color: var(--color-bg);
-  font-size: var(--text-xs);
   line-height: 1.35;
   pointer-events: none;
 }
@@ -376,17 +403,12 @@ onUnmounted(hideHover);
 .wsb-row {
   min-height: var(--wsb-row-h);
 }
-.wsb-row.cp-row.has-desc {
+.wsb-row.ui-menu-item.has-desc {
   align-items: flex-start;
 }
-.wsb-row.has-desc > .wsb-glyph {
-  margin-top: calc((var(--text-base) * var(--leading-normal) - 16px) / 2);
-}
-.wsb-row.has-desc > .wsb-row-check {
-  margin-top: calc((var(--text-base) * var(--leading-normal) - 14px) / 2);
-}
-.wsb-row .wsb-glyph {
-  color: var(--color-text-muted);
+.wsb-row.has-desc > .wsb-glyph,
+.wsb-row.has-desc > :deep(.ui-menu-item__check) {
+  margin-top: calc((var(--text-base) * var(--leading-normal) - var(--p-ic-md)) / 2);
 }
 .wsb-row-text {
   display: flex;
@@ -398,7 +420,6 @@ onUnmounted(hideHover);
   overflow: hidden;
   color: var(--color-text);
   font-size: var(--text-base);
-  font-weight: var(--weight-option-label);
   line-height: var(--leading-normal);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -420,11 +441,6 @@ onUnmounted(hideHover);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wsb-row-check {
-  flex: none;
-  margin-left: var(--space-2);
-  color: var(--color-text);
-}
 .wsb-sep {
   flex: none;
 }
@@ -432,14 +448,14 @@ onUnmounted(hideHover);
   display: flex;
   flex: none;
   flex-direction: column;
-  padding-bottom: 2px;
+  padding-bottom: var(--space-05);
 }
 .wsb-foot-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: 28px;
-  padding: 2px var(--space-2);
+  padding: var(--space-05) var(--space-2);
   color: var(--color-text-muted);
   font-size: var(--text-sm);
 }

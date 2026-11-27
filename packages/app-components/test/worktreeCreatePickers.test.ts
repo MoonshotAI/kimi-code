@@ -9,7 +9,7 @@ import { workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores'
 import { memoryStorage } from '@moonshot-ai/app-client/testing';
 import CreateEnvironmentPicker from '../src/worktree/CreateEnvironmentPicker.vue';
 import CreateSourceBranchPicker from '../src/worktree/CreateSourceBranchPicker.vue';
-import { cleanup, containing, msg, pointerDown, press, render, settle, textOf, typeInto, within, type Rendered } from './helpers/dom';
+import { accessibleName, cleanup, containing, msg, pointerDown, press, render, settle, textOf, typeInto, within, type Rendered } from './helpers/dom';
 
 const GB = 1024 * 1024 * 1024;
 
@@ -94,7 +94,9 @@ describe('CreateEnvironmentPicker', () => {
   const chip = () => view().getByRole('button', { name: new RegExp(`^${msg('worktreeCreate.environment.label')}: `) });
   const menu = () => view().queryByRole('menu', { name: msg('worktreeCreate.environment.label') });
   const option = (id: 'local' | 'worktree') =>
-    view().getByRole('menuitemradio', { name: new RegExp(`^${msg(`worktreeCreate.environment.${id}`)} `) });
+    view().getByRole('menuitemradio', {
+      name: new RegExp(`^${msg(`worktreeCreate.environment.${id}`)} `),
+    }) as HTMLButtonElement;
   const checking = () => within(option('worktree')).queryByRole('status', { name: msg('worktreeCreate.environment.checking') });
 
   async function mountOpen(): Promise<void> {
@@ -113,20 +115,20 @@ describe('CreateEnvironmentPicker', () => {
     expect(chip().getAttribute('aria-haspopup')).toBe('menu');
     expect(chip().getAttribute('aria-expanded')).toBe('true');
     expect(option('local').getAttribute('aria-checked')).toBe('true');
-    expect(option('worktree').getAttribute('aria-disabled')).toBe('true');
+    expect(option('worktree').disabled).toBe(true);
     expect(checking()).not.toBeNull();
     option('worktree').click();
     expect(environment().preferred).toBe('local');
 
     branches.resolve(repo);
     await settle();
-    expect(option('worktree').getAttribute('aria-disabled')).toBe('false');
+    expect(option('worktree').disabled).toBe(false);
     expect(checking()).toBeNull();
 
     option('worktree').click();
     await settle();
     expect(environment().preferred).toBe('worktree');
-    expect(menu()).toBeNull();
+    await vi.waitFor(() => expect(menu()).toBeNull());
     expect(chip().getAttribute('aria-label')).toBe(chipName('worktree'));
     expect(chip().getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(chip());
@@ -138,7 +140,7 @@ describe('CreateEnvironmentPicker', () => {
     await mountOpen();
 
     expect(chip().getAttribute('aria-label')).toBe(chipName('local'));
-    expect(option('worktree').getAttribute('aria-disabled')).toBe('true');
+    expect(option('worktree').disabled).toBe(true);
     expect(textOf(option('worktree'))).toContain(msg('worktreeCreate.environment.notGitRepo'));
     expect(checking()).toBeNull();
     expect(option('local').getAttribute('aria-checked')).toBe('true');
@@ -153,7 +155,7 @@ describe('CreateEnvironmentPicker', () => {
 
     branches.resolve(repo);
     await settle();
-    expect(option('worktree').getAttribute('aria-disabled')).toBe('false');
+    expect(option('worktree').disabled).toBe(false);
     expect(checking()).toBeNull();
   });
 
@@ -163,11 +165,11 @@ describe('CreateEnvironmentPicker', () => {
     expect(document.activeElement).toBe(menu());
     press(menu()!, 'ArrowDown');
     await nextTick();
-    expect(option('worktree').classList.contains('active')).toBe(true);
+    expect(menu()!.getAttribute('aria-activedescendant')).toBe(option('worktree').id);
     press(menu()!, 'Enter');
     await settle();
     expect(environment().preferred).toBe('worktree');
-    expect(menu()).toBeNull();
+    await vi.waitFor(() => expect(menu()).toBeNull());
     expect(document.activeElement).toBe(chip());
 
     chip().click();
@@ -175,7 +177,7 @@ describe('CreateEnvironmentPicker', () => {
     expect(document.activeElement).toBe(menu());
     press(menu()!, 'Escape');
     await nextTick();
-    expect(menu()).toBeNull();
+    await vi.waitFor(() => expect(menu()).toBeNull());
     expect(document.activeElement).toBe(chip());
     expect(environment().preferred).toBe('worktree');
   });
@@ -213,7 +215,7 @@ describe('CreateSourceBranchPicker', () => {
   const localChangesOption = () =>
     view().queryByRole('option', { name: containing(msg('worktreeCreate.branch.includeLocalChangesHint')) });
   const selected = () => view().getAllByRole('option').filter((item) => item.getAttribute('aria-selected') === 'true');
-  const active = () => view().getAllByRole('option').find((item) => item.classList.contains('active'));
+  const active = () => view().getAllByRole('option').find((item) => item.id === search().getAttribute('aria-activedescendant'));
   const remoteSwitch = () => view().queryByRole('switch', { name: msg('worktreeCreate.branch.useRemote') });
   const glyph = () => chip().querySelector<HTMLElement>('[data-glyph]')!;
 
@@ -237,7 +239,7 @@ describe('CreateSourceBranchPicker', () => {
     expect(chip().getAttribute('aria-label')).toBe(chipName('main'));
     expect(chip().getAttribute('aria-haspopup')).toBe('dialog');
     expect(glyph().dataset.glyph).toBe('worktree-branch');
-    expect(glyph().classList.contains('has-dot')).toBe(false);
+    expect(glyph().querySelector('.kw-dot')).toBeNull();
   });
 
   it('opens with the search focused, local changes first and branches by recency', async () => {
@@ -246,7 +248,11 @@ describe('CreateSourceBranchPicker', () => {
     expect(panel()).not.toBeNull();
     expect(document.activeElement).toBe(search());
     expect(api.getWorkspaceGitBranches).toHaveBeenCalledWith('ws1');
-    const listbox = view().getByRole('listbox');
+    const listbox = view().getByRole('listbox', { name: msg('worktreeCreate.branch.label') });
+    expect(within(listbox).getAllByRole('group').map((group) => accessibleName(group))).toEqual([
+      msg('worktreeCreate.branch.localFileStatus'),
+      msg('worktreeCreate.branch.localBranches'),
+    ]);
     expect(textOf(listbox)).toContain(msg('worktreeCreate.branch.localFileStatus'));
     expect(textOf(listbox)).toContain(msg('worktreeCreate.branch.localBranches'));
     expect(optionNames()).toEqual([
@@ -301,7 +307,7 @@ describe('CreateSourceBranchPicker', () => {
     await settle();
     expect(panel()).not.toBeNull();
     expect(selected()).toEqual([localChangesOption()]);
-    expect(glyph().classList.contains('has-dot')).toBe(true);
+    expect(glyph().querySelector('.kw-dot')).not.toBeNull();
     expect(environment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', includeLocalChanges: true });
   });
 
@@ -376,14 +382,14 @@ describe('CreateSourceBranchPicker', () => {
     await mountOpen();
     press(document.body, 'Escape');
     await nextTick();
-    expect(panel()).toBeNull();
+    await vi.waitFor(() => expect(panel()).toBeNull());
     expect(document.activeElement).toBe(chip());
 
     chip().click();
     await settle();
     pointerDown(document.body);
     await nextTick();
-    expect(panel()).toBeNull();
+    await vi.waitFor(() => expect(panel()).toBeNull());
 
     chip().click();
     await settle();
@@ -393,7 +399,7 @@ describe('CreateSourceBranchPicker', () => {
     pointerDown(chip());
     chip().click();
     await nextTick();
-    expect(panel()).toBeNull();
+    await vi.waitFor(() => expect(panel()).toBeNull());
     expect(chip().getAttribute('aria-expanded')).toBe('false');
   });
 
