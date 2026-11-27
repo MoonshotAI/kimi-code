@@ -257,20 +257,43 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       });
     }
 
-    if (this.isEditingOther() && event.y === this.editingOtherRow && event.button === 'left') {
-      if (event.x >= this.editingOtherPrefixWidth) {
-        const inputResult = this.otherInput.handleMouse({
-          ...event,
-          x: event.x - this.editingOtherPrefixWidth,
-          y: 0,
-          width: Math.max(2, event.width - this.editingOtherPrefixWidth),
-          height: 1,
-        });
-        if (inputResult !== undefined) {
-          return { handled: true, render: true };
+    if (this.isEditingOther()) {
+      if (event.y === this.editingOtherRow && event.button === 'left') {
+        if (event.x >= this.editingOtherPrefixWidth) {
+          const inputResult = this.otherInput.handleMouse({
+            ...event,
+            x: event.x - this.editingOtherPrefixWidth,
+            y: 0,
+            width: Math.max(2, event.width - this.editingOtherPrefixWidth),
+            height: 1,
+          });
+          if (inputResult !== undefined) {
+            return { handled: true, render: true };
+          }
         }
+        return { handled: true };
       }
-      return { handled: true };
+      return handleSelectableListMouse({
+        event,
+        focused: this.focused,
+        shownAt: this.shownAt,
+        regions: this.optionRegions,
+        selectOnHover: false,
+        select: (index) => {
+          const questionIdx = this.currentQuestionIndex();
+          if (questionIdx === undefined) return false;
+          this.cursors[questionIdx] = index;
+          return true;
+        },
+        activate: (index) => {
+          const questionIdx = this.currentQuestionIndex();
+          if (questionIdx !== undefined) this.syncOtherDraft(questionIdx);
+          this.editingOther = false;
+          this.reviewMessage = undefined;
+          this.pendingEnsureCursor = true;
+          this.ensureOptionVisible(index);
+        },
+      });
     }
 
     return handleSelectableListMouse({
@@ -278,7 +301,6 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       focused: this.focused,
       shownAt: this.shownAt,
       regions: this.optionRegions,
-      selectOnHover: !this.isEditingOther(),
       select: (index) => {
         const questionIdx = this.currentQuestionIndex();
         if (questionIdx === undefined) return false;
@@ -287,10 +309,6 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
         return changed;
       },
       activate: (index) => {
-        const questionIdx = this.currentQuestionIndex();
-        if (this.isEditingOther() && questionIdx !== undefined) {
-          this.syncOtherDraft(questionIdx);
-        }
         this.activateQuestionOption(index, undefined);
       },
     });

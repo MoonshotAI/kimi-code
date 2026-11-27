@@ -626,6 +626,23 @@ describe('QuestionDialogComponent', () => {
     try {
       now += 500;
       let screen = vt.getViewport().map(strip);
+      const modeOtherRow = screen.findIndex((line) => line.includes('Other'));
+      expect(modeOtherRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<0;10;${String(modeOtherRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(modeOtherRow + 1)}m`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('Type your answer');
+
+      screen = vt.getViewport().map(strip);
+      const fastRowWhileOther = screen.findIndex((line) => line.includes('Fast'));
+      vt.sendInput(`\u001B[<0;10;${String(fastRowWhileOther + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(fastRowWhileOther + 1)}m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('Choose mode?');
+      expect(screen.join('\n')).not.toContain('Type your answer');
+      expect(screen.join('\n')).toContain('→ [1] Fast');
+
       const thoroughDescRow = screen.findIndex((line) => line.includes('Deep check'));
       expect(thoroughDescRow).toBeGreaterThan(0);
 
@@ -659,8 +676,7 @@ describe('QuestionDialogComponent', () => {
       vt.sendInput(`\u001B[<0;10;${String(metricsRow + 1)}M`);
       vt.sendInput(`\u001B[<0;10;${String(metricsRow + 1)}m`);
       await vt.waitForRender();
-      vt.sendInput(' ');
-      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('[✓] Metrics');
 
       screen = vt.getViewport().map(strip);
       const customAgainRow = screen.findIndex((line) => line.includes('Custom'));
