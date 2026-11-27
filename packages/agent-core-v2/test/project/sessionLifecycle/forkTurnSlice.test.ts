@@ -97,6 +97,48 @@ describe('sliceMainRecordsAtTurn', () => {
     expect(running.records.some((record) => record.type === 'context.append_loop_event')).toBe(false);
   });
 
+  it('keeps date injections out of legacy steer ownership through undo and cold forks', () => {
+    const input = (type: string, text: string, turnId: number): WireRecord => ({
+      type, turnId, input: [{ type: 'text', text }], origin: { kind: 'user' },
+    });
+    const injection: WireRecord = { type: 'context.append_message', message: {
+      role: 'user', content: [{ type: 'text', text: 'date reminder' }],
+      origin: { kind: 'injection', variant: 'date_change' },
+    } };
+    const raw: WireRecord[] = [
+      input('turn.prompt', 'A', 0), userTurnRecord('A', 2), { type: 'turn.ended', turnId: 0 },
+      input('turn.prompt', 'B', 1), userTurnRecord('B', 5), { type: 'turn.ended', turnId: 1 },
+      { type: 'agent.switched', branch: 'undo-b', base: { branch: 'main', line: 3 }, legacyUndoLine: 8 },
+      { type: 'context.undo', count: 1 }, { type: 'context.undone', turns: 1, fromTurnId: 1 },
+      injection,
+      input('turn.prompt', 'C', 2), userTurnRecord('C', 12),
+      userTurnRecord('C1', 13), input('turn.steer', 'C1', 2),
+      userTurnRecord('C2', 15), input('turn.steer', 'C2', 2),
+      { type: 'turn.ended', turnId: 2 },
+    ];
+    const original = JSON.stringify(raw);
+    const entries = raw.map((record, index) => ({ record, line: index + 1 }));
+    const restored = restorableChain(entries, parseTree(entries, entries.length)).map(({ record }) => record);
+    const normalized = normalizeLegacyTurnSteerRecords(restored);
+    const fork = sliceMainRecordsAtTurn(normalized, 'example-source', 4).records;
+    for (const records of [normalized, fork, JSON.parse(JSON.stringify(fork)) as WireRecord[]]) {
+      const users = foldWireRecords(records).replay.flatMap((record) =>
+        record.type === 'message' && record.message.role === 'user' && record.message.origin?.kind !== 'injection'
+          ? [{ content: record.message.content, turnId: record.turnId }] : [],
+      );
+      expect(users).toEqual(['A', 'C', 'C1', 'C2'].map((text, index) => ({
+        content: [{ type: 'text', text }], turnId: [0, 2, 3, 4][index],
+      })));
+      expect(records).toContainEqual(injection);
+      expect(restoreLoopJournal(records).input.messages?.filter((message) =>
+        message.role === 'user',
+      ).map((message) => message.content)).toEqual(
+        ['A', 'date reminder', 'C', 'C1', 'C2'].map((text) => [{ type: 'text', text }]),
+      );
+    }
+    expect(JSON.stringify(raw)).toBe(original);
+  });
+
   it('preserves legacy steer turn ownership through undo fork and cold restore', () => {
     type IdMode = 'none' | 'prompts' | 'messages' | 'all-except-steer' | 'all';
     const scenarios = [

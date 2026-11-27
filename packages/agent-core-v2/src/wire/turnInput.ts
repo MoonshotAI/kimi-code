@@ -170,6 +170,11 @@ function wireTurnInputMatches(
       ? inputRecord['promptId']
       : undefined;
   if (promptId !== undefined && messageId !== undefined) return promptId === messageId;
+  if (anyOrigin) {
+    const inputKind = wireRecordObject(inputRecord['origin'])?.['kind'] ?? 'user';
+    const messageKind = wireRecordObject(message['origin'])?.['kind'] ?? 'user';
+    if (inputKind !== messageKind) return false;
+  }
   return (
     !compareContent ||
     JSON.stringify(inputRecord['input']) === JSON.stringify(message['content'])
