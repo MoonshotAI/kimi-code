@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
@@ -168,12 +168,27 @@ describe.each(PROFILES)('one session with $name', ({ options, roleMetadata, mcp,
 interface Change {
   readonly name: string;
   readonly options?: ScenarioOptions;
+  readonly prepare?: (kap: Kap) => Promise<void>;
   readonly apply: (kap: Kap, sessionId: string) => Promise<unknown>;
   readonly takesEffect: (applied: unknown, next: ModelRequest, first: ModelRequest) => void;
 }
 
 function agentConfig(config: Readonly<Record<string, unknown>>): Change['apply'] {
   return (kap, sessionId) => kap.rest.post(`/api/v1/sessions/${sessionId}/profile`, { agent_config: config });
+}
+
+const PLUGIN = 'cache-plugin';
+
+async function installDisabledPlugin(kap: Kap): Promise<void> {
+  const source = join(kap.home.root, PLUGIN);
+  await mkdir(join(source, 'skills', 'cache-skill'), { recursive: true });
+  await writeFile(
+    join(source, 'kimi.plugin.json'),
+    JSON.stringify({ name: PLUGIN, version: '1.0.0', description: 'Adds a prompt section and a skill.', systemPrompt: 'Mention the cache plugin.', skills: './skills/' }),
+  );
+  await writeFile(join(source, 'skills', 'cache-skill', 'SKILL.md'), '---\nname: cache-skill\ndescription: Check the cache.\n---\n\nCheck the cache.\n');
+  await kap.rest.post('/api/v1/plugins', { source });
+  await kap.rest.post(`/api/v1/plugins/${PLUGIN}:disable`);
 }
 
 const CHANGES: readonly Change[] = [
@@ -199,17 +214,32 @@ const CHANGES: readonly Change[] = [
     takesEffect: (applied) => expect(applied).toMatchObject({ agent: { permission_mode: 'manual' } }),
   },
   {
+    name: 'turning an experimental feature off and reloading the session',
+    apply: async (kap, sessionId) => {
+      await kap.rest.post('/api/v1/config', { experimental: { wait_for: false } });
+      return kap.rest.post(`/api/v1/sessions/${sessionId}:reload`);
+    },
+    takesEffect: (_applied, next) => expect(next.remindersSinceReply.join('\n')).toMatch(/<tools_removed>\s*WaitFor\s*<\/tools_removed>/),
+  },
+  {
+    name: 'enabling a plugin',
+    prepare: installDisabledPlugin,
+    apply: (kap) => kap.rest.post(`/api/v1/plugins/${PLUGIN}:enable`),
+    takesEffect: (_applied, next) => expect(next.remindersSinceReply.join('\n')).toContain(`Plugin "${PLUGIN}" was enabled.`),
+  },
+  {
     name: 'writing AGENTS.md into the workspace',
     apply: (kap) => writeFile(join(kap.home.workspace, 'AGENTS.md'), '# Rules\n\nAlways answer in one line.\n'),
     takesEffect: (_applied, next, first) => expect(next.view.system).toBe(first.view.system),
   },
 ];
 
-describe.each(CHANGES)('a session $name between two turns', ({ options, apply, takesEffect }) => {
+describe.each(CHANGES)('a session $name between two turns', ({ options, prepare, apply, takesEffect }) => {
   const test = base.extend<ScenarioFixtures>(scenarioFixtures({ ...options, modelOptions: { reportCachedTokens: true } }));
 
   test('sends the next request on the same prompt cache prefix', async ({ kap, model }) => {
     model.script(answer('first answer'), answer('second answer'));
+    await prepare?.(kap);
     const session = await kap.createSession();
     await turn(kap, session.id, 'First question.');
     const applied = await apply(kap, session.id);
@@ -221,6 +251,23 @@ describe.each(CHANGES)('a session $name between two turns', ({ options, apply, t
       { baseline: undefined, reusedFrom: undefined },
       { baseline: 0, reusedFrom: 0 },
     ]);
+    expect(model.promptCacheProblems()).toEqual([]);
+  });
+});
+
+describe('a goal started between two turns', () => {
+  const test = base.extend<ScenarioFixtures>(scenarioFixtures({ modelOptions: { reportCachedTokens: true } }));
+
+  test('keeps the goal turn on the same prompt cache prefix', async ({ kap, model }) => {
+    model.script(answer('first answer'), call('UpdateGoal', { status: 'complete' }), answer('the goal is complete'));
+    const session = await kap.createSession();
+    await turn(kap, session.id, 'First question.');
+    await kap.rest.post(`/api/v1/sessions/${session.id}/profile`, { agent_config: { goal_objective: 'Write one haiku about caches.' } });
+    await turn(kap, session.id, 'Work on the goal.');
+
+    const goalTurn = model.requests('main')[1];
+    expect(goalTurn?.remindersSinceReply.join('\n')).toMatch(/active goal[\s\S]*Write one haiku about caches\./);
+    expect(model.promptCache().filter((entry) => entry.role === 'main').map(({ baseline }) => baseline)).toEqual([undefined, 0, 1]);
     expect(model.promptCacheProblems()).toEqual([]);
   });
 });
@@ -239,6 +286,30 @@ describe('a message steered into a running reply', () => {
 
     expect(model.requests('main').at(-1)?.userTextsSinceReply.at(-1)).toBe('Actually, keep it short.');
     expect(model.promptCache().filter((entry) => entry.role === 'main').map(({ baseline }) => baseline)).toEqual([undefined, 0]);
+    expect(model.promptCacheProblems()).toEqual([]);
+  });
+});
+
+describe('two clients following the same session', () => {
+  const test = base.extend<ScenarioFixtures>(scenarioFixtures({ modelOptions: { reportCachedTokens: true } }));
+
+  test('keeps the next request on the same prompt cache prefix when a second client subscribes in the middle of the session', async ({ kap, model }) => {
+    model.script(answer('first answer'), answer('second answer'));
+    const session = await kap.createSession();
+    const first = await kap.connect();
+    await first.subscribe(session.id);
+    await turn(kap, session.id, 'First question.');
+    const second = await kap.connect();
+    await second.subscribe(session.id);
+    await turn(kap, session.id, 'Second question.');
+
+    const lastAnswer = (socket: typeof first): unknown => socket.turns(session.id).at(-1)?.items.find((item) => item.type === 'assistant_message')?.['text'];
+    await expect.poll(() => lastAnswer(first)).toBe('second answer');
+    await expect.poll(() => lastAnswer(second)).toBe('second answer');
+    expect(model.promptCache().filter((entry) => entry.role === 'main').map(({ baseline, reusedFrom }) => ({ baseline, reusedFrom }))).toEqual([
+      { baseline: undefined, reusedFrom: undefined },
+      { baseline: 0, reusedFrom: 0 },
+    ]);
     expect(model.promptCacheProblems()).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -21,7 +21,7 @@ import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliE
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES } from '#/fixtures/env';
-import { bashPathOf, createGitWorktree } from '#/fixtures/git';
+import { bashPathOf, createGitRepository, createGitWorktree, runGit } from '#/fixtures/git';
 import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
 import { fakeMcpServer, readMcpCalls, readMcpStarts, writeMcpConfig, type McpServerEntry } from '#/fixtures/mcp';
 import { startFakeMcpHttpServer } from '#/fixtures/mcp-http';
@@ -81,6 +81,25 @@ describe('createGitWorktree', () => {
       expect(await readFile(join(layout.worktree, 'src', 'tracked.txt'), 'utf8')).toBe('one\n');
       expect(await readFile(join(layout.worktree, '.git'), 'utf8')).toMatch(/^gitdir: .*worktrees[\\/]app-fix\s*$/);
       expect(existsSync(join(layout.main, '.git', 'HEAD'))).toBe(true);
+    } finally {
+      await home.remove();
+    }
+  });
+});
+
+describe('createGitRepository', () => {
+  it('commits each branch on top of main and leaves main checked out, so runGit can switch to a branch like a user', async () => {
+    const home = await createTestHome('git-branches');
+    try {
+      const dir = join(home.workspace, 'app');
+      await createGitRepository(dir, { files: { 'notes.txt': 'alpha\n' }, branches: { feature: { 'notes.txt': 'beta\n' } } });
+
+      expect((await runGit(dir, ['symbolic-ref', '--short', 'HEAD'])).trim()).toBe('main');
+      expect((await runGit(dir, ['config', '--local', '--get', 'core.autocrlf'])).trim()).toBe('false');
+      expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('alpha\n');
+      await runGit(dir, ['checkout', '-q', 'feature']);
+      expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('beta\n');
+      expect((await runGit(dir, ['status', '--porcelain'])).trim()).toBe('');
     } finally {
       await home.remove();
     }
@@ -464,6 +483,20 @@ describe('snapshotDirectory', () => {
         { path: 'nested/removed.txt', kind: 'removed' },
       ]);
     } finally {
+      await home.remove();
+    }
+  });
+
+  it('leaves a skipped top-level directory unread, so files that git creates and removes there cannot break the snapshot', async () => {
+    const home = await createTestHome('testkit-snapshot');
+    const git = join(home.workspace, '.git');
+    try {
+      await mkdir(join(git, 'objects'), { recursive: true });
+      await Promise.all([writeFile(join(home.workspace, 'notes.txt'), 'kept\n'), writeFile(join(git, 'index.lock'), 'held\n')]);
+      await chmod(git, 0o000);
+      expect(await snapshotDirectory(home.workspace, { skip: ['.git'] })).toEqual({ 'notes.txt': contentDigest('kept\n') });
+    } finally {
+      await chmod(git, 0o755);
       await home.remove();
     }
   });
