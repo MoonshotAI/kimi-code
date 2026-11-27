@@ -17,6 +17,7 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { drainLogCloses } from '#/_base/log/logService';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
@@ -28,6 +29,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { readUserPermissionRules } from '#/agent/permissionRules/configSection';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentPlanService } from '#/features/plan/plan';
+import { IAgentSwarmService, SWARM_MODE_ENV } from '#/features/swarm/agent/swarm';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -257,13 +259,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               environmentCwd: environment?.cwd,
             })
           : undefined;
-      if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
-        const planAgent = main ?? (await ensureMainAgent(handle));
-        const planHandle = agents.handleOf(planAgent.agentId);
-        if (planHandle === undefined) {
+      const defaultPlanMode = this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true;
+      const defaultSwarmMode = parseBooleanEnv(this.bootstrap.getEnv(SWARM_MODE_ENV)) === true;
+      if (defaultPlanMode || defaultSwarmMode) {
+        const mainAgent = main ?? (await ensureMainAgent(handle));
+        const mainHandle = agents.handleOf(mainAgent.agentId);
+        if (mainHandle === undefined) {
           throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
         }
-        await planHandle.accessor.get(IAgentPlanService).enter();
+        if (defaultPlanMode) await mainHandle.accessor.get(IAgentPlanService).enter();
+        if (defaultSwarmMode) mainHandle.accessor.get(IAgentSwarmService).enter('manual');
       }
       await opts.prepare?.(handle);
       await this.appendSessionIndexEntry(sessionId, workDir);

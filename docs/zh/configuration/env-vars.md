@@ -164,6 +164,7 @@ kimi
 | `KIMI_CODE_SUBAGENT_SCOPE_CACHE_SIZE` | 保留在内存中的已完成 subagent scope 数量，超出后最旧的会被驱逐，恢复时从持久化状态按需重建（默认 `32`；`0` 或负数 = 不驱逐） | 整数；非法值会立即失败 |
 | `KIMI_CODE_SUBAGENT_SCOPE_EVICT_TIMEOUT_MS` | 单个 subagent scope 驱逐允许的最长时间（毫秒），超时后驱逐队列跳过它继续后续驱逐（默认 `15000`） | 正整数；非法值会立即失败 |
 | `KIMI_SUBAGENT_TIMEOUT_MS` | 单个 `Agent` subagent 可运行的最长时间（毫秒），优先级高于 `config.toml` 的 `[subagent] timeout_ms` | 正整数；非法值回退到配置或默认值 |
+| `KIMI_CODE_SWARM` | 新建会话默认进入 swarm mode（含 `kimi -p`）；仍可在会话内通过 `/swarm off` 关闭 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；未设置或其他值保持关闭 |
 | `KIMI_CODE_SWARM_TIMEOUT_MS` | `AgentSwarm` subagent 可运行的最长时间（毫秒），优先级高于 `config.toml` 的 `[swarm] timeout_ms` | 正整数；非法值回退到配置或默认值 |
 | `KIMI_CODE_IDENTITY_NAME` | Agent 在系统提示词中的自称，优先级高于 `config.toml` 的 `[identity] name`，不写回配置文件 | 任意非空字符串；空值视为未设置 |
 | `KIMI_CODE_IDENTITY_SLUG` | 协议标识（`User-Agent` 产品名、MCP 客户端名），优先级高于 `[identity] slug`；未设置时由名称派生 | 任意非空字符串；会转小写并将连续非字母数字字符折叠为 `-` |
