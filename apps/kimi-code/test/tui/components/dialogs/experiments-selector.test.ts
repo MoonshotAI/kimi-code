@@ -80,6 +80,37 @@ describe('ExperimentsSelectorComponent', () => {
     ]);
   });
 
+  it('drafts config overrides for master-env features', () => {
+    const onApply = vi.fn<(changes: readonly ExperimentalFeatureDraftChange[]) => void>();
+    const selector = new ExperimentsSelectorComponent({
+      features: [
+        feature({
+          id: 'auto_review',
+          title: 'Auto Review',
+          description: 'Review tool calls.',
+          env: 'KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW',
+          enabled: true,
+          source: 'master-env',
+        }),
+      ],
+      onApply,
+      onCancel: vi.fn(),
+    });
+
+    selector.handleInput(' ');
+
+    expect(text(selector)).toContain('  ❯ Auto Review  disabled');
+    expect(text(selector)).toContain(
+      '    id auto_review · KIMI_CODE_EXPERIMENTAL_FLAG (config can override) · KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW · modified',
+    );
+
+    selector.handleInput(ENTER);
+
+    expect(onApply).toHaveBeenCalledWith([
+      { id: 'auto_review', enabled: false },
+    ]);
+  });
+
   it('does not draft changes for env-locked features', () => {
     const onApply = vi.fn<(changes: readonly ExperimentalFeatureDraftChange[]) => void>();
     const selector = new ExperimentsSelectorComponent({
