@@ -265,7 +265,6 @@
     "apps/desktop/src/main/browser/browser-annotations.ts": 1,
     "apps/desktop/src/main/browser/browser-view.ts": 2,
     "apps/desktop/src/main/ipc/handlers/browserIpc.ts": 3,
-    "apps/desktop/src/main/ipc/preload.ts": 5,
     "apps/desktop/src/renderer/App.vue": 6,
     "apps/desktop/src/renderer/components/Sidebar.vue": 2,
     "apps/desktop/src/renderer/components/UserMenu.vue": 1,
