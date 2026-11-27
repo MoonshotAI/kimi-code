@@ -895,7 +895,6 @@
     "packages/klient/src/transports/memory/dispatcher.ts": 1,
     "packages/minidb/src/query.ts": 1,
     "packages/minidb/src/value-codec.ts": 1,
-    "packages/node-sdk/src/v2/event-mapper.ts": 1,
     "packages/session-import/src/rollout.ts": 2
   },
   "typescript/no-useless-default-assignment": {

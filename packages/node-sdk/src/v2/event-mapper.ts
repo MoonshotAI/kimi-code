@@ -14,29 +14,7 @@
  */
 import type { Event } from '@moonshot-ai/agent-core-v2/events';
 import type { Event2 } from '@moonshot-ai/agent-core-v2';
-import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
-
-function isCoreMediaPart(part: unknown): part is Parameters<typeof fromCorePart>[0] {
-  if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
-    return false;
-  }
-  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
-    return false;
-  }
-  const source = part.source;
-  if (typeof source !== 'object' || source === null || !('kind' in source)) return false;
-  return (
-    source.kind === 'url' ||
-    source.kind === 'inline' ||
-    source.kind === 'file' ||
-    source.kind === 'store'
-  );
-}
-
-function projectToolResultOutput(output: unknown): unknown {
-  if (!Array.isArray(output)) return output;
-  return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
-}
+import { projectAgentEvent } from '@moonshot-ai/klient/memory';
 
 /**
  * DomainEvent types the v1 SDK event stream never carries:
@@ -100,13 +78,7 @@ export function translateDomainEvent(
     return Object.assign({}, publicFields, { type, sessionId, agentId }) as unknown as Event;
   }
   if (event.type === 'tool.result') {
-    const output = (event as { readonly output?: unknown }).output;
-    return Object.assign({}, event, {
-      output: projectToolResultOutput(output),
-      type,
-      sessionId,
-      agentId,
-    }) as unknown as Event;
+    return Object.assign({}, projectAgentEvent(event), { type, sessionId, agentId }) as unknown as Event;
   }
   return Object.assign({}, event, { type, sessionId, agentId }) as unknown as Event;
 }
