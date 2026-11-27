@@ -1129,7 +1129,7 @@ export class KimiTUI {
     void this.migrateLegacySurveySetting();
     void this.showConfigWarningsIfAny();
     if (this.state.startupState === 'picker') {
-      void this.bootstrapFromPicker();
+      await this.bootstrapFromPicker();
       void this.backgroundRefreshPromise?.then(() => {
         this.modelMigration.request();
       });

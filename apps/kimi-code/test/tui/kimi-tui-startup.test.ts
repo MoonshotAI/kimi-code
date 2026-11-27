@@ -2947,9 +2947,13 @@ describe('KimiTUI startup', () => {
       contextTokens: 10, maxContextTokens: 100, contextUsage: 0.1,
     })) });
     const harness = makeHarness(session, {
-      listSessions: vi.fn(async () => [{
-        id: session.id, title: 'Picked', workDir: '/tmp/proj-a', updatedAt: Date.now(),
-      }]),
+      listSessions: vi.fn(async () => {
+        await flushMigrationCheck();
+        await flushMigrationCheck();
+        return [{
+          id: session.id, title: 'Picked', workDir: '/tmp/proj-a', updatedAt: Date.now(),
+        }];
+      }),
     });
     const driver = makeDriver(harness, makeStartupInput({ session: '' }));
     installMigrationModels(driver);

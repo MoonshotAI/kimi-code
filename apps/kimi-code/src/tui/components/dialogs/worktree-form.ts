@@ -13,6 +13,7 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { focusOnUnfocusedMouse } from '#/tui/utils/dialog-mouse';
 import { printableChar } from '#/tui/utils/printable-key';
+import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 export type WorktreeFormField = 'name' | 'base' | 'session';
 export type WorktreeSessionAction = 'move' | 'new';
@@ -61,12 +62,14 @@ function activePillText(label: string): string {
 
 export class WorktreeFormComponent implements Component, Focusable {
   focused = false;
+  private readonly shownAt = Date.now();
   private readonly inputs: Record<TextFieldId, Input> = {
     name: fieldInput(PLACEHOLDERS.name),
     base: fieldInput(PLACEHOLDERS.base),
   };
   private field: WorktreeFormField = 'name';
   private sessionAction: WorktreeSessionAction;
+  private armedSubmitChoice: WorktreeSessionAction | undefined;
   private error: string | undefined;
 
   constructor(private readonly opts: WorktreeFormOptions) {
@@ -114,11 +117,7 @@ export class WorktreeFormComponent implements Component, Focusable {
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      this.opts.onSubmit({
-        name: this.value('name'),
-        base: this.value('base'),
-        ...(this.canMove ? { sessionAction: this.sessionAction } : {}),
-      });
+      this.submit();
       return;
     }
     if (this.field === 'session') {
@@ -137,29 +136,38 @@ export class WorktreeFormComponent implements Component, Focusable {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    const isLeftPressOrClick =
-      event.button === 'left' && (event.type === 'press' || event.type === 'click');
-    if (!isLeftPressOrClick) {
+    if (event.type === 'drag') {
+      this.armedSubmitChoice = undefined;
+      return this.focused ? undefined : focusOnUnfocusedMouse(event);
+    }
+    if (event.button !== 'left' || (event.type !== 'press' && event.type !== 'click')) {
       return this.focused ? undefined : focusOnUnfocusedMouse(event);
     }
     const target = this.fields[event.y - 1];
     if (target === undefined) {
+      this.armedSubmitChoice = undefined;
       return this.focused ? undefined : focusOnUnfocusedMouse(event);
     }
-    let changed = this.field !== target.id;
-    this.field = target.id;
-    if (target.id === 'session') {
-      const clicked = this.sessionOptionAt(event.x);
-      if (clicked !== undefined && clicked !== this.sessionAction) {
-        this.sessionAction = clicked;
-        this.error = undefined;
-        changed = true;
-      }
+    const clicked = target.id === 'session' ? this.sessionOptionAt(event.x) : undefined;
+    if (event.type === 'press') {
+      this.armedSubmitChoice =
+        this.focused &&
+        this.field === 'session' &&
+        clicked !== undefined &&
+        clicked === this.sessionAction
+          ? clicked
+          : undefined;
+      return { handled: true, render: this.selectTarget(target.id, clicked) };
     }
+    const armed = this.armedSubmitChoice;
+    this.armedSubmitChoice = undefined;
+    const changed = this.selectTarget(target.id, clicked);
     if (!this.focused) {
-      return event.type === 'click'
-        ? { handled: true, focus: true, render: true }
-        : { handled: true, render: changed };
+      return { handled: true, focus: true, render: true };
+    }
+    if (armed !== undefined && armed === clicked && !isSettlingClick(this.shownAt)) {
+      this.submit();
+      return { handled: true, render: true };
     }
     return { handled: true, render: changed };
   }
@@ -234,6 +242,25 @@ export class WorktreeFormComponent implements Component, Focusable {
       return rowActive ? currentTheme.boldFg('accent', pill) : currentTheme.fg('text', pill);
     };
     return `${renderChoice('move', MOVE_LABEL)}${OPTION_GAP}${renderChoice('new', NEW_LABEL)}`;
+  }
+
+  private selectTarget(field: WorktreeFormField, choice: WorktreeSessionAction | undefined): boolean {
+    let changed = this.field !== field;
+    this.field = field;
+    if (choice !== undefined && choice !== this.sessionAction) {
+      this.sessionAction = choice;
+      this.error = undefined;
+      changed = true;
+    }
+    return changed;
+  }
+
+  private submit(): void {
+    this.opts.onSubmit({
+      name: this.value('name'),
+      base: this.value('base'),
+      ...(this.canMove ? { sessionAction: this.sessionAction } : {}),
+    });
   }
 
   private value(field: TextFieldId): string | undefined {
