@@ -202,8 +202,6 @@ describe('mergeWorkspaces — scale', () => {
       id: `s${i}`,
       cwd: `/home/x/${i % 2 === 0 ? 'project' : 'derived'}-${i}`,
     }));
-    // Minimize transient CI CPU contention without weakening the budget for a
-    // consistently slow implementation.
     const elapsedSamples = Array.from({ length: 5 }, () => {
       const startedAt = performance.now();
       const result = mergeWorkspaces(input({ workspaces, sessions }));
