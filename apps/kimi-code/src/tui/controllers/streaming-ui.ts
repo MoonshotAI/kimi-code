@@ -585,6 +585,11 @@ export class StreamingUIController {
     this.settleContinuation(sendQueued, continuation);
   }
 
+  settlePromptWithoutTurn(sendQueued: (item: QueuedMessage) => void): void {
+    this.finalizeTurn(sendQueued);
+    if (this.host.state.appState.loopLifecycleEvents === true) this.settleContinuation(sendQueued, 'none');
+  }
+
   resumeContinuation(sendQueued: (item: QueuedMessage) => void): void {
     const { state } = this.host;
     if (state.appState.loopLifecycleEvents !== true) return;

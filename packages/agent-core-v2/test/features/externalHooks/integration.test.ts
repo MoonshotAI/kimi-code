@@ -1487,6 +1487,7 @@ describe('IExternalHooksRunnerService integration', () => {
       await ix.get(IAgentLoopService).hooks.onBeforeSubmitPrompt.run({
         promptMessage: { role: 'user', content: submittedContent, origin: { kind: 'user' } },
         isSteer: false,
+        signal: new AbortController().signal,
         hookParts: [],
         block: false,
       });
@@ -1801,6 +1802,7 @@ describe('IExternalHooksRunnerService integration', () => {
       await loop.hooks.onBeforeSubmitPrompt.run({
         promptMessage: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
         isSteer: false,
+        signal: new AbortController().signal,
         hookParts: [],
         block: false,
       });

@@ -42,6 +42,7 @@ export interface EditorKeyboardHost {
   session: Session | undefined;
   cancelInFlight: (() => void) | undefined;
   harness?: KimiHarness | undefined;
+  requestCancelBeforeTurn?(): void;
 
   handleUserInput(text: string, delivery?: FollowUpDelivery): void;
   readonly btwPanelController: BtwPanelController;
@@ -494,6 +495,7 @@ export class EditorKeyboardController {
       return;
     }
     this.host.cancelRunningShellCommand();
+    this.host.requestCancelBeforeTurn?.();
     void this.host.session?.cancel();
   }
 

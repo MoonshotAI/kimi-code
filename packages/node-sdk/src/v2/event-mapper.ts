@@ -14,29 +14,7 @@
  */
 import type { Event } from '@moonshot-ai/agent-core-v2/events';
 import type { Event2 } from '@moonshot-ai/agent-core-v2';
-import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
-
-function isCoreMediaPart(part: unknown): part is Parameters<typeof fromCorePart>[0] {
-  if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
-    return false;
-  }
-  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
-    return false;
-  }
-  const source = part.source;
-  if (typeof source !== 'object' || source === null || !('kind' in source)) return false;
-  return (
-    source.kind === 'url' ||
-    source.kind === 'inline' ||
-    source.kind === 'file' ||
-    source.kind === 'store'
-  );
-}
-
-function projectToolResultOutput(output: unknown): unknown {
-  if (!Array.isArray(output)) return output;
-  return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
-}
+import { projectAgentEvent } from '@moonshot-ai/klient/memory';
 
 /**
  * DomainEvent types the v1 SDK event stream never carries:
@@ -44,12 +22,15 @@ function projectToolResultOutput(output: unknown): unknown {
  *   `task.notified`, `plan.revision`, and the `permission.approval.*` pair
  *   (v1 surfaces approvals through the `requestApproval` callback, never as
  *   events).
- * - `prompt.*` other than `prompt.queued` and `prompt.completed`: the v2 prompt
- *   service publishes them on the agent bus, but in v1 they are synthesized by
- *   the daemon services layer onto the global `IEventService` — the in-process
- *   SDK client never sees them. `prompt.queued` lets hosts reconcile local
- *   queues. `prompt.completed(blocked|failed)` remains visible because a
- *   pre-turn rejection has no `turn.ended` counterpart that could settle the UI.
+ * - `prompt.started` and `prompt.steered`: the v2 prompt service publishes
+ *   them on the agent bus, but in v1 they are synthesized by the daemon
+ *   services layer onto the global `IEventService` — the in-process SDK client
+ *   never sees them. The other `prompt.*` events stay visible: `prompt.queued`
+ *   lets hosts reconcile local queues; `prompt.submitted` tells a host the
+ *   engine has accepted a prompt, so a cancel requested while the prompt was
+ *   still on its way can be sent again; `prompt.aborted` and
+ *   `prompt.completed(blocked|failed)` settle a prompt that ended before its
+ *   turn started, which has no `turn.ended` counterpart that could settle the UI.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'context.spliced',
@@ -57,8 +38,6 @@ const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'plan.revision',
   'permission.approval.requested',
   'permission.approval.resolved',
-  'prompt.submitted',
-  'prompt.aborted',
   'prompt.started',
   'prompt.steered',
 ]);
@@ -99,13 +78,7 @@ export function translateDomainEvent(
     return Object.assign({}, publicFields, { type, sessionId, agentId }) as unknown as Event;
   }
   if (event.type === 'tool.result') {
-    const output = (event as { readonly output?: unknown }).output;
-    return Object.assign({}, event, {
-      output: projectToolResultOutput(output),
-      type,
-      sessionId,
-      agentId,
-    }) as unknown as Event;
+    return Object.assign({}, projectAgentEvent(event), { type, sessionId, agentId }) as unknown as Event;
   }
   return Object.assign({}, event, { type, sessionId, agentId }) as unknown as Event;
 }

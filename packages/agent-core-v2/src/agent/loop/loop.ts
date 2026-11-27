@@ -221,6 +221,7 @@ export interface SteerResult {
 export interface PromptSubmitContext {
   readonly promptMessage: ContextMessage;
   readonly isSteer: boolean;
+  readonly signal: AbortSignal;
   readonly hookParts: TextPart[];
   block: boolean;
 }

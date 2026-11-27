@@ -7,7 +7,7 @@ import type {
 import { createKlientFromChannel, type Klient, type KlientOptions } from '../../core/klient.js';
 import { createMemoryDispatcher, type ScopeLike } from './dispatcher.js';
 
-export type { ScopeLike } from './dispatcher.js';
+export { projectAgentEvent, type ScopeLike } from './dispatcher.js';
 
 export interface MemoryKlientOptions extends KlientOptions {
   readonly scope: ScopeLike;

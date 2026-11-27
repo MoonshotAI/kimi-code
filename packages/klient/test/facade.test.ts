@@ -457,6 +457,7 @@ describe('session skills routing', () => {
     await agent.steer({ input: [{ type: 'text', text: 'steer' }], promptId: 'prompt-client-steer' });
     await agent.cancel({ turnId: 2 });
     await agent.cancel();
+    await agent.cancel({ promptId: 'prompt-1' });
     await agent.setPermission('yolo');
     await agent.listCommands();
     await agent.runCommand({ name: 'cmd', args: 'a b' });
@@ -483,6 +484,7 @@ describe('session skills routing', () => {
       },
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [2] },
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [] },
+      { scope, service: 'agentLoopService', method: 'cancelPrompt', args: ['prompt-1'] },
       { scope, service: 'agentPermissionModeService', method: 'setModeAndBroadcast', args: ['yolo'] },
       { scope, service: 'agentCommandService', method: 'list', args: [] },
       { scope, service: 'agentCommandService', method: 'run', args: ['cmd', 'a b'] },

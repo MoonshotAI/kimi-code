@@ -431,6 +431,7 @@ export class KimiTUI {
   private fdDownloadStarted = false;
   sessionEventUnsubscribe: (() => void) | undefined;
   cancelInFlight: (() => void) | undefined;
+  private promptBeforeTurn: { readonly promptId: string; cancelRequested: boolean } | undefined;
   deferUserMessages = false;
   aborted = false;
   lastCompactionTrigger: CompactionStartedEvent['trigger'] | undefined;
@@ -2504,10 +2505,12 @@ export class KimiTUI {
       });
       return;
     }
+    const promptId = submissionId ?? randomUUID();
+    this.promptBeforeTurn = { promptId, cancelRequested: false };
     const request = this.trackPendingEntries(
       [entry],
       this.dispatchPreparedInput(
-        session, sdkInput, (parts) => session.prompt(parts, { promptId: submissionId }),
+        session, sdkInput, (parts) => session.prompt(parts, { promptId }),
       ),
     );
     this.staging.trackDispatch(stagingLease, request, (error) => {
@@ -2807,6 +2810,26 @@ export class KimiTUI {
   private turnCanAcceptSteer(): boolean {
     const phase = this.state.appState.streamingPhase;
     return phase !== 'idle' && phase !== 'shell' && !this.state.appState.isCompacting;
+  }
+
+  requestCancelBeforeTurn(): void {
+    if (this.promptBeforeTurn !== undefined) this.promptBeforeTurn.cancelRequested = true;
+  }
+
+  acknowledgePromptSubmitted(promptId: string): void {
+    const pending = this.promptBeforeTurn;
+    if (pending?.promptId !== promptId || !pending.cancelRequested) return;
+    void this.session?.cancel({ promptId }).catch(() => {});
+  }
+
+  settlePromptBeforeTurn(promptId: string): boolean {
+    if (this.promptBeforeTurn?.promptId !== promptId) return false;
+    this.promptBeforeTurn = undefined;
+    return true;
+  }
+
+  notePromptTurnStarted(): void {
+    this.promptBeforeTurn = undefined;
   }
 
   acknowledgePromptQueued(promptId: string): void {

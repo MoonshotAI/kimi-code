@@ -143,6 +143,10 @@ import { requestModelOf } from '#/provider-catalog/requester';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
+interface ClientPromptAdmission {
+  cancellation: unknown;
+}
+
 const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
 const REQUEST_CONFIG_SECTIONS: ReadonlySet<string> = new Set([
   LOOP_CONTROL_SECTION,
@@ -168,6 +172,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
   private readonly pendingSubmissions: UserMessage[] = [];
+  private readonly clientPromptAdmissions: ClientPromptAdmission[] = [];
   private readonly pendingReminders: Message[] = [];
   private readonly pendingNotifications: UserMessage[] = [];
   private readonly pendingSendNowNotifications = new Set<string>();
@@ -858,17 +863,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async submitClient(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
     const text = promptMetadataTextFromContentParts(payload.input);
     const rejectIfBusy = payload.rejectIfBusy === true;
-    if (!rejectIfBusy) await this.updatePromptMetadata(text);
-    const status = this.snapshot();
-    const wouldQueue = status.state === 'running' || status.paused || status.queue.length > 0;
-    if (rejectIfBusy && wouldQueue) {
-      throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'another turn is already in progress');
+    const admission: ClientPromptAdmission = { cancellation: undefined };
+    this.clientPromptAdmissions.push(admission);
+    let id: string;
+    let wouldQueue: boolean;
+    try {
+      if (!rejectIfBusy) await this.updatePromptMetadata(text);
+      const status = this.snapshot();
+      wouldQueue = status.state === 'running' || status.paused || status.queue.length > 0;
+      if (rejectIfBusy && wouldQueue) {
+        throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'another turn is already in progress');
+      }
+      ({ id } = this.submit({
+        role: 'user',
+        content: [...payload.input],
+        attributes: { promptId: payload.promptId, origin: { kind: 'user' } },
+      }));
+    } finally {
+      this.clientPromptAdmissions.splice(this.clientPromptAdmissions.indexOf(admission), 1);
     }
-    const { id } = this.submit({
-      role: 'user',
-      content: [...payload.input],
-      attributes: { promptId: payload.promptId, origin: { kind: 'user' } },
-    });
+    if (admission.cancellation !== undefined) this.cancel({ promptId: id }, admission.cancellation);
     if (rejectIfBusy) {
       await this.updatePromptMetadata(text).catch((error: unknown) => {
         this.logger.warn('failed to update metadata for an accepted prompt', { error });
@@ -1093,7 +1107,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       id: pending.entry.attributes?.promptId,
       origin: pending.entry.attributes?.origin as PromptOrigin | undefined,
     };
-    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], block: false };
+    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, signal, hookParts: [], block: false };
     try {
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };
@@ -1151,7 +1165,22 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.prompts.cancel(target.promptId);
       return true;
     }
-    return this.cancelActiveTurn(target?.turnId, cancellation);
+    const awaitingPromptId = target === undefined ? this.promptAwaitingItsTurn() : undefined;
+    if (awaitingPromptId !== undefined) return this.cancel({ promptId: awaitingPromptId }, cancellation);
+    const cancelled = this.cancelActiveTurn(target?.turnId, cancellation);
+    if (cancelled || target !== undefined) return cancelled;
+    const admission = this.clientPromptAdmissions.find((candidate) => candidate.cancellation === undefined);
+    if (admission === undefined) return false;
+    admission.cancellation = cancellation;
+    return true;
+  }
+
+  private promptAwaitingItsTurn(): string | undefined {
+    const loop = this.loop;
+    const turnId = loop?.state.turn?.id;
+    if (turnId !== undefined) return this.prompts.pending(turnId)?.entry.attributes?.promptId;
+    const next = [...(loop?.state.inbox.normal ?? []), ...this.pendingSubmissions][0];
+    return next?.attributes?.promptId;
   }
 
   detachTool(task: LoopDetachedTask, text?: string): void {

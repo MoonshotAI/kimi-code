@@ -108,7 +108,7 @@ function projectToolResultOutput(output: unknown): unknown {
   return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
 }
 
-function projectAgentEvent(event: unknown): unknown {
+export function projectAgentEvent(event: unknown): unknown {
   if (
     typeof event !== 'object' ||
     event === null ||
@@ -256,6 +256,9 @@ function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown>
         });
       }
       loop.cancel(turnId === undefined ? undefined : { turnId });
+    },
+    cancelPrompt: (promptId: string) => {
+      loop.cancel({ promptId });
     },
   };
 }

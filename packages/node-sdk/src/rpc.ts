@@ -121,6 +121,10 @@ export interface SessionIdRpcInput {
   readonly sessionId: string;
 }
 
+export interface CancelRpcInput extends SessionIdRpcInput {
+  readonly promptId?: string;
+}
+
 export interface ImportContextRpcInput extends SessionIdRpcInput {
   readonly content: string;
   readonly source: string;
@@ -416,7 +420,7 @@ export abstract class SDKRpcClientBase {
     return false;
   }
 
-  abstract cancel(input: SessionIdRpcInput): Promise<void>;
+  abstract cancel(input: CancelRpcInput): Promise<void>;
 
   abstract clearContext(input: SessionIdRpcInput): Promise<void>;
 

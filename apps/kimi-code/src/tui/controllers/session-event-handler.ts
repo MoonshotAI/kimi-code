@@ -131,6 +131,9 @@ export interface SessionEventHost {
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
   acknowledgePromptQueued?(promptId: string): void;
+  acknowledgePromptSubmitted?(promptId: string): void;
+  settlePromptBeforeTurn?(promptId: string): boolean;
+  notePromptTurnStarted?(): void;
   acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
   acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
   acknowledgeSteerTurnStarted?(promptId?: string): void;
@@ -319,7 +322,12 @@ export class SessionEventHandler {
 
     switch (event.type) {
       case 'prompt.queued': this.host.acknowledgePromptQueued?.(event.promptId); break;
-      case 'turn.started': this.handleTurnBegin(event); break;
+      case 'prompt.submitted': this.host.acknowledgePromptSubmitted?.(event.promptId); break;
+      case 'prompt.aborted': this.handlePromptAborted(event, sendQueued); break;
+      case 'turn.started':
+        this.host.notePromptTurnStarted?.();
+        this.handleTurnBegin(event);
+        break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
@@ -424,6 +432,16 @@ export class SessionEventHandler {
         stale: event.origin.stale,
       },
     });
+  }
+
+  private handlePromptAborted(
+    event: Extract<Event, { type: 'prompt.aborted' }>,
+    sendQueued: (item: QueuedMessage) => void,
+  ): void {
+    if (this.host.settlePromptBeforeTurn?.(event.promptId) !== true) return;
+    this.host.releaseSteerDelivery?.(event.promptId);
+    this.host.showStatus('Interrupted by user', 'error');
+    this.host.streamingUI.settlePromptWithoutTurn(sendQueued);
   }
 
   private handlePromptCompleted(
