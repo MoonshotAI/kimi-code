@@ -1,7 +1,7 @@
 import { Emitter } from '#/_base/event';
 import { BugIndicatingError } from '#/errors';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type {
   ExecutableTool,
   ExecutableToolResult,

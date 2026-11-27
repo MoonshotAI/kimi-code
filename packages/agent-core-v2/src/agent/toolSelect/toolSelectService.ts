@@ -659,12 +659,15 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         continue;
       }
       const removed = lifecycle.removed.filter((name) => declaredDynamicTools.delete(name));
-      if (removed.length === lifecycle.removed.length) {
+      const text = lifecycle.added.some((name) => lifecycle.removed.includes(name))
+        ? wrapSystemReminder(renderLoadableToolsAnnouncement(lifecycle.added, lifecycle.removed))
+        : part.text;
+      if (removed.length === lifecycle.removed.length && text === part.text) {
         content?.push(part);
         continue;
       }
       if (content === undefined) content = message.content.slice(0, i);
-      content.push({ ...part, meta: { ...lifecycle, removed } });
+      content.push({ ...part, text, meta: { ...lifecycle, removed } });
     }
     return content === undefined ? message : { ...message, content };
   }

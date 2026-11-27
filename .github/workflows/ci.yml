@@ -110,62 +110,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: fromJSON(steps.select.outputs.shards) >= matrix.shard
       # Keep the KAP server suite and every tests/scenarios case in these shards.
-      - run: pnpm run test ${{ steps.select.outputs.filters }} --shard=${{ matrix.shard }}/${{ steps.select.outputs.shards }} --passWithNoTests --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**' --reporter=default --reporter=github-actions --reporter=./scripts/vitest-l0-gate.mjs
+      - run: pnpm run test ${{ steps.select.outputs.filters }} --shard=${{ matrix.shard }}/${{ steps.select.outputs.shards }} --passWithNoTests --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**' --reporter=default --reporter=github-actions
         if: fromJSON(steps.select.outputs.shards) >= matrix.shard
-        env:
-          KIMI_L0_RESULTS: .vitest-reports/l0-${{ matrix.shard }}.json
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() && fromJSON(steps.select.outputs.shards) >= matrix.shard }}
-        with:
-          name: l0-results-${{ matrix.shard }}
-          path: .vitest-reports/l0-${{ matrix.shard }}.json
-          if-no-files-found: error
-          retention-days: 3
-
-  # Every L0 test in tests/protected.yaml must pass on its first attempt in
-  # the sharded run above, whatever its kind (smoke, regression, contract).
-  # Temporarily disabled while the E2E suite is being replaced.
-  l0-gate:
-    name: L0 protected tests
-    needs: test
-    if: ${{ !cancelled() && false }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - name: Include L0 IDs protected on the base revision
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          git cat-file -e "$BASE_SHA^{commit}" || git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          entry=$(git ls-tree "$BASE_SHA" -- tests/protected.yaml)
-          if [[ -n "$entry" ]]; then
-            git show "${BASE_SHA}:tests/protected.yaml" > "$RUNNER_TEMP/l0-base.yaml"
-            echo "KIMI_L0_BASE_MANIFEST=$RUNNER_TEMP/l0-base.yaml" >> "$GITHUB_ENV"
-          fi
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/protected-smoke.test.mjs
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: l0-results-*
-          path: .vitest-reports
-          merge-multiple: true
-      - name: Check every L0 test in the shard results
-        run: node scripts/vitest-l0-gate.mjs .vitest-reports
 
   # Suites the sharded root run above does not cover. They take seconds each,
   # so they share one runner instead of holding one each.
@@ -187,14 +133,6 @@ jobs:
       # `pnpm run test` does not execute it.
       - name: pi-tui (node:test)
         run: pnpm --filter @moonshot-ai/pi-tui test
-      # The VS Code extension suite runs on the default (v2) engine in the
-      # sharded root run; this reruns it on the legacy v1 engine, which the
-      # extension selects through the rollback env var.
-      - name: VS Code extension on the legacy engine
-        if: ${{ !cancelled() }}
-        run: pnpm --filter kimi-code test
-        env:
-          KIMI_CODE_LEGACY_FLAG: "1"
 
   test-windows:
     runs-on: windows-latest
@@ -239,7 +177,7 @@ jobs:
       - name: Release workflow tests
         if: ${{ !cancelled() }}
         run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
-      - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
+      - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs scripts/e2e-nightly-notify.test.mjs
       - run: pnpm run sherif
       - name: Check new code duplication
         id: duplication

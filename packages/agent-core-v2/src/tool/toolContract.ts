@@ -1,5 +1,5 @@
 import type { ContentPart, SystemMessage, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];

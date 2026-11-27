@@ -3,11 +3,11 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
 import { cacheProbeUsage, IAgentCacheProbeService } from './cacheProbe';
 import { type UsageRecordedContext } from './usage';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export class AgentCacheProbeService extends Service implements IAgentCacheProbeService {
   declare readonly _serviceBrand: undefined;
@@ -16,7 +16,7 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
     @ISessionUsageService usage: ISessionUsageService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IModelCatalog private readonly models: IModelCatalog,
+    @IProviderCatalogService private readonly models: IProviderCatalogService,
   ) {
     super();
     if (scopeContext.forkedFrom === undefined) return;

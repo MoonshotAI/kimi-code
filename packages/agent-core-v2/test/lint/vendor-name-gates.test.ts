@@ -21,7 +21,7 @@ function walk(dir: string): string[] {
     const st = statSync(abs);
     if (st.isDirectory()) {
       const rel = relative(SRC_ROOT, abs);
-      if (rel === 'kosong' || rel === 'human' || rel === 'llm-adapter') continue;
+      if (rel === 'kosong' || rel === 'human' || rel === 'provider-catalog') continue;
       out.push(...walk(abs));
     } else if (abs.endsWith('.ts')) {
       out.push(abs);

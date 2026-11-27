@@ -53,6 +53,7 @@ export default {
   searchModels: '搜索模型',
   searchResults: '搜索结果',
   noMatchingModels: '没有匹配的模型',
+  switchModel: '切换模型',
   switchProvider: '切换供应商',
   providerLabel: '供应商',
   thinkingDesc: '强度越高，思考越深入，但耗时更长、Token 消耗更多',

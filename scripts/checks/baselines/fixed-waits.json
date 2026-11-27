@@ -106,8 +106,6 @@
     "packages/agent-core-v2/test/features/tower/towerFeature.test.ts": 1,
     "packages/agent-core-v2/test/features/tower/towerService.test.ts": 2,
     "packages/agent-core-v2/test/harness/agent.ts": 1,
-    "packages/agent-core-v2/test/human/provider-catalog.test.ts": 3,
-    "packages/agent-core-v2/test/llm-adapter/provider/providerService.test.ts": 1,
     "packages/agent-core-v2/test/mcpCore/client-http.test.ts": 2,
     "packages/agent-core-v2/test/mcpCore/client-stdio.test.ts": 4,
     "packages/agent-core-v2/test/mcpCore/oauth/service.test.ts": 5,
@@ -118,6 +116,7 @@
     "packages/agent-core-v2/test/project/projectFs/fsService.test.ts": 1,
     "packages/agent-core-v2/test/project/projectInstructions/instructions.test.ts": 3,
     "packages/agent-core-v2/test/project/projectMcpConfig/projectMcpConfig.test.ts": 1,
+    "packages/agent-core-v2/test/provider-catalog/provider/providerCatalogService.providers.test.ts": 1,
     "packages/agent-core-v2/test/remote/execBridge.test.ts": 2,
     "packages/agent-core-v2/test/remote/process.test.ts": 8,
     "packages/agent-core-v2/test/remote/protocol.test.ts": 1,
@@ -162,7 +161,7 @@
     "packages/kap-server/test/instanceRegistry.test.ts": 1,
     "packages/kap-server/test/mcp.test.ts": 1,
     "packages/kap-server/test/prompts.test.ts": 1,
-    "packages/kap-server/test/remoteControl.test.ts": 4,
+    "packages/kap-server/test/remoteControl.test.ts": 3,
     "packages/kap-server/test/requestLogging.test.ts": 1,
     "packages/kap-server/test/search/searchRoute.test.ts": 1,
     "packages/kap-server/test/search/searchService.test.ts": 3,
@@ -218,7 +217,6 @@
   },
   "timers-promises": {
     "apps/kimi-code/test/e2e/tui/support/terminal-session.ts": 1,
-    "apps/kimi-code/test/e2e/tui/terminal/real-pty.test.ts": 1,
     "apps/vscode/test/replay-resume.integration.test.ts": 1,
     "packages/agent-core-v2/test/features/tower/store.test.ts": 3,
     "packages/agent-core-v2/test/features/tower/tools/towerTools.test.ts": 1,
@@ -232,8 +230,5 @@
     "packages/node-sdk/test/session-runtime-helpers.ts": 2,
     "packages/product/test/session-rating-host.test.ts": 1,
     "packages/testkit/test/model.test.ts": 1
-  },
-  "wait-for-timeout": {
-    "apps/desktop/e2e/terminal-panel-drag.spec.ts": 1
   }
 }

@@ -9,6 +9,13 @@
   ],
   "testSwitches": [
     {
+      "name": "KIMI_CODE_CLOCK_FILE",
+      "files": [
+        "tests/e2e/surfaces/environment.ts"
+      ],
+      "reason": "Points the engine's host clock at a file that holds the current time, so a scenario can move the date the way time passes on the user's machine, for example across midnight in the middle of a session. Only IHostClock reads it, and IHostClock only tells the model the local date; the driver sets it only for scenarios that give a starting time with the clock option. With the variable unset the clock reads the real time. A file that does not hold a time makes the clock throw instead of falling back to the real time: the engine logs the failure and leaves the date out of the request, so a scenario that asserts the date fails."
+    },
+    {
       "name": "KIMI_DESKTOP_E2E",
       "files": [
         "tests/e2e/surfaces/desktop.ts"

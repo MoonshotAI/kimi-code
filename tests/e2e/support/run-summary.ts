@@ -1,4 +1,4 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 
 import { SURFACES, VARIANTS, type Surface, type Variant } from './verbs';
 
@@ -60,6 +60,22 @@ interface Outcome {
   readonly status: TestStatus;
   readonly duration: number;
   readonly note: string;
+}
+
+interface FailedCase {
+  readonly project: string;
+  readonly file: string;
+  readonly title: string;
+  readonly status: TestStatus;
+  readonly note: string;
+}
+
+interface ResultsFile {
+  readonly platform: NodeJS.Platform;
+  readonly shard: Shard | null;
+  readonly status: RunStatus;
+  readonly errors: readonly string[];
+  readonly failures: readonly FailedCase[];
 }
 
 const ANSI = /\u001b\[[0-9;]*m/g;
@@ -192,7 +208,7 @@ export default class RunSummary {
   }
 
   onBegin(config: ReportedConfig): void {
-    this.shard = config.shard;
+    this.shard = config.shard === null || config.shard.total === 1 ? null : config.shard;
     this.projects = config.projects;
   }
 
@@ -208,11 +224,29 @@ export default class RunSummary {
   }
 
   onEnd(run: ReportedRun): void {
-    const target = process.env['GITHUB_STEP_SUMMARY'];
-    if (target === undefined || target === '') return;
     const outcomes = [...this.outcomes.values()];
     const views = new Map(this.projects.map((project) => [project.name, projectView(project.name, project)]));
     const view = (name: string): ProjectView => views.get(name) ?? projectView(name, undefined);
+    const summary = process.env['GITHUB_STEP_SUMMARY'];
+    if (summary !== undefined && summary !== '') appendFileSync(summary, this.summary(run, outcomes, view));
+    const results = process.env['E2E_RESULTS_FILE'];
+    if (results !== undefined && results !== '') writeFileSync(results, this.results(run, outcomes, view));
+  }
+
+  private results(run: ReportedRun, outcomes: readonly Outcome[], view: (name: string) => ProjectView): string {
+    const file: ResultsFile = {
+      platform: process.platform,
+      shard: this.shard,
+      status: run.status,
+      errors: this.errors,
+      failures: outcomes
+        .filter(failed)
+        .map((outcome) => ({ project: view(outcome.surface).title, file: outcome.file, title: outcome.title, status: outcome.status, note: outcome.note })),
+    };
+    return `${JSON.stringify(file, null, 2)}\n`;
+  }
+
+  private summary(run: ReportedRun, outcomes: readonly Outcome[], view: (name: string) => ProjectView): string {
     const order = this.projects.map((project) => project.name);
     const rank = (name: string): number => (order.includes(name) ? order.indexOf(name) : order.length);
     const surfaces = [...new Set(outcomes.map((outcome) => outcome.surface))].toSorted((left, right) => rank(left) - rank(right));
@@ -222,6 +256,6 @@ export default class RunSummary {
       lines.push('不属于任何用例的错误（例如加载场景文件时出错），这时下面的表可能不全：', '', ...this.errors.map((error) => `- ${cell(error)}`), '');
     }
     lines.push(...surfaces.flatMap((name) => section(name, view(name), outcomes.filter((outcome) => outcome.surface === name), this.shard)));
-    appendFileSync(target, `${lines.join('\n')}\n`);
+    return `${lines.join('\n')}\n`;
   }
 }

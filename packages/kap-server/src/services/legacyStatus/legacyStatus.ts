@@ -3,13 +3,12 @@ import {
   IAgentLoopService,
   ISessionTokenCountingService,
   ISessionUsageService,
-  IModelCatalog,
-  IModelService,
   isMissingConfiguredModelError,
   MAIN_AGENT_ID,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
@@ -54,9 +53,8 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
 }
 
 function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
-  const models = agent.accessor.get(IModelService) as IModelService | undefined;
-  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
-  const defaultModel = models?.getDefaultModel();
+  const catalog = agent.accessor.get(IProviderCatalogService) as IProviderCatalogService | undefined;
+  const defaultModel = catalog?.getDefaultModelId();
   if (defaultModel === undefined || defaultModel.length === 0 || catalog === undefined) {
     return undefined;
   }
