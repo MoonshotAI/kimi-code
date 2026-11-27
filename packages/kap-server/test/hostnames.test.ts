@@ -43,7 +43,23 @@ describe('formatHostErrorMessage', () => {
 });
 
 describe('isAllowedHost (default allow set)', () => {
-  const allow = ['localhost', 'localhost:80', 'foo.localhost', '127.0.0.1', '127.0.0.1:58627', '[::1]', '::1', '8.8.8.8'];
+  const allow = [
+    'localhost',
+    'localhost:80',
+    'foo.localhost',
+    '127.0.0.1',
+    '127.0.0.1:58627',
+    '[::1]',
+    '[::1]:58628',
+    '::1',
+    '8.8.8.8',
+    '8.8.8.8:443',
+    '2001:db8::1',
+    '[2001:db8::1]',
+    '[2001:db8::1]:58628',
+    '[2001:DB8::1]:58628',
+    '[fe80::1]:8080',
+  ];
 
   for (const host of allow) {
     it(`allows ${host}`, () => {
@@ -51,7 +67,17 @@ describe('isAllowedHost (default allow set)', () => {
     });
   }
 
-  const deny = ['evil.example.test', 'evil.example.test:80', '127.0.0.1.evil.example.test'];
+  const deny = [
+    'evil.example.test',
+    'evil.example.test:80',
+    '127.0.0.1.evil.example.test',
+    '[garbage]:80',
+    '[evil.example.test]:80',
+    '[::1',
+    '[2001:db8::1',
+    '[]',
+    '[]:80',
+  ];
 
   for (const host of deny) {
     it(`denies ${host}`, () => {
@@ -93,6 +119,14 @@ describe('isAllowedHost (extra)', () => {
 
   it('matches an exact entry', () => {
     expect(isAllowedHost('foo', { extra: ['foo'] })).toBe(true);
+  });
+
+  it('matches an exact domain entry with a port', () => {
+    expect(isAllowedHost('foo.example.test:8080', { extra: ['foo.example.test'] })).toBe(true);
+  });
+
+  it('matches a bracketed IPv6 entry with a port', () => {
+    expect(isAllowedHost('[2001:db8::2]:8080', { extra: ['[2001:db8::2]'] })).toBe(true);
   });
 });
 
@@ -157,6 +191,15 @@ describe('createHostCheck (onRequest hook)', () => {
 
   it('allows the default app.inject Host (localhost:80)', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/probe' });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('allows a bracketed non-loopback IPv6 Host with port', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/probe',
+      headers: { host: '[2001:db8::1]:58628' },
+    });
     expect(res.statusCode).toBe(200);
   });
 });
