@@ -33,7 +33,10 @@ interface ReminderEntry {
   readonly variant: string;
 }
 
-const REMINDER_VARIANT_PRIORITY = new Map<string, number>([['date_change', -1]]);
+const REMINDER_VARIANT_PRIORITY = new Map<string, number>([
+  ['date_change', -2],
+  ['workdir_moved', -1],
+]);
 
 interface ReminderActorContext {
   readonly entries: Set<ReminderEntry>;

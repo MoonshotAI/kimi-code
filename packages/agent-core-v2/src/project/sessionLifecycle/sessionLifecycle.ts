@@ -36,6 +36,12 @@ export interface ResumeSessionOptions {
   readonly disabledMcpSources?: readonly string[];
 }
 
+export interface MoveSessionOptions {
+  readonly sessionId: string;
+  readonly workDir: string;
+  readonly environmentCwd?: string;
+}
+
 export interface CreateChildSessionOptions {
   readonly sourceSessionId: string;
   readonly newSessionId?: string;
@@ -86,6 +92,7 @@ export interface ISessionLifecycleService {
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
+  move(opts: MoveSessionOptions): Promise<ISessionScopeHandle>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];
   resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
