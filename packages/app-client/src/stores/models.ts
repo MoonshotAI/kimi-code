@@ -40,13 +40,16 @@ export const useModelsStore = defineStore('kimi.models', () => {
   const activeHostId = ref<string | undefined>(undefined);
   const modelsByHost = ref<Record<string, AppModel[]>>({});
   const defaultModelByHost = ref<Record<string, string | null>>({});
+  const providersByHost = ref<Record<string, AppProvider[]>>({});
   const activeModels = computed(() =>
     activeHostId.value === undefined ? models.value : modelsByHost.value[activeHostId.value] ?? [],
   );
   const activeDefaultModel = computed(() =>
     activeHostId.value === undefined ? defaultModel.value : defaultModelByHost.value[activeHostId.value] ?? null,
   );
-  const activeProviders = computed(() => (activeHostId.value === undefined ? providers.value : []));
+  const activeProviders = computed(() =>
+    activeHostId.value === undefined ? providers.value : providersByHost.value[activeHostId.value] ?? [],
+  );
 
   const catalogProviders = ref<AppCatalogProvider[]>([]);
   const catalogState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -83,9 +86,14 @@ export const useModelsStore = defineStore('kimi.models', () => {
 
   async function loadHostCatalog(hostId: string): Promise<void> {
     const api = getDeviceApi(hostId);
-    const [list, config] = await Promise.all([api.listModels(), api.getConfig()]);
+    const [list, config, hostProviders] = await Promise.all([
+      api.listModels(),
+      api.getConfig(),
+      api.listProviders().catch((): AppProvider[] => []),
+    ]);
     modelsByHost.value = { ...modelsByHost.value, [hostId]: list };
     defaultModelByHost.value = { ...defaultModelByHost.value, [hostId]: config.defaultModel ?? null };
+    providersByHost.value = { ...providersByHost.value, [hostId]: hostProviders };
   }
 
   function setHostDefaultModel(hostId: string, id: string | null): void {
@@ -114,6 +122,11 @@ export const useModelsStore = defineStore('kimi.models', () => {
     }
     if (modelsChanged) modelsByHost.value = nextModels;
     if (defaultsChanged) defaultModelByHost.value = nextDefaults;
+    if (hostIds.some((hostId) => Object.prototype.hasOwnProperty.call(providersByHost.value, hostId))) {
+      providersByHost.value = Object.fromEntries(
+        Object.entries(providersByHost.value).filter(([hostId]) => !removed.has(hostId)),
+      );
+    }
   }
 
   function setModels(next: AppModel[]): void {

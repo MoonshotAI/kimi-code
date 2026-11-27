@@ -347,6 +347,18 @@ describe('IModelsDevImportService', () => {
     );
   });
 
+  it('rejects an import whose model alias keys belong to another provider, without changing config', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const owned = { provider: 'gateway', model: 'gpt-4.1', maxContextSize: 1000 };
+    const { config, imports } = createHost({
+      providers: { gateway: { type: 'openai', baseUrl: 'https://gateway.example.test/v1' } },
+      models: { 'openai/gpt-4.1': owned },
+    });
+    await expectError2(imports.importModelsDevProvider({ catalogId: 'openai', apiKey: 'sk-test' }), codes.CATALOG_IMPORT_INVALID);
+    expect(config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {}).not.toHaveProperty('openai');
+    expect((config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {})['openai/gpt-4.1']).toEqual(owned);
+  });
+
   it('rejects non-importable entries and needs-base-url entries without a base_url', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { imports } = createHost();

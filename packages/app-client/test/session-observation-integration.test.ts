@@ -76,6 +76,7 @@ async function setup() {
   const hostApi = {
     listModels: vi.fn(async () => [{ id: 'remote-model', model: 'remote-model', provider: 'managed:kimi-code' }]),
     getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'remote-model' })),
+    listProviders: vi.fn(async () => []),
   };
   const api = {
     deviceApi: (hostId: string | undefined) => (hostId === 'dev' ? hostApi : api),

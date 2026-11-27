@@ -246,6 +246,21 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           return;
         }
 
+        const existingModels = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
+        const occupied = req.body.models
+          .map((entry) => `${id}/${entry.model}`)
+          .filter((aliasId) => existingModels[aliasId] !== undefined && existingModels[aliasId].provider !== id);
+        if (occupied.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.VALIDATION_FAILED,
+              `model alias key already owned by another provider: ${occupied.join(', ')}`,
+              req.id,
+            ),
+          );
+          return;
+        }
+
         const provider: ProviderConfig = { type: req.body.type };
         if (req.body.display_name !== undefined && req.body.display_name !== '') {
           provider.displayName = req.body.display_name;
@@ -396,7 +411,19 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         );
         nextProviders[newId] = provider;
 
-        const newAliasKeys = new Set(req.body.models.map((entry) => aliasIdFor(entry.model)));
+        const newAliasIds = req.body.models.map((entry) => aliasIdFor(entry.model));
+        const newAliasKeys = new Set(newAliasIds);
+        const shared = newAliasIds.filter((aliasId, index) => newAliasIds.indexOf(aliasId) !== index);
+        if (shared.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.VALIDATION_FAILED,
+              `model alias key would be used by more than one model: ${[...new Set(shared)].join(', ')}`,
+              req.id,
+            ),
+          );
+          return;
+        }
         const colliding = Object.entries(models)
           .filter(([, record]) => record.provider !== provider_id)
           .map(([aliasId]) => aliasId)
