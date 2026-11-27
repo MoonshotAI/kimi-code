@@ -1,28 +1,23 @@
 <script setup lang="ts">
 import { useHistoryState } from '../historyState';
-import { computed, inject, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
-import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import type { DiffViewLine, ToolCall } from '@moonshot-ai/app-core/client/types';
+import type { DiffViewLine } from '@moonshot-ai/app-core/client/types';
 import { diffStats } from '@moonshot-ai/app-core/client';
 import { buildEditDiffLines, buildWriteContent } from '@moonshot-ai/app-core/client';
-import { normalizeToolName } from '@moonshot-ai/app-components';
 import { basename } from '@moonshot-ai/app-core/lib';
-import { argFallbackText, argFilePath, parseArgRecord, pathDirname } from '@moonshot-ai/app-components';
+import { argFallbackText, argFilePath, parseArgRecord, pathDirname } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import HighlightedCode from '../../HighlightedCode.vue';
 import OutputPanel from './OutputPanel.vue';
+import { useToolCard, type ToolCardProps } from './useToolCard';
 
-const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
-
-const panelApi = inject(panelApiKey);
-
+const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
 const { t } = useI18n();
-
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
-const isWrite = computed(() => normalizeToolName(props.tool.name) === 'write');
+const { panelApi, status, kind } = useToolCard(props);
+const isWrite = computed(() => kind.value === 'write');
 
 const path = computed(() => argFilePath(parseArgRecord(props.tool.arg)) ?? '');
 const fileName = computed(() => (path.value ? basename(path.value) : ''));

@@ -68,6 +68,30 @@ export class Input implements Component, Focusable {
 		this.cursor = Math.min(this.cursor, value.length);
 	}
 
+	getCursor(): number {
+		return this.cursor;
+	}
+
+	setCursor(position: number): void {
+		this.lastAction = null;
+		if (Number.isNaN(position) || position <= 0) {
+			this.cursor = 0;
+			return;
+		}
+		if (position >= this.value.length) {
+			this.cursor = this.value.length;
+			return;
+		}
+		const target = Math.floor(position);
+		for (const grapheme of segmenter.segment(this.value)) {
+			if (target < grapheme.index + grapheme.segment.length) {
+				this.cursor = grapheme.index;
+				return;
+			}
+		}
+		this.cursor = this.value.length;
+	}
+
 	handleInput(data: string): void {
 		// Handle bracketed paste mode
 		// Start of paste: \x1b[200~

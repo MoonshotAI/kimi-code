@@ -75,6 +75,8 @@ KAP 场景把配置交给 `scenarioFixtures({ mcpServers: { docs: fakeMcpServer(
 
 比较一组帧或多个快照时，在**同一个测试**里复用 `createNormalizer({ idKeys: ['session_id'], paths: { '<workspace>': testHome.workspace } })` 返回的函数。它按首次出现的顺序给每个**值**编号：同一个原始 ID 不论出现在哪个键下、ID 数组里还是嵌在文本中的 UUID，都换成同一个标记，标记的种类取首次出现时的键名。所以「用户消息的 `item_id` 就是 `prompt_ids` 里的那个 ID」这种关系在规范化后仍能看出来。`paths` 的键是要显示的占位符，值是测试机上的实际路径。单份数据可以直接调用 `normalize(value, options)`。如果要验证两个真实 ID 是否相同，直接比较原始值即可。[快照规范化用例](../test/fixtures.test.ts)
 
+引擎、KAP 和 SDK 对外报告的本机路径统一用 `/` 分隔，Windows 上是 `C:/Users/me/app`。期望值来自 `mkdtemp`、`join` 这类返回原生路径的 API 时，用 `slashPathOf(path)` 换成这种写法再比较；已经用 `/` 分隔的路径原样返回。只换期望值，传给被测程序的输入保持原生路径。
+
 时间字段默认换成 `<time>`。数据还要交给会解析时间的代码（例如客户端 reducer）时，传 `timePlaceholder: 'fixed'`：时间字符串换成固定的 `FIXED_TIME`，`timeKeys` 里的数字（例如 `duration_ms`）换成 0，字段类型不变。
 
 ## 把预期数据入库：golden

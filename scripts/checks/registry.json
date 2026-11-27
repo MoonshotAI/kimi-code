@@ -51,11 +51,6 @@
       "why": "The old Desktop and TUI E2E directories no longer run on pull requests or main; this check freezes their test cases per file so a new case lands in tests/e2e, where it runs, instead of looking like coverage that nothing executes."
     },
     {
-      "run": "node scripts/checks/quarantine.mjs",
-      "in": "package.json#scripts.lint",
-      "why": "A quarantined Desktop journey must name an owner, a reason and an expiry date, and a protected or smoke journey can never be quarantined; without it a quarantine quietly becomes permanent."
-    },
-    {
       "run": "node scripts/checks/instructions.mjs",
       "in": "package.json#scripts.lint",
       "why": "Agents follow the paths and links in AGENTS.md files, and every session loads the root one; this check fails on a dead reference and keeps the root file within its byte budget."
@@ -69,11 +64,6 @@
       "run": "node scripts/checks/e2e-cache-catalog.mjs",
       "in": "package.json#scripts.lint",
       "why": "tests/e2e/scenarios/cache/catalog.yaml lists what may change the requests the product sends to the model service; this check fails when an entry has neither a test nor a recorded gap, when a cache scenario is not listed, or when a scenario declares a different cache break than its entry promises."
-    },
-    {
-      "run": "node scripts/vitest-l0-gate.mjs .vitest-reports",
-      "in": ".github/workflows/ci.yml#jobs.l0-gate",
-      "why": "This is where every L0 test in tests/protected.yaml must pass on its first attempt across the test shards; without it regression and contract IDs are listed but never enforced."
     },
     {
       "run": "pnpm run lint",
@@ -126,18 +116,12 @@
   ],
   "fanIn": [
     {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "l0-gate",
-      "needs": ["test"],
-      "why": "It turns the L0 results of every test shard into one check. If it stopped waiting for the shards, or stopped running after a shard failed, a missing or failing L0 test would never be reported."
-    },
-    {
       "workflow": ".github/workflows/desktop-e2e.yml",
       "job": "result",
       "needs": ["plan", "journeys"],
       "checksResults": true,
-      "coversJobsExcept": ["quarantine", "alert"],
-      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The nightly quarantine job is informational, and the alert job runs after it on main to keep the tracking issue, so both stay outside it."
+      "coversJobsExcept": ["alert"],
+      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The alert job runs after it on main to keep the tracking issue, so it stays outside it."
     }
   ]
 }

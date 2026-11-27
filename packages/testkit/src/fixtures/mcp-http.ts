@@ -39,6 +39,7 @@ export interface FakeMcpHttpServer {
   addTool(tool: FakeMcpTool): void;
   updateTool(name: string, change: Partial<Omit<FakeMcpTool, 'name'>>): void;
   removeTool(name: string): void;
+  disconnect(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -157,6 +158,11 @@ export async function startFakeMcpHttpServer(options: FakeMcpHttpServerOptions):
     addTool: (tool) => changeTools([...tools, tool]),
     updateTool: (toolName, change) => changeTools(tools.map((tool) => (tool.name === toolName ? { ...tool, ...change } : tool))),
     removeTool: (toolName) => changeTools(tools.filter((tool) => tool.name !== toolName)),
+    async disconnect() {
+      const open = [...sessions.values()];
+      sessions.clear();
+      await Promise.all(open.map((session) => session.transport.close()));
+    },
     async close() {
       await Promise.all([...sessions.values()].map((session) => session.transport.close()));
       sessions.clear();

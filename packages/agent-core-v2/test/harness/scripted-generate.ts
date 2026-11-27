@@ -53,8 +53,8 @@ import {
 import { afterEach } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
-import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
+import { estimateTokensForMessages } from '#/session/tokenCounting/tokens';
+import { errorFromLlmMessage, llmMessageFromError } from '#/provider-catalog/errors';
 
 import {
   generateInputSnapshot,
@@ -371,8 +371,8 @@ export function withMockProvider(
           control.onEvent?.(event);
         },
         onAttempt: (request, context) => {
-          void Promise.resolve(provider.respond(request, control.signal));
           control.onAttempt?.(request, context);
+          void Promise.resolve(provider.respond(request, control.signal));
         },
       });
       if (directError !== undefined) throw directError;

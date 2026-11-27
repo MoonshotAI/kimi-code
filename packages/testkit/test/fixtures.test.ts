@@ -27,7 +27,7 @@ import { fakeMcpServer, readMcpCalls, readMcpStarts, writeMcpConfig, type McpSer
 import { startFakeMcpHttpServer } from '#/fixtures/mcp-http';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
-import { createNormalizer, FIXED_TIME, normalize } from '#/fixtures/normalize';
+import { createNormalizer, FIXED_TIME, normalize, slashPathOf } from '#/fixtures/normalize';
 import { killProcessTree, readNetworkViolations, TestProcess, type StartTestProcessOptions } from '#/fixtures/process';
 import { repoPath } from '#/fixtures/repo';
 import { contentDigest, directoryChanges, snapshotDirectory } from '#/fixtures/snapshot';
@@ -52,6 +52,18 @@ describe('bashPathOf', () => {
   it('keeps a POSIX path as it is', () => {
     expect(bashPathOf('/tmp/app', 'linux')).toBe('/tmp/app');
     expect(bashPathOf('/private/var/app', 'darwin')).toBe('/private/var/app');
+  });
+});
+
+describe('slashPathOf', () => {
+  it('spells a Windows path with forward slashes, the form the engine reports host paths in', () => {
+    expect(slashPathOf('C:\\Users\\me\\app')).toBe('C:/Users/me/app');
+    expect(slashPathOf('\\\\server\\share\\app')).toBe('//server/share/app');
+  });
+
+  it('keeps a path that already uses forward slashes as it is', () => {
+    expect(slashPathOf('/tmp/app')).toBe('/tmp/app');
+    expect(slashPathOf('D:/work/app')).toBe('D:/work/app');
   });
 });
 
@@ -830,6 +842,22 @@ describe('fake MCP server', () => {
       server.removeTool('added');
       await until('both clients hear about the removed tool', () => announced.every((count) => count === 3));
       expect((await clients[1]!.listTools()).tools.map((tool) => tool.name)).toEqual(['echo']);
+      expect(server.requests.filter((request) => request.rpcMethods.includes('initialize'))).toHaveLength(2);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await server.close();
+    }
+  });
+
+  it('drops every MCP session on disconnect, so a client has to initialize again', async () => {
+    const server = await startFakeMcpHttpServer({ tools: [{ name: 'ping' }] });
+    const clients: Client[] = [];
+    try {
+      clients.push(await connectHttp(server.url));
+      await server.disconnect();
+      await expect(clients[0]!.listTools()).rejects.toMatchObject({ code: 404 });
+      clients.push(await connectHttp(server.url));
+      expect((await clients[1]!.listTools()).tools.map((tool) => tool.name)).toEqual(['ping']);
       expect(server.requests.filter((request) => request.rpcMethods.includes('initialize'))).toHaveLength(2);
     } finally {
       await Promise.all(clients.map((client) => client.close()));

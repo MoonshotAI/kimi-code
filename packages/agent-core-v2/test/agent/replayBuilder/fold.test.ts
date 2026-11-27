@@ -5,7 +5,7 @@ import type { AgentReplayRecord } from '#/agent/replayBuilder/types';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
-import { fromLlmMessage } from '#/llm-adapter/contract/message';
+import { fromLlmMessage } from '#/wire/message';
 
 const METADATA: WireRecord = {
   type: 'metadata',
@@ -471,6 +471,24 @@ describe('foldWireRecords', () => {
       appendMessage(userMessage('same', { kind: 'user' }), 3),
     ]);
     expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
+
+    const repeated: WireRecord[] = [
+      { type: 'turn.prompt', turnId: 2, input: [{ type: 'text', text: 'C' }], origin: { kind: 'user' }, time: 1 },
+      appendMessage(userMessage('C', { kind: 'user' }), 2),
+      appendMessage(userMessage('X', { kind: 'user' }), 3),
+      { type: 'turn.steer', turnId: 2, input: [{ type: 'text', text: 'X' }], origin: { kind: 'user' }, time: 4 },
+      appendMessage(userMessage('X', { kind: 'user' }), 5),
+      { type: 'turn.steer', turnId: 2, input: [{ type: 'text', text: 'X' }], origin: { kind: 'user' }, time: 6 },
+      { type: 'turn.ended', turnId: 2, reason: 'completed', time: 7 },
+    ];
+    const full = fold(repeated);
+    const windowed = foldWireRecords(
+      [METADATA, repeated[2]!, repeated[4]!],
+      undefined,
+      [METADATA, ...repeated],
+    );
+    expect(messageRecords(full.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([2, 3, 4]);
+    expect(messageRecords(windowed.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([3, 4]);
   });
 
   it('validates reader compatibility and migrates older protocol journals before folding', () => {

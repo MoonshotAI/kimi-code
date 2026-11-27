@@ -2,8 +2,7 @@ import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { agentSpaceOf } from '#/agent/agentContext/agentSpace';
-import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
-import type { UsageRecordedContext, UsageStatus } from '#/agent/usage/usage';
+import type { AgentLLMRequestSource, UsageRecordedContext, UsageStatus } from '#/agent/usage/usage';
 import { copyUsage } from '#/agent/usage/usageOps';
 import { emptyUsage, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 

@@ -15,7 +15,7 @@ import { ReadTool } from '#/agent/tools/os/read/readTool';
 import { READ_SECTION } from '#/agent/tools/os/read/configSection';
 import type { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { estimateTokens } from '#/llm-adapter/contract/tokens';
+import { estimateTokens } from '#/session/tokenCounting/tokens';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import { stubConfigService } from '../../../../app/config/stubs';
 import type { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';

@@ -190,15 +190,15 @@ export const TUI_KEYBINDINGS = {
 		description: "Jump to next semantic prompt",
 	},
 	"tui.altScreen.search": {
-		defaultKeys: "ctrl+shift+f",
+		defaultKeys: ["ctrl+f", "ctrl+shift+f"],
 		description: "Search the primary scroll view",
 	},
 	"tui.altScreen.searchNext": {
-		defaultKeys: ["enter", "ctrl+g"],
+		defaultKeys: ["down", "enter", "ctrl+g"],
 		description: "Select the next search match",
 	},
 	"tui.altScreen.searchPrevious": {
-		defaultKeys: ["shift+enter", "ctrl+shift+g"],
+		defaultKeys: ["up", "shift+enter", "ctrl+shift+g"],
 		description: "Select the previous search match",
 	},
 	"tui.altScreen.searchClose": {

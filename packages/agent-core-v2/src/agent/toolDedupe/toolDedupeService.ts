@@ -11,7 +11,7 @@ import type {
   ToolCallTurnRepeatEvent,
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { legacyDidExecuteContext, legacyResultToToolResult } from '#/agent/toolExecutor/legacyHooks';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';

@@ -168,7 +168,31 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       }
       shaped?.push(tool);
     }
-    return shaped ?? tools;
+    const result = shaped ?? tools;
+    if (disclosure) return result;
+    const baseline = this.profile.baselineTools();
+    if (
+      baseline.length !== tools.length ||
+      baseline.some((tool, index) => tool.name !== tools[index]?.name)
+    ) {
+      return result;
+    }
+    const present = new Set(result.map((tool) => tool.name));
+    const lateMcp = this.currentTools().filter(
+      (info) =>
+        info.source === 'mcp' &&
+        !present.has(info.name) &&
+        this.toolPolicy.isToolActive(info.name, info.source),
+    );
+    if (lateMcp.length === 0) return result;
+    return [
+      ...result,
+      ...lateMcp.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
+    ];
   }
 
   shapeTools(
@@ -659,12 +683,15 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         continue;
       }
       const removed = lifecycle.removed.filter((name) => declaredDynamicTools.delete(name));
-      if (removed.length === lifecycle.removed.length) {
+      const text = lifecycle.added.some((name) => lifecycle.removed.includes(name))
+        ? wrapSystemReminder(renderLoadableToolsAnnouncement(lifecycle.added, lifecycle.removed))
+        : part.text;
+      if (removed.length === lifecycle.removed.length && text === part.text) {
         content?.push(part);
         continue;
       }
       if (content === undefined) content = message.content.slice(0, i);
-      content.push({ ...part, meta: { ...lifecycle, removed } });
+      content.push({ ...part, text, meta: { ...lifecycle, removed } });
     }
     return content === undefined ? message : { ...message, content };
   }

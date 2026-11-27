@@ -7,7 +7,7 @@ import { resolveUsage } from '#/model/emission';
 import { createFetchTransport } from '#/model/fetch-transport';
 import { HoldRegistry, type Hold } from '#/model/holds';
 import { serveHttp, type HttpEndpoint } from '#/model/http-transport';
-import { builtInLaneOf, LaneState, promptCacheRoleOf, type Lane, type LaneMatcher } from '#/model/lanes';
+import { builtInLaneOf, LaneState, promptCacheRoleOf, subagentStepOf, type Lane, type LaneMatcher } from '#/model/lanes';
 import { play, type Playback, type PlaybackSink } from '#/model/playback';
 import { PromptCacheLedger, type CacheBreakOptions, type PromptCacheEntry } from '#/model/prompt-cache';
 import type { EncodeContext, ProtocolCodec } from '#/model/protocols/codec';
@@ -312,7 +312,7 @@ class FakeModelImpl implements FakeModel {
     this.records.push(record);
     lane.record(record);
     this.cache.observe(
-      { request: record.index, lane: lane.name, role: promptCacheRoleOf(facts), protocol: codec.name },
+      { request: record.index, lane: lane.name, role: promptCacheRoleOf(facts), protocol: codec.name, ...subagentStepOf(facts) },
       codec.promptPrefix(body, path),
     );
     this.notify(this.arrivalListeners);

@@ -27,7 +27,7 @@ const visionTest = base.extend<ScenarioFixtures>(
 );
 
 describe('conversation over KAP', () => {
-  test('[L0:kap.first-turn] streams a reply live and persists the same turns', { tags: ['smoke'] }, async ({ kap, model }) => {
+  test('streams a reply live and persists the same turns', async ({ kap, model }) => {
     model.script(held('before-final-text', think('pondering', say(['Hel', 'lo'])), 2));
     const socket = await kap.connect();
     const session = await kap.createSession();

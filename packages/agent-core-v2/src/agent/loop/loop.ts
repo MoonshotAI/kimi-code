@@ -7,7 +7,8 @@ import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import type { ContentPart, Message, TextPart, ToolCall, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { LoopRequester } from './requesterContract';
+import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
+import type { FullLoopLlmRequester } from '@moonshot-ai/core/loop/request';
 import type {
   BindAgentInput,
   EffectiveProfileReader,
@@ -254,7 +255,9 @@ export interface LoopRequestContent {
 export interface IAgentLoopService extends EffectiveProfileReader {
   readonly _serviceBrand: undefined;
 
-  readonly requester: LoopRequester;
+  readonly requester: FullLoopLlmRequester;
+
+  resolveMaxOutputTokens(maxOutputSize?: number): LlmRequestModel['maxOutputTokens'];
 
   start(tools?: readonly Tool[]): Promise<void>;
 
