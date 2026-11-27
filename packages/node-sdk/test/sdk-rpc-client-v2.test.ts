@@ -2587,6 +2587,34 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('reports config warnings through onConfigDiagnosticsChanged when config.toml breaks and is fixed', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      await harness.getConfig();
+      const changes: string[][] = [];
+      const unsubscribe = harness.onConfigDiagnosticsChanged((diagnostics) => {
+        changes.push([...diagnostics.warnings]);
+      });
+
+      await writeFile(join(homeDir, 'config.toml'), '[permission]\nrules = "deny everything"\n');
+      await harness.getConfig({ reload: true });
+      await harness.getConfig({ reload: true });
+      await writeFile(join(homeDir, 'config.toml'), '');
+      await harness.getConfig({ reload: true });
+
+      await vi.waitFor(() => expect(changes).toHaveLength(2));
+      unsubscribe();
+      expect(changes).toEqual([
+        [
+          'Ignored invalid config section [permission]: rules[0]: Invalid input: expected object, received string',
+        ],
+        [],
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('deleteSession removes a session and rejects a missing id with session_not_found', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

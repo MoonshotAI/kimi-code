@@ -50,7 +50,7 @@ function makeDriverWithTerminalProgress(): {
 } {
   const setProgress = vi.fn<(active: boolean) => void>();
   const driver = new KimiTUI(
-    { onConfigSectionChanged: () => () => {} } as never,
+    { onConfigSectionChanged: () => () => {}, onConfigDiagnosticsChanged: () => () => {} } as never,
     makeStartupInput(),
   ) as unknown as ActivityDriver;
   vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});

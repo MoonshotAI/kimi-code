@@ -124,6 +124,7 @@ export function operationFailureNotice(
 export const useWarningsStore = defineStore('kimi.warnings', () => {
   const warnings = ref<AppNotice[]>([]);
   const shownSessionWarningKeys = new Map<string, Set<string>>();
+  let configWarningKeys = new Set<string>();
 
   function refreshSessionWarnings(sessionId: string, options?: ReadRequestOptions): void {
     if (options?.signal?.aborted) return;
@@ -165,6 +166,19 @@ export const useWarningsStore = defineStore('kimi.warnings', () => {
     warnings.value = [...warnings.value, normalizeWarning(warning)];
   }
 
+  function syncConfigWarnings(next: readonly AppWarning[]): void {
+    const notices = next.map(normalizeWarning);
+    const nextKeys = new Set(notices.map(warningKey));
+    const previousKeys = configWarningKeys;
+    configWarningKeys = nextKeys;
+    const kept = warnings.value.filter((shown) => {
+      const key = warningKey(shown);
+      return !previousKeys.has(key) || nextKeys.has(key);
+    });
+    const appeared = notices.filter((notice) => !previousKeys.has(warningKey(notice)));
+    warnings.value = [...kept, ...appeared];
+  }
+
   function dismissWarning(target: AppNotice): void {
     const idx = warnings.value.findIndex((warning) => warning === target);
     if (idx === -1) return;
@@ -204,8 +218,15 @@ export const useWarningsStore = defineStore('kimi.warnings', () => {
     pushWarning(operationFailureNotice(operation, err, opts));
   }
 
+  function forgetConfigWarnings(): void {
+    const forgotten = configWarningKeys;
+    configWarningKeys = new Set();
+    warnings.value = warnings.value.filter((shown) => !forgotten.has(warningKey(shown)));
+  }
+
   function resetWarnings(): void {
     warnings.value = [];
+    configWarningKeys = new Set();
   }
 
   return {
@@ -215,6 +236,8 @@ export const useWarningsStore = defineStore('kimi.warnings', () => {
     forgetSessionWarnings,
     setWarnings,
     pushWarning,
+    syncConfigWarnings,
+    forgetConfigWarnings,
     dismissWarning,
     dismissWsError,
     pushOperationFailure,

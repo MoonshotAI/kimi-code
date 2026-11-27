@@ -28,7 +28,6 @@ import {
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
-  type ConfigDiagnostic,
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
@@ -63,8 +62,7 @@ import {
   type IConnectionRegistry,
 } from './transport/ws/connectionRegistry';
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
-import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
-import type { ConfigWarningItem } from './transport/ws/v1/events';
+import { SessionEventBroadcaster, toConfigWarningItems } from './transport/ws/v1/sessionEventBroadcaster';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
 import { startUnixRpcServer } from './transport/stdioRpc';
@@ -460,15 +458,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const configService = core.accessor.get(IConfigService);
-  const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
-    const warnings: ConfigWarningItem[] = diagnostics.map((diagnostic) =>
-      diagnostic.domain === undefined
-        ? { message: diagnostic.message }
-        : { domain: diagnostic.domain, message: diagnostic.message },
-    );
-    core.accessor.get(IEventService).publish(new ConfigWarning({ payload: { warnings } }));
-  };
-  const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
+  const configWarningSubscription = configService.onDidChangeDiagnostics((diagnostics) => {
+    core.accessor
+      .get(IEventService)
+      .publish(new ConfigWarning({ payload: { warnings: toConfigWarningItems(diagnostics) } }));
+  });
   const configChangedPublisher = startConfigChangedPublisher(core);
 
   const pluginService = core.accessor.get(IPluginService);
@@ -483,14 +477,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       }),
     );
   });
-  void configService.ready
-    .then(() => {
-      if (configService.diagnostics().length > 0) {
-        publishConfigWarnings(configService.diagnostics());
-      }
-    })
-    .catch(() => {
-    });
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');

@@ -49,6 +49,7 @@ import {
   applySectionToToml,
   camelToSnake,
   cloneRecord,
+  describeInvalidSection,
   describeTomlSyntaxError,
   TomlError,
   transformTomlData,
@@ -712,7 +713,7 @@ export class ConfigService extends Disposable implements IConfigService {
       }
     }
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {
-      const scratch = { ...this.validated };
+      const scratch = this.buildValidated(this.raw, this.validated);
       this.applySectionEnvBindings(scratch, true);
       this.applyEnvOverlay(scratch);
       this.emitDiagnosticsIfChanged();
@@ -779,7 +780,7 @@ export class ConfigService extends Disposable implements IConfigService {
         this.pushDiagnostic({
           domain,
           severity: 'warning',
-          message: `Ignored invalid config section '${domain}': ${describeUnknownError(error)}`,
+          message: describeInvalidSection(domain, this.rawSnake[camelToSnake(domain)], error),
         });
       }
     }

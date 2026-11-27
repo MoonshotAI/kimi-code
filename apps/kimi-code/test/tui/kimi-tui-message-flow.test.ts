@@ -374,6 +374,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     getGitStatus: vi.fn(async () => null),
     getGitPullRequest: vi.fn(async () => null),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
+    onConfigDiagnosticsChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
@@ -16745,6 +16746,81 @@ describe('KimiTUI session rating survey', () => {
     expect(driver.state.appState.disableFeedbackSurvey).toBeUndefined();
     listener?.({ domain: 'telemetry', value: false });
     expect(driver.state.appState.disableFeedbackSurvey).toBeUndefined();
+  });
+
+  it('keeps showing config warnings that change after startup when reading them at startup failed', async () => {
+    let listener: ((diagnostics: { warnings: readonly string[] }) => void) | undefined;
+    const { driver } = await makeDriver(makeSession(), {
+      getConfigDiagnostics: vi.fn(async () => {
+        throw new Error('config service unavailable');
+      }),
+      onConfigDiagnosticsChanged: vi.fn((fn: (diagnostics: { warnings: readonly string[] }) => void) => {
+        listener = fn;
+        return vi.fn();
+      }),
+    });
+    const tui = driver as unknown as {
+      showStatus: (message: string, level?: string) => void;
+      showConfigWarningsIfAny: () => Promise<void>;
+    };
+    const showStatus = vi.spyOn(tui, 'showStatus');
+
+    await tui.showConfigWarningsIfAny();
+    listener?.({ warnings: ['Ignored invalid config section [permission]: rules[0]: bad'] });
+
+    expect(showStatus.mock.calls).toEqual([
+      ['Ignored invalid config section [permission]: rules[0]: bad', 'warning'],
+    ]);
+  });
+
+  it('shows each config warning that appears after startup once, and again after it was fixed and broken again', async () => {
+    let listener: ((diagnostics: { warnings: readonly string[] }) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const { driver } = await makeDriver(makeSession(), {
+      getConfigDiagnostics: vi.fn(async () => ({ warnings: ['Ignored invalid config section [permission]: rules[0]: bad'] })),
+      onConfigDiagnosticsChanged: vi.fn((fn: (diagnostics: { warnings: readonly string[] }) => void) => {
+        listener = fn;
+        return unsubscribe;
+      }),
+    });
+    const tui = driver as unknown as {
+      showStatus: (message: string, level?: string) => void;
+      showConfigWarningsIfAny: () => Promise<void>;
+    };
+    const showStatus = vi.spyOn(tui, 'showStatus');
+
+    listener?.({ warnings: ['Ignored invalid config section [permission]: rules[0]: bad'] });
+    expect(showStatus).not.toHaveBeenCalled();
+
+    await tui.showConfigWarningsIfAny();
+    expect(showStatus.mock.calls).toEqual([
+      ['Ignored invalid config section [permission]: rules[0]: bad', 'warning'],
+    ]);
+
+    showStatus.mockClear();
+    listener?.({
+      warnings: [
+        'Ignored invalid config section [permission]: rules[0]: bad',
+        'Ignored invalid config section [loop_control]: max_steps_per_turn: bad',
+      ],
+    });
+    listener?.({
+      warnings: [
+        'Ignored invalid config section [permission]: rules[0]: bad',
+        'Ignored invalid config section [loop_control]: max_steps_per_turn: bad',
+      ],
+    });
+    expect(showStatus.mock.calls).toEqual([
+      ['Ignored invalid config section [loop_control]: max_steps_per_turn: bad', 'warning'],
+    ]);
+
+    showStatus.mockClear();
+    listener?.({ warnings: [] });
+    listener?.({ warnings: ['Ignored invalid config section [loop_control]: max_steps_per_turn: bad'] });
+    expect(showStatus.mock.calls).toEqual([
+      ['Ignored invalid config section [loop_control]: max_steps_per_turn: bad', 'warning'],
+    ]);
+    expect(unsubscribe).not.toHaveBeenCalled();
   });
 });
 

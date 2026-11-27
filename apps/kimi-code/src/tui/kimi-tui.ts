@@ -426,6 +426,8 @@ export class KimiTUI {
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private surveySettingSubscription: Unsubscribe | undefined;
+  private configDiagnosticsSubscription: Unsubscribe | undefined;
+  private shownConfigWarnings: ReadonlySet<string> | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
   private readonly skillCommandDefaultPaths = new Map<string, string>();
@@ -617,6 +619,9 @@ export class KimiTUI {
     this.surveySettingSubscription = this.harness.onConfigSectionChanged((change) => {
       if (change.domain !== 'disableFeedbackSurvey') return;
       this.setAppState({ disableFeedbackSurvey: change.value === true ? true : undefined });
+    });
+    this.configDiagnosticsSubscription = this.harness.onConfigDiagnosticsChanged(({ warnings }) => {
+      this.showNewConfigWarnings(warnings);
     });
     this.streamingUI = new StreamingUIController(this);
     this.state.transcriptContainer.setTimeline(this.streamingUI.timeline);
@@ -1380,6 +1385,8 @@ export class KimiTUI {
     this.surveyController.dispose();
     this.surveySettingSubscription?.();
     this.surveySettingSubscription = undefined;
+    this.configDiagnosticsSubscription?.();
+    this.configDiagnosticsSubscription = undefined;
     this.state.footer.dispose();
     this.disposeEditorReplacement();
     for (const dispose of this.reverseRpcDisposers) {
@@ -4178,12 +4185,20 @@ export class KimiTUI {
   }
 
   private async showConfigWarningsIfAny(): Promise<void> {
+    this.shownConfigWarnings = new Set();
     try {
       const { warnings } = await this.harness.getConfigDiagnostics();
-      for (const warning of warnings) {
-        this.showStatus(warning, 'warning');
-      }
+      this.showNewConfigWarnings(warnings);
     } catch {}
+  }
+
+  private showNewConfigWarnings(warnings: readonly string[]): void {
+    const shown = this.shownConfigWarnings;
+    if (shown === undefined) return;
+    this.shownConfigWarnings = new Set(warnings);
+    for (const warning of warnings) {
+      if (!shown.has(warning)) this.showStatus(warning, 'warning');
+    }
   }
 
   private createTranscriptComponent(entry: TranscriptEntry): Component | null {

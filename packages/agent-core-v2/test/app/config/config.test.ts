@@ -39,6 +39,7 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/features/skill/catalog/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
+import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
 import { READ_SECTION } from '#/agent/tools/os/read/configSection';
 import {
@@ -1538,6 +1539,79 @@ describe('malformed models config entries', () => {
   });
 });
 
+describe('invalid config section warnings', () => {
+  async function createConfig(toml: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables, storage };
+  }
+
+  it('names each problem on one line with the keys as written in config.toml', async () => {
+    const { config, disposables } = await createConfig(
+      '[permission]\nrules = "deny everything"\n\n[loop_control]\nmax_steps_per_turn = "many"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: PERMISSION_SECTION,
+        severity: 'warning',
+        message:
+          'Ignored invalid config section [permission]: rules[0]: Invalid input: expected object, received string',
+      },
+      {
+        domain: LOOP_CONTROL_SECTION,
+        severity: 'warning',
+        message:
+          'Ignored invalid config section [loop_control]: max_steps_per_turn: Invalid input: expected number, received string',
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
+  it('keeps the warnings when a reload finds config.toml unchanged', async () => {
+    const { config, disposables } = await createConfig('[permission]\nrules = "deny everything"\n');
+    const before = config.diagnostics();
+    const changes: unknown[] = [];
+    disposables.add(config.onDidChangeDiagnostics((diagnostics) => changes.push(diagnostics)));
+
+    await config.reload();
+
+    expect(before).toHaveLength(1);
+    expect(config.diagnostics()).toEqual(before);
+    expect(changes).toEqual([]);
+
+    disposables.dispose();
+  });
+
+  it('clears the warning on reload once the section is fixed', async () => {
+    const { config, disposables, storage } = await createConfig(
+      '[permission]\nrules = "deny everything"\n',
+    );
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[permission]\nrules = []\n'),
+    );
+
+    await config.reload();
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+});
+
 describe('task config section', () => {
   it('re-applies the keepAliveOnExit env binding on every get()', async () => {
     const env: Record<string, string> = {};
@@ -1714,7 +1788,7 @@ describe('task config section', () => {
     expect(
       config
         .diagnostics()
-        .some((d) => d.message.includes("Ignored invalid config section 'task'")),
+        .some((d) => d.message.startsWith('Ignored invalid config section [task]: print_background_mode: ')),
     ).toBe(true);
     disposables.dispose();
   });

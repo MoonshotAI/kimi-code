@@ -78,6 +78,8 @@ const NO_ADD_DIR = {
   desktop: 'Desktop has no /add-dir: it adds a directory to the whole project in the project dialog, through the system folder picker that Playwright cannot drive.',
   web: 'The web UI has no /add-dir: it adds a directory to the whole project in the project dialog, which changes every session of the project rather than this one.',
 };
+const NO_NOTICES_OVER_ACP =
+  'ACP has no channel for product notices such as config warnings: an editor shows only the conversation the agent streams.';
 const ONLY_DESKTOP_HAS_A_BROWSER = 'Only the Desktop app has a built-in browser that agents control, and only its settings have a Browser page that turns that control off.';
 
 export const VERBS = {
@@ -124,6 +126,7 @@ export const VERBS = {
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   reloadPage: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
+  expectNotice: { on: ['tui', 'desktop', 'web'], absentBecause: NO_NOTICES_OVER_ACP, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
   expectTerminalRestored: {
     on: ['tui'],
@@ -379,6 +382,7 @@ interface VerbSignatures {
   resize(size: WindowSize): Promise<void>;
   reloadPage(): Promise<void>;
   expectTranscript(text: string): Promise<void>;
+  expectNotice(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
   openSession(title: string): Promise<void>;

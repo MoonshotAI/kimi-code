@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
-import type { ConfigChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
+import type { ConfigChangedEvent, ConfigDiagnostic } from '@moonshot-ai/agent-core-v2/app/config/config';
 import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
 import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 import type { ReloadSummary } from '@moonshot-ai/agent-core-v2/app/plugin/types';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 
 import { stringDeltaSchema } from '../helpers.js';
+import { configDiagnosticSchema } from './config.js';
 import type { EventRegistration } from '../types.js';
 
 export interface SessionArchivedPayload {
@@ -35,6 +36,7 @@ export type CatalogChangedPayload = Awaited<
 export interface KlientEventPayloads {
   'config.changed': ConfigChangedEvent;
   'config.sectionChanged': ConfigChangedEvent;
+  'config.diagnosticsChanged': readonly ConfigDiagnostic[];
   'kosong.providers.changed': ProvidersChangedEvent;
   'kosong.models.changed': ModelsChangedEvent;
   'plugins.reloaded': ReloadSummary;
@@ -102,6 +104,12 @@ export const globalEvents = {
     service: 'configService',
     event: 'onDidSectionChange',
     schema: configChangedSchema,
+  },
+  'config.diagnosticsChanged': {
+    kind: 'emitter',
+    service: 'configService',
+    event: 'onDidChangeDiagnostics',
+    schema: z.array(configDiagnosticSchema),
   },
   'kosong.providers.changed': {
     kind: 'emitter',

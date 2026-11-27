@@ -16,6 +16,10 @@ The config file path then becomes `$KIMI_CODE_HOME/config.toml`. Regardless of w
 TOML field names always use snake_case, for example `default_model` and `max_context_size`. If a key contains `.`, you must quote it (for example `[models."gpt-4.1"]`); otherwise TOML treats `.` as a nested table separator.
 :::
 
+### When a section is invalid
+
+If a section fails validation, for example `rules` under `[permission]` is a string instead of a list of rules, Kimi Code ignores that whole section, falls back to its defaults, and keeps running. A warning names the section and the key at fault, such as `Ignored invalid config section [permission]: rules[0]: Invalid input: expected object, received string`. The terminal UI prints it in the conversation at startup and when you break the file while it is running; the desktop app and the web UI show it as a notice that stays until you close it.
+
 ## Complete example
 
 The following example covers the most commonly used configuration fields. You can copy it and adjust as needed:

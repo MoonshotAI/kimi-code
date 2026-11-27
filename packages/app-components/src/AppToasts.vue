@@ -105,6 +105,7 @@ function noticeOptions(warning: AppNotice): ToastOptions {
     copyLink: warning.copyLink,
     dismissLabel: t('warnings.dismiss'),
     position: warning.position,
+    ...(warning.persistent === true ? { duration: 0 } : {}),
   };
 }
 

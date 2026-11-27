@@ -1049,6 +1049,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     };
   }
 
+  override onConfigDiagnosticsChanged(
+    listener: (diagnostics: ConfigDiagnostics) => void,
+  ): Unsubscribe {
+    const subscription = this.klient.events.on('config.diagnosticsChanged', (diagnostics) => {
+      listener(diagnosticsToConfigDiagnostics(diagnostics));
+    });
+    return () => {
+      subscription.dispose();
+    };
+  }
+
   /**
    * A v1 patch is one deep-merge over the whole document; v2 deep-merges
    * per domain with the same plain-object-recursive / array-replace
