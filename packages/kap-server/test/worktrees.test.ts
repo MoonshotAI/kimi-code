@@ -23,8 +23,8 @@ import { repointSession } from '../src/services/worktrees/sessionRepoint';
 import {
   SessionWorktreeService,
   type SessionWorktreeServiceOptions,
-  writeStoredWorktree,
 } from '../src/services/worktrees/sessionWorktreeService';
+import { writeStoredWorktree } from '../src/services/worktrees/sessionWorktreeState';
 import { WorktreeCreation } from '../src/services/worktrees/worktreeSetup';
 import { commitAll, git, useHangingRemote } from './helpers/gitRepo';
 import { eventually, failMetadataWriteOnce, useWorktreeServer, withResolvers } from './helpers/worktreeServer';

@@ -2,7 +2,7 @@ import type { Scope } from '@moonshot-ai/agent-core-v2';
 
 import { promptSubmissionSchema } from '../protocol/rest-prompt';
 import { activateSkillRequestSchema } from '../protocol/rest-skill';
-import type { HeldPromptDispatcher } from '../services/worktrees/sessionWorktreeService';
+import type { HeldPromptDispatcher } from '../services/worktrees/heldPrompts';
 import { runPromptSubmission } from './prompts';
 import { runSkillActivation } from './skills';
 

@@ -3,7 +3,7 @@ import { IFileService, ISessionIndex, type Scope } from '@moonshot-ai/agent-core
 import { assertPromptFileRefs, assertPromptPathRefs } from '../lib/promptMedia';
 import type { PromptItem, PromptSubmission } from '../protocol/rest-prompt';
 import type { ActivateSkillRequest, ActivateSkillResult } from '../protocol/rest-skill';
-import { holdPromptForWorktree } from '../services/worktrees/sessionWorktreeService';
+import { holdPromptForWorktree } from '../services/worktrees/heldPrompts';
 import { storedSessionWorktree, worktreeHoldsPrompts } from '../services/worktrees/sessionWorktreeState';
 
 async function mayHold(core: Scope, sessionId: string): Promise<boolean> {

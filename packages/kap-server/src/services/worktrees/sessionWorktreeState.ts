@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
+import { patchSessionMetadata, type Scope } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import {
@@ -10,6 +11,7 @@ import {
   type WorktreeSetup,
 } from '../../protocol/worktree';
 import { branchExists } from './gitRefs';
+import { publishSessionUpdated } from './sessionUpdates';
 
 export const SESSION_WORKTREE_METADATA_KEY = 'worktree';
 
@@ -63,6 +65,33 @@ export function withStoredSessionWorktree(
   stored: StoredSessionWorktree,
 ): Record<string, unknown> {
   return { ...custom, [SESSION_WORKTREE_METADATA_KEY]: stored };
+}
+
+export async function writeStoredWorktree(
+  core: Scope,
+  sessionId: string,
+  change: (stored: StoredSessionWorktree | undefined) => StoredSessionWorktree | undefined,
+  options: { readonly held?: 'keep' | 'replace' } = {},
+): Promise<StoredSessionWorktree | undefined> {
+  let written: StoredSessionWorktree | undefined;
+  await patchSessionMetadata(core.accessor, sessionId, (meta) => {
+    const current = storedSessionWorktree(meta.custom);
+    const next = change(current);
+    written =
+      next === undefined || options.held === 'replace'
+        ? next
+        : {
+            ...withoutHeldPrompt(next),
+            ...(current?.held_prompt === undefined
+              ? {}
+              : { held_prompt: current.held_prompt, held_request: current.held_request }),
+          };
+    return written === undefined
+      ? undefined
+      : { custom: withStoredSessionWorktree(meta.custom, written) };
+  });
+  if (written !== undefined) publishSessionUpdated(core, sessionId);
+  return written;
 }
 
 export function settleInterruptedSetup(stored: StoredSessionWorktree): StoredSessionWorktree {

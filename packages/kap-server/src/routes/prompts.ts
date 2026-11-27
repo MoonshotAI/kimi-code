@@ -72,7 +72,7 @@ import { defineRoute, type RouteDefinition } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
-import { withdrawHeldPrompt } from '../services/worktrees/sessionWorktreeService';
+import { withdrawHeldPrompt } from '../services/worktrees/heldPrompts';
 import { skillsForCheckout } from './checkoutSkillPaths';
 import { holdSubmissionForWorktree } from './worktreeHold';
 import { applyThinking } from './sessionAgentConfig';
