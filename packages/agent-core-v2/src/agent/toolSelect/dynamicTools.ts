@@ -215,11 +215,11 @@ export function renderLoadableToolsAnnouncement(
   hasLoadableTools = true,
 ): string {
   const sections: string[] = [];
-  if (added.length > 0) {
-    sections.push(`<tools_added>\n${added.join('\n')}\n</tools_added>`);
-  }
   if (removed.length > 0) {
     sections.push(`<tools_removed>\n${removed.join('\n')}\n</tools_removed>`);
+  }
+  if (added.length > 0) {
+    sections.push(`<tools_added>\n${added.join('\n')}\n</tools_added>`);
   }
   if (!hasLoadableTools) {
     sections.push(
@@ -234,7 +234,8 @@ export function renderLoadableToolsAnnouncement(
       'announced tools before calling them. ' +
       'Only the announced names are loadable — tools you already have available are called ' +
       'directly, never passed to select_tools; plugin, skill, or category names do not work. ' +
-      'Names listed as removed are no longer loadable — do not select them. ' +
+      'Names listed as removed are no longer loadable until added again. ' +
+      'A name added again is loadable with its updated definition. ' +
       'Fold all announcements in this conversation in order to get the current list.',
   );
   return sections.join('\n\n');

@@ -69,11 +69,15 @@ export function normalize<T>(value: T, options: NormalizeOptions = {}): T {
   return createNormalizer(options)(value);
 }
 
+export function slashPathOf(nativePath: string): string {
+  return nativePath.replaceAll('\\', '/');
+}
+
 function pathVariants(paths: Readonly<Record<string, string>>): Array<readonly [string, string]> {
   const variants: Array<readonly [string, string]> = [];
   for (const [token, path] of Object.entries(paths)) {
     if (path === '') continue;
-    const forms = new Set([path, path.replaceAll('\\', '/'), path.replaceAll('/', '\\')]);
+    const forms = new Set([path, slashPathOf(path), path.replaceAll('/', '\\')]);
     if (path.startsWith('/private/')) forms.add(path.slice('/private'.length));
     else if (path.startsWith('/var/') || path.startsWith('/tmp/')) forms.add(`/private${path}`);
     for (const form of forms) variants.push([form, token]);
