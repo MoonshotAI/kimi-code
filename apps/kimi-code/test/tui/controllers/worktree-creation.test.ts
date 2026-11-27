@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 
 import {
@@ -246,22 +249,32 @@ describe('WorktreeCreationController', () => {
     expect(text()).toBe(['', '✓ Moved session to worktree fix-login'].join('\n'));
 
     const failed = makeHost();
-    await failed.controller.run(
-      { name: 'fix-login', mode: 'move' },
-      {
-        enter: async () => {
-          throw new Error('Turn is running.');
+    const repoDir = mkdtempSync(join(tmpdir(), 'kimi-wt-sub-fail-'));
+    const subDir = join(repoDir, 'packages', 'sub');
+    mkdirSync(subDir, { recursive: true });
+    try {
+      failed.host.state.appState = { workDir: subDir, projectRoot: repoDir } as {
+        workDir: string;
+        projectRoot?: string;
+      };
+      failed.host.harness.createWorktree.mockImplementationOnce(
+        succeed(createdWorktree({ repoRoot: repoDir, sourceRoot: repoDir })),
+      );
+      await failed.controller.run(
+        { name: 'fix-login', mode: 'move' },
+        {
+          enter: async () => {
+            throw new Error('Turn is running.');
+          },
         },
-      },
-    );
-    expect(failed.text()).toBe(
-      [
-        '',
-        "✗ Created worktree fix-login, couldn't move session",
-        '  Turn is running.',
-        '  Session stays in /repo. Run /worktree to open fix-login.',
-      ].join('\n'),
-    );
+      );
+      const normalized = failed.text().replaceAll(/\n\s+/g, ' ');
+      expect(normalized).toContain("✗ Created worktree fix-login, couldn't move session");
+      expect(normalized).toContain('Turn is running.');
+      expect(normalized).toContain(`Session stays in ${subDir}. Run /worktree to open fix-login.`);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
   });
 
   it('shows the git error under the failed step and retries on Try again', async () => {

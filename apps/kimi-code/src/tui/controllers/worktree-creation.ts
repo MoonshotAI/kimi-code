@@ -138,7 +138,7 @@ export class WorktreeCreationController {
               progress.finish({
                 phase: 'move_failed',
                 name: created.worktree.name,
-                sourceDir: created.sourceRoot,
+                sourceDir,
                 reason: formatErrorMessage(error),
               });
               return;
