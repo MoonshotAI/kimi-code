@@ -19,6 +19,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
+import { handleUndoCommand } from '#/tui/commands/undo';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ApiKeyInputDialogComponent } from '#/tui/components/dialogs/api-key-input-dialog';
@@ -51,6 +52,8 @@ import {
   QUERY_TERMINAL_THEME,
   TERMINAL_THEME_LIGHT,
 } from '#/tui/utils/terminal-theme';
+
+import { decodeOsc7577Writes } from '../helpers/osc7577';
 
 vi.mock('@moonshot-ai/kimi-code-oauth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-oauth')>();
@@ -6510,5 +6513,207 @@ describe('KimiTUI work location', () => {
       await stopPromise;
       expect(driver.state.footer.getTransientHint()).toBeNull();
     });
+  });
+});
+
+describe('OSC 7577 program resume lifecycle', () => {
+  const TEST_OSC_TOKEN = 'tui-osc-token';
+
+  type Osc7577Event =
+    | { readonly kind: 'clear' }
+    | { readonly kind: 'resume'; readonly argv: readonly string[]; readonly cwd?: string };
+
+  function createOsc7577Tui(
+    harness: ReturnType<typeof makeHarness>,
+    startupOverrides: Parameters<typeof makeStartupInput>[0] = { model: 'k2' },
+  ) {
+    const tui = new KimiTUI(harness as never, {
+      ...makeStartupInput(startupOverrides),
+      programResumeToken: TEST_OSC_TOKEN,
+    });
+    onTestFinished(() => {
+      (tui as unknown as { unregisterSignalHandlers(): void }).unregisterSignalHandlers();
+    });
+    const writes: string[] = [];
+    vi.spyOn(tui.state.terminal, 'write').mockImplementation((data: string) => {
+      writes.push(data);
+    });
+    vi.spyOn(tui.state.terminal, 'setProgress').mockImplementation(() => {});
+    vi.spyOn(tui.state.ui, 'start').mockImplementation(() => {});
+    vi.spyOn(tui.state.ui, 'stop').mockImplementation(() => {});
+    vi.spyOn(tui.state.ui, 'requestRender').mockImplementation(() => {});
+    const events = (): Osc7577Event[] =>
+      decodeOsc7577Writes(writes, TEST_OSC_TOKEN).map((entry) =>
+        entry.kind === 'clear'
+          ? { kind: 'clear' }
+          : {
+              kind: 'resume',
+              argv: entry.argv,
+              ...(entry.cwd === undefined ? {} : { cwd: entry.cwd }),
+            },
+      );
+    return { tui, events };
+  }
+
+  it('stays silent on sessionless startup and reports kimi -r <id> with workDir after the first transcript entry', async () => {
+    const session = makeSession({ id: 'ses-first' });
+    const harness = makeHarness(session);
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    expect(events()).toEqual([]);
+
+    await tui.ensureSession();
+    expect(events()).toEqual([]);
+
+    tui.appendTranscriptEntry({
+      id: 'msg-1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: 'hello world',
+    });
+    expect(events()).toEqual([
+      {
+        kind: 'resume',
+        argv: ['kimi', '-r', 'ses-first'],
+        cwd: '/tmp/proj-a',
+      },
+    ]);
+  });
+
+  it('coalesces replay history on startup resume into a single OSC 7577 report', async () => {
+    const resumeState = createResumeState();
+    (
+      resumeState as unknown as {
+        agents: { main: { replay: unknown[] } };
+      }
+    ).agents.main.replay = [
+      {
+        type: 'message',
+        message: { role: 'user', content: [{ type: 'text', text: 'question' }] },
+      },
+      {
+        type: 'message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }] },
+      },
+    ];
+    const session = makeSession({
+      id: 'ses-resumed',
+      getResumeState: vi.fn(() => resumeState),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-resumed', workDir: '/tmp/proj-a' }]),
+    });
+    const { tui, events } = createOsc7577Tui(harness, { session: 'ses-resumed', model: 'k2' });
+
+    await tui.start();
+
+    expect(events()).toEqual([
+      {
+        kind: 'resume',
+        argv: ['kimi', '-r', 'ses-resumed'],
+        cwd: '/tmp/proj-a',
+      },
+    ]);
+  });
+
+  it('republishes after external editor returns and clears on /new without leaking (newSessionId, oldEntries)', async () => {
+    const firstSession = makeSession({ id: 'ses-old' });
+    const secondSession = makeSession({ id: 'ses-new' });
+    let sessionIndex = 0;
+    const harness = makeHarness(firstSession, {
+      createSession: vi.fn(async () => {
+        sessionIndex += 1;
+        return sessionIndex === 1 ? firstSession : secondSession;
+      }),
+    });
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    await tui.ensureSession();
+    tui.appendTranscriptEntry({
+      id: 'msg-old',
+      kind: 'user',
+      renderMode: 'plain',
+      content: 'initial message',
+    });
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+    ]);
+
+    tui.setExternalEditorRunning(true);
+    expect(events()).toHaveLength(1);
+    tui.setExternalEditorRunning(false);
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+    ]);
+
+    await tui.createNewSession();
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+      { kind: 'clear' },
+    ]);
+  });
+
+  it('stays silent when /undo runs in a /new empty session', async () => {
+    const session = makeSession({
+      id: 'ses-new-empty',
+      undoHistory: vi.fn(async () => {}),
+    });
+    const harness = makeHarness(session);
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    await tui.createNewSession();
+    await handleUndoCommand(tui);
+
+    expect(tui.state.transcriptEntries.map((entry) => entry.content)).toEqual([
+      'Nothing to undo.',
+    ]);
+    expect(tui.hasSessionContent()).toBe(false);
+    expect(events()).toEqual([]);
+  });
+
+  it('emits clear=1 and reports hasSessionContent() === false when /undo 1 empties all turns', async () => {
+    const undoHistory = vi.fn(async () => {});
+    const session = makeSession({
+      id: 'ses-undo',
+      undoHistory,
+    });
+    const harness = makeHarness(session);
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    await tui.createNewSession();
+    await handleUndoCommand(tui);
+    expect(events()).toEqual([]);
+
+    tui.appendTranscriptEntry({
+      id: 'msg-user-1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: 'first prompt',
+    });
+    tui.appendTranscriptEntry({
+      id: 'msg-assistant-1',
+      kind: 'assistant',
+      renderMode: 'markdown',
+      content: 'first reply',
+    });
+    expect(tui.hasSessionContent()).toBe(true);
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-undo'], cwd: '/tmp/proj-a' },
+    ]);
+
+    await handleUndoCommand(tui, '1');
+
+    expect(undoHistory).toHaveBeenCalledWith(1);
+    expect(tui.hasSessionContent()).toBe(false);
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-undo'], cwd: '/tmp/proj-a' },
+      { kind: 'clear' },
+    ]);
   });
 });

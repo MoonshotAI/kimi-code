@@ -16,7 +16,7 @@ vi.mock('../../../src/main/diagnostics/log', () => ({
     mocks.notice = notice;
   },
 }));
-vi.mock('../../../src/main/window/main-window', () => ({ getMainWindow: () => mocks.window }));
+vi.mock('../../../src/main/window/window-registry', () => ({ getMainWindow: () => mocks.window }));
 
 import { installUncaughtErrorNotice } from '../../../src/main/app/uncaught-error-notice';
 

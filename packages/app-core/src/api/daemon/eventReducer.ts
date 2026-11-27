@@ -1,5 +1,6 @@
 
 import type { ConversationNotice } from '../../conversation/types';
+import type { AppNoticeDetail } from '../../contracts';
 import { isPlaceholderSessionUsage } from './mappers';
 import type {
   AppApprovalRequest,
@@ -7,7 +8,6 @@ import type {
   AppEvent,
   AppGoal,
   AppNotice,
-  AppNoticeDetail,
   AppWarning,
   AppQuestionRequest,
   AppSession,

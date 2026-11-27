@@ -8,7 +8,6 @@
     "./client": "./src/client/index.ts",
     "./composables": "./src/composables/index.ts",
     "./contracts": "./src/contracts.ts",
-    "./icons": "./src/icons/icons.ts",
     "./lib": "./src/lib/index.ts",
     "./panel": "./src/panel/index.ts",
     "./stores": "./src/stores/index.ts",

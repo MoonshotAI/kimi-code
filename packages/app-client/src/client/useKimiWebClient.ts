@@ -80,7 +80,8 @@ import {
   type ConversationTurn,
   type ConversationTurnHeader,
 } from '@moonshot-ai/app-core/conversation';
-import { useAppearance, useQuotaAutoResume, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
+import { useAppearance, useQuotaAutoResume, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
+import type { AppNoticeDetail } from '@moonshot-ai/app-core/contracts';
 import { shouldNotifyCompletion } from '../composables/useNotification';
 import { notificationsStore } from '../stores/notifications';
 import { promptAttachmentToTurnAttachment } from './attachmentsToContent';
@@ -151,7 +152,6 @@ import type {
   AppConfig,
   AppGoal,
   AppMessage,
-  AppNoticeDetail,
   AppModel,
   AppProvider,
   AppQuestionRequest,
@@ -204,7 +204,7 @@ import type {
 
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 
-export type { ColorScheme, FontScale } from '@moonshot-ai/app-core';
+export type { ColorScheme, FontScale } from '@moonshot-ai/app-core/composables';
 
 safeRemove(STORAGE_KEYS.codeFont);
 safeRemove(STORAGE_KEYS.accent);

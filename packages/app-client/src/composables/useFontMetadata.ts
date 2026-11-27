@@ -1,5 +1,5 @@
 import { shallowRef } from 'vue';
-import { getLocalFontFace } from '@moonshot-ai/app-core';
+import { getLocalFontFace } from '@moonshot-ai/app-core/composables';
 import { readFontMetadata, type FontMetadata } from '@moonshot-ai/app-core/lib';
 
 export interface FontMetadataEntry {
