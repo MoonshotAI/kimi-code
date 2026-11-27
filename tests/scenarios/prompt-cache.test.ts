@@ -228,6 +228,9 @@ const CHANGES: readonly Change[] = [
   },
   {
     name: 'turning an experimental feature off and reloading the session',
+    prepare: async (kap) => {
+      await kap.rest.post('/api/v1/config', { experimental: { wait_for: true } });
+    },
     apply: async (kap, sessionId) => {
       await kap.rest.post('/api/v1/config', { experimental: { wait_for: false } });
       return kap.rest.post(`/api/v1/sessions/${sessionId}:reload`);
