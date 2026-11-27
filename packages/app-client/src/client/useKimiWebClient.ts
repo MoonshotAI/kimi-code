@@ -80,6 +80,7 @@ import {
 } from '@moonshot-ai/app-core/conversation';
 import { useAppearance, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
 import { shouldNotifyCompletion } from '../composables/useNotification';
+import { settleDraftInputHistory } from '../composables/useInputHistory';
 import { notificationsStore } from '../stores/notifications';
 import { promptAttachmentToTurnAttachment } from './attachmentsToContent';
 import { useModelProviderState, type PersistSessionProfilePatch } from './useModelProviderState';
@@ -499,6 +500,7 @@ if (typeof window !== 'undefined') {
 function setActiveSessionId(id: string | undefined): void {
   sessionReadScope.activate(id);
   consumeDraftPromotionOnSessionChange(id);
+  settleDraftInputHistory(id);
   if (id === undefined) permissionsStore().enterDraft();
   rawState.activeSessionId = id;
 }

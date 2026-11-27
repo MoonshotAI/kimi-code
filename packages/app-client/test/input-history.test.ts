@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref, type Ref } from 'vue';
-import { useComposerDraft, useInputHistory, forgetInputHistory } from '../src/composables';
+import { useComposerDraft, useInputHistory, forgetInputHistory, settleDraftInputHistory } from '../src/composables';
+import { markDraftPromotion, resetDraftPromotion } from '../src/client/draftPromotion';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import type { TextFieldLike } from '@moonshot-ai/app-composer/runtime';
 import { browserReferenceNode, composerSchema, createComposerSnapshot, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
@@ -58,7 +59,7 @@ describe('useInputHistory — push', () => {
     expect(text.value).toBe('a');
   });
 
-  it('drops entries pushed without a session (draft / empty composer)', () => {
+  it('does not offer entries pushed without a session in the draft composer', () => {
     const { history } = setup('', 0, null);
     history.push('hello');
     expect(history.hasHistory()).toBe(false);
@@ -442,6 +443,58 @@ it('bounds serialized input history across sessions and keeps newest usable inpu
     const { text, history: docked } = setup('', 0, 'sess-y');
     docked.recallOlder();
     expect(text.value).toBe('old1');
+  });
+
+  describe('prompts sent from the new-conversation composer', () => {
+    beforeEach(() => {
+      resetDraftPromotion();
+      settleDraftInputHistory('opened-before-this-test');
+    });
+
+    it('become the history of the session they start', async () => {
+      const sid = ref<string | undefined>(undefined);
+      const text = ref('');
+      const composer = useInputHistory({ text, editorRef: ref(null), sessionId: () => sid.value });
+      composer.push('Start with this question.');
+      expect(composer.hasHistory()).toBe(false);
+
+      markDraftPromotion({ workspaceId: 'ws-1', sessionId: 'created' });
+      settleDraftInputHistory('created');
+      sid.value = 'created';
+      await nextTick();
+      composer.recallOlder();
+      expect(text.value).toBe('Start with this question.');
+
+      const docked = setup('', 0, 'created');
+      docked.history.recallOlder();
+      expect(docked.text.value).toBe('Start with this question.');
+    });
+
+    it('are recorded once, in the order they were sent, before the prompts sent in the session', () => {
+      const draft = setup('', 0, null);
+      draft.history.push('/plan');
+      draft.history.push('Start with this question.');
+      draft.history.push('Start with this question.');
+      markDraftPromotion({ workspaceId: 'ws-1', sessionId: 'created' });
+      settleDraftInputHistory('created');
+      settleDraftInputHistory('created');
+      setup('', 0, 'created').history.push('Ask a follow-up.');
+      expect(JSON.parse(globalThis.localStorage.getItem(STORAGE_KEYS.inputHistory)!)).toEqual({
+        created: ['/plan', 'Start with this question.', 'Ask a follow-up.'],
+      });
+    });
+
+    it('are dropped when the window opens a session they did not start', () => {
+      setup('', 0, 'existing').history.push('An older prompt.');
+      const draft = setup('', 0, null);
+      draft.history.push('A prompt whose session was never created.');
+      settleDraftInputHistory('existing');
+      markDraftPromotion({ workspaceId: 'ws-1', sessionId: 'created' });
+      settleDraftInputHistory('created');
+      expect(JSON.parse(globalThis.localStorage.getItem(STORAGE_KEYS.inputHistory)!)).toEqual({
+        existing: ['An older prompt.'],
+      });
+    });
   });
 });
 
