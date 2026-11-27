@@ -1,0 +1,34 @@
+.chip-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  max-width: 100%;
+  height: 28px;
+  margin-bottom: var(--space-1);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: 10px;
+  background: var(--color-selected);
+  -webkit-backdrop-filter: blur(30px);
+  backdrop-filter: blur(30px);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: color var(--duration-base) var(--ease-out);
+}
+.chip-trigger:hover,
+.chip-trigger.open {
+  color: var(--color-text-strong);
+}
+.chip-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.chip-trigger-chev {
+  flex: none;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.chip-trigger.open .chip-trigger-chev {
+  transform: rotate(180deg);
+}

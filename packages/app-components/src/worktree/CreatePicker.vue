@@ -106,7 +106,7 @@ defineExpose({ close, focusPanel });
     <button
       ref="triggerRef"
       type="button"
-      class="cp-chip"
+      class="chip-trigger cp-chip"
       :class="[chipClass, { open }]"
       :aria-haspopup="popup"
       :aria-expanded="open"
@@ -114,7 +114,7 @@ defineExpose({ close, focusPanel });
       @click.stop="toggle"
     >
       <slot name="chip" />
-      <Icon class="cp-chip-chev" name="chevron-down" size="sm" />
+      <Icon class="chip-trigger-chev" name="chevron-down" size="sm" />
     </button>
     <slot name="extra" />
     <Transition name="ui-menu-pop">
@@ -136,6 +136,7 @@ defineExpose({ close, focusPanel });
   </div>
 </template>
 
+<style scoped src="../lib/chip-trigger.css"></style>
 <style scoped>
 [data-create-picker] {
   position: relative;
@@ -143,40 +144,8 @@ defineExpose({ close, focusPanel });
   font-family: var(--font-ui);
 }
 .cp-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  max-width: 100%;
   min-width: 0;
-  height: 28px;
-  margin-bottom: var(--space-1);
-  padding: 0 var(--space-2);
-  border: none;
-  border-radius: 10px;
-  background: var(--color-selected);
-  -webkit-backdrop-filter: blur(30px);
-  backdrop-filter: blur(30px);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--text-sm);
   white-space: nowrap;
-  cursor: pointer;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.cp-chip:hover,
-.cp-chip.open {
-  color: var(--color-text-strong);
-}
-.cp-chip:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
-}
-.cp-chip-chev {
-  flex: none;
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.cp-chip.open .cp-chip-chev {
-  transform: rotate(180deg);
 }
 .cp-panel {
   position: absolute;

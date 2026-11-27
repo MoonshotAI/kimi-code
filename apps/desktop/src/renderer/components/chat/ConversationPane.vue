@@ -913,7 +913,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                   <button
                     ref="wsChipRef"
                     type="button"
-                    class="ws-chip"
+                    class="chip-trigger ws-chip"
                     :class="{ open: wsPickOpen }"
                     aria-haspopup="dialog"
                     :aria-expanded="wsPickOpen"
@@ -921,7 +921,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                   >
                     <WorkspaceIcon :host-id="activeHostId" status="all" />
                     <span class="ws-chip-name">{{ activeWorkspaceLabel }}</span>
-                    <Icon class="ws-chip-chev" name="chevron-down" size="sm" />
+                    <Icon class="chip-trigger-chev" name="chevron-down" size="sm" />
                   </button>
                 </Tooltip>
                 <Menu
@@ -970,7 +970,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                   </MenuItem>
                 </Menu>
               </div>
-              <button v-else type="button" class="ws-chip ws-ghost" @click="emit('addWorkspace')">
+              <button v-else type="button" class="chip-trigger ws-chip ws-ghost" @click="emit('addWorkspace')">
                 <Icon name="folder-plus" />
                 <span>{{ t('conversation.addWorkspace') }}</span>
               </button>
@@ -1157,6 +1157,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   </section>
 </template>
 
+<style scoped src="@moonshot-ai/app-components/chip-trigger.css"></style>
 <style scoped>
 .con {
   --read-max: 760px;
@@ -1343,30 +1344,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   min-width: 0;
 }
 
-.ws-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  height: 28px;
-  margin-bottom: 4px;
-  padding: 0 var(--space-2);
-  background: var(--color-selected);
-  -webkit-backdrop-filter: blur(30px);
-  backdrop-filter: blur(30px);
-  border: none;
-  border-radius: 10px;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.ws-chip:hover,
-.ws-chip.open {
-  color: var(--color-text-strong);
-}
-.ws-chip:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ws-chip > .kw-icon { flex: none; }
 .ws-chip-name {
   min-width: 0;
@@ -1375,11 +1352,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   white-space: nowrap;
   font-weight: var(--weight-option-label);
 }
-.ws-chip-chev {
-  flex: none;
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.ws-chip.open .ws-chip-chev { transform: rotate(180deg); }
 
 .ws-backdrop {
   position: fixed;

@@ -10,7 +10,8 @@
     "./plan-usage.css": "./src/settings/plan-usage.css",
     "./sidebar-row-button.css": "./src/sidebar/sidebar-row-button.css",
     "./drop-card.css": "./src/lib/drop-card.css",
-    "./dock-card.css": "./src/lib/dock-card.css"
+    "./dock-card.css": "./src/lib/dock-card.css",
+    "./chip-trigger.css": "./src/lib/chip-trigger.css"
   },
   "dependencies": {
     "@chenglou/pretext": "0.0.8",
