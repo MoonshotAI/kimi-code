@@ -14,6 +14,9 @@ const apiMock = {
 
 setKimiClientDeps({ api: () => apiMock as never, t: (key) => key });
 
+vi.mock('../src/client/toast', () => ({ toast: vi.fn() }));
+
+import { toast } from '../src/client/toast';
 import {
   __resetMcpAuthorizationForTests,
   useMcpAuthorization,
@@ -43,6 +46,7 @@ function authorizationRequired(flowId = 'flow-1'): AppMcpAuthBeginResult {
 
 describe('useMcpAuthorization', () => {
   let open: ReturnType<typeof vi.fn>;
+  let consoleError: ReturnType<typeof vi.spyOn>;
   let popup: {
     closed: boolean;
     opener: unknown;
@@ -60,6 +64,7 @@ describe('useMcpAuthorization', () => {
     apiMock.completeMcpAuth.mockImplementation(() => new Promise(() => {}));
     apiMock.cancelMcpAuth.mockResolvedValue(null);
     apiMock.resetMcpAuth.mockResolvedValue(null);
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     popup = { closed: false, opener: {}, location: { href: '' }, close: vi.fn() };
     open = vi.fn(() => popup);
     vi.stubGlobal('window', { open });
@@ -67,6 +72,7 @@ describe('useMcpAuthorization', () => {
 
   afterEach(() => {
     __resetMcpAuthorizationForTests();
+    consoleError.mockRestore();
     vi.unstubAllGlobals();
   });
 
@@ -174,19 +180,19 @@ describe('useMcpAuthorization', () => {
     const cancelling = auth.cancel(target.runtimeName);
     completion.reject(new Error('flow cancelled'));
     await vi.waitFor(() => {
-      expect(auth.states[target.runtimeName]?.error).toBe('flow cancelled');
+      expect(auth.states[target.runtimeName]?.phase).toBe('idle');
     });
     cancellation.resolve(null);
     await cancelling;
 
+    expect(toast).not.toHaveBeenCalled();
     expect(auth.states[target.runtimeName]).toMatchObject({
       phase: 'idle',
-      error: undefined,
       cancelled: true,
     });
   });
 
-  it('retains the active flow after a cancellation failure and retries the same flow', async () => {
+  it('retains the active flow and shows a toast after a cancellation failure', async () => {
     apiMock.cancelMcpAuth.mockRejectedValueOnce(new Error('network unavailable'));
     const auth = useMcpAuthorization();
     await auth.authorize(target);
@@ -194,25 +200,54 @@ describe('useMcpAuthorization', () => {
 
     await auth.cancel(target.runtimeName);
 
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: cancelPluginMcpAuth', expect.any(Error));
+    expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
+      mode: 'replace',
+      variant: 'danger',
+      title: 'settings.plugins.resetAuthorizationFailed',
+      duration: 5_000,
+    });
     expect(auth.states[target.runtimeName]).toMatchObject({
       phase: 'waiting',
       flowId: 'flow-1',
       authorizationUrl,
-      error: 'network unavailable',
     });
     expect(signal.aborted).toBe(false);
     await auth.authorize(target);
     expect(apiMock.beginMcpAuth).toHaveBeenCalledTimes(1);
 
+    vi.mocked(toast).mockClear();
     await auth.cancel(target.runtimeName);
 
+    expect(toast).not.toHaveBeenCalled();
     expect(apiMock.cancelMcpAuth).toHaveBeenCalledTimes(2);
     expect(apiMock.cancelMcpAuth).toHaveBeenNthCalledWith(2, 'flow-1');
     expect(signal.aborted).toBe(true);
     expect(auth.states[target.runtimeName]).toMatchObject({ phase: 'idle', cancelled: true });
   });
 
-  it('keeps a completion failure manual without retrying on refresh', async () => {
+  it('shows a toast when beginning authorization fails without persisting state errors', async () => {
+    apiMock.beginMcpAuth.mockRejectedValueOnce(new Error('software statement is invalid'));
+    const auth = useMcpAuthorization();
+
+    await auth.authorize(target);
+
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: beginPluginMcpAuth', expect.any(Error));
+    expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
+      mode: 'replace',
+      variant: 'danger',
+      title: 'settings.plugins.authorizationFailed',
+      duration: 5_000,
+    });
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'idle',
+    });
+  });
+
+  it('shows a toast on completion failure without retrying on refresh', async () => {
     const completion = deferred<null>();
     apiMock.completeMcpAuth.mockReturnValue(completion.promise);
     const auth = useMcpAuthorization();
@@ -220,10 +255,21 @@ describe('useMcpAuthorization', () => {
 
     completion.reject(new Error('authorization expired'));
     await vi.waitFor(() => {
-      expect(auth.states[target.runtimeName]?.error).toBe('authorization expired');
+      expect(auth.states[target.runtimeName]?.phase).toBe('idle');
     });
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: completePluginMcpAuth', expect.any(Error));
+    expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
+      mode: 'replace',
+      variant: 'danger',
+      title: 'settings.plugins.authorizationFailed',
+      duration: 5_000,
+    });
+
+    vi.mocked(toast).mockClear();
     await auth.refresh();
 
+    expect(toast).not.toHaveBeenCalled();
     expect(auth.states[target.runtimeName]).toMatchObject({ phase: 'idle' });
     expect(apiMock.beginMcpAuth).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledTimes(1);
@@ -484,20 +530,19 @@ describe('useMcpAuthorization', () => {
     expect(auth.states.vercel.discoveryError).toBeUndefined();
   });
 
-  it('preserves runtime operation errors after a successful status refresh', async () => {
+  it('refreshes statuses without emitting action error toasts', async () => {
     apiMock.getMcpAuthStatuses.mockResolvedValue([
       { name: target.runtimeName, authStatus: 'oauth-authorized' },
     ]);
     const auth = useMcpAuthorization();
-    auth.states[target.runtimeName] = {
-      status: 'oauth-authorized',
-      phase: 'idle',
-      error: 'reset failed',
-    };
 
     await auth.refresh();
 
-    expect(auth.states[target.runtimeName]?.error).toBe('reset failed');
+    expect(toast).not.toHaveBeenCalled();
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-authorized',
+      phase: 'idle',
+    });
   });
 
   it('clears plugin discovery errors after a server authorization succeeds', async () => {
@@ -653,17 +698,142 @@ describe('useMcpAuthorization', () => {
     expect(open).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the authorized state visible when resetting credentials fails', async () => {
+  it('shows a toast and keeps the authorized state when resetting credentials fails', async () => {
     apiMock.resetMcpAuth.mockRejectedValue(new Error('reset failed'));
     const auth = useMcpAuthorization();
     auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
 
     await auth.reset(target);
 
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: resetPluginMcpAuth', expect.any(Error));
+    expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
+      mode: 'replace',
+      variant: 'danger',
+      title: 'settings.plugins.resetAuthorizationFailed',
+      duration: 5_000,
+    });
     expect(auth.states[target.runtimeName]).toMatchObject({
       status: 'oauth-authorized',
       phase: 'idle',
-      error: 'reset failed',
+    });
+  });
+
+  it('invalidates cached idle plugin statuses as soon as a targeted refresh starts', async () => {
+    const inspection = deferred<unknown>();
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockReturnValue(inspection.promise);
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
+    auth.states['plugin-other:other'] = { status: 'oauth-authorized', phase: 'idle' };
+
+    const pending = auth.refresh('vercel');
+
+    expect(auth.states[target.runtimeName]?.status).toBeUndefined();
+    expect(auth.states['plugin-other:other']?.status).toBe('oauth-authorized');
+
+    inspection.resolve([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
+    await pending;
+
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'idle',
+    });
+  });
+
+  it('does not persist reset failures or re-toast across targeted refreshes', async () => {
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'oauth-authorized' },
+    ]);
+    apiMock.resetMcpAuth.mockRejectedValueOnce(new Error('reset failed'));
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
+
+    await auth.reset(target);
+    expect(toast).toHaveBeenCalledTimes(1);
+
+    await auth.refresh('vercel');
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-authorized',
+      phase: 'idle',
+    });
+  });
+
+  it('preserves active flows when a targeted refresh invalidates cached plugin statuses', async () => {
+    const inspection = deferred<unknown>();
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockReturnValue(inspection.promise);
+    const auth = useMcpAuthorization();
+    await auth.authorize(target);
+
+    const pending = auth.refresh('vercel');
+
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'waiting',
+      flowId: 'flow-1',
+    });
+
+    inspection.resolve([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
+    await pending;
+    expect(auth.states[target.runtimeName]?.phase).toBe('waiting');
+  });
+
+  it('marks plugin discovery as starting and drops stale authorized state on automatic authorization', async () => {
+    const inspection = deferred<unknown>();
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockReturnValue(inspection.promise);
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
+
+    const pending = auth.authorizePlugin('vercel');
+
+    expect(auth.states[target.runtimeName]?.status).toBeUndefined();
+    expect(auth.states.vercel?.phase).toBe('starting');
+
+    inspection.resolve([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
+    await pending;
+
+    expect(auth.states.vercel?.phase).toBe('idle');
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'waiting',
+    });
+  });
+
+  it('clears a stale authorized status while explicit authorization is starting', async () => {
+    const begin = deferred<AppMcpAuthBeginResult>();
+    apiMock.beginMcpAuth.mockReturnValue(begin.promise);
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
+
+    const pending = auth.authorize(target);
+
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: undefined,
+      phase: 'starting',
+    });
+
+    begin.resolve(authorizationRequired());
+    await pending;
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'waiting',
     });
   });
 });

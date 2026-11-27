@@ -78,9 +78,9 @@ onUnmounted(() => {
     @pointerenter="timer.pause"
     @pointerleave="resume"
   >
-    <span v-if="variant === 'success' || running" class="ui-toast__icon" aria-hidden="true">
+    <span v-if="variant === 'success' || variant === 'danger' || running" class="ui-toast__icon" aria-hidden="true">
       <Spinner v-if="running" size="sm" />
-      <Icon v-else name="check" />
+      <Icon v-else :name="variant === 'danger' ? 'close' : 'check'" />
     </span>
     <span class="ui-toast-bar__body">
       <slot>

@@ -100,18 +100,33 @@ const pluginId = computed(() =>
     : undefined,
 );
 const authorizationRefreshError = ref<string>();
+const authorizationRefreshing = ref(false);
+let authorizationGeneration = 0;
+const authorizationLoading = computed(() =>
+  authorizationRefreshing.value ||
+  (pluginId.value !== undefined && authorization[pluginId.value]?.phase === 'starting'),
+);
 const authorizationError = computed(() =>
   authorizationRefreshError.value ??
   (pluginId.value === undefined ? undefined : authorization[pluginId.value]?.discoveryError),
 );
 
 async function refreshAuthorizationStatuses(): Promise<void> {
+  const generation = ++authorizationGeneration;
+  const id = pluginId.value;
   authorizationRefreshError.value = undefined;
-  if (pluginId.value === undefined) return;
+  if (id === undefined) {
+    authorizationRefreshing.value = false;
+    return;
+  }
+  authorizationRefreshing.value = true;
   try {
-    await refreshAuthorization(pluginId.value);
+    await refreshAuthorization(id);
   } catch (error) {
+    if (generation !== authorizationGeneration) return;
     authorizationRefreshError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (generation === authorizationGeneration) authorizationRefreshing.value = false;
   }
 }
 
@@ -174,7 +189,7 @@ watch([pluginId, () => props.row.installedPlugin?.version], () => {
       </section>
       <PluginCapabilities
         :capabilities="capabilities"
-        :loading="capabilitiesLoading"
+        :loading="capabilitiesLoading || authorizationLoading"
         :error="capabilitiesError"
         :plugin-id="pluginId"
         :authorization="authorization"

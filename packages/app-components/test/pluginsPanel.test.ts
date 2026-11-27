@@ -195,19 +195,6 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 6; index += 1) await nextTick();
 }
 
-async function hoverTooltipText(target: Element | null): Promise<string | undefined> {
-  vi.useFakeTimers();
-  try {
-    document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
-    target?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 24, clientY: 18 }));
-    vi.advanceTimersByTime(200);
-  } finally {
-    vi.useRealTimers();
-  }
-  await settle();
-  return document.querySelector('.ui-tip__bubble')?.textContent ?? undefined;
-}
-
 async function mountPanel(locale: 'en' | 'zh' = 'en'): Promise<void> {
   plugins = makePlugins(rowData);
   authorization = makeAuthorization();
@@ -1472,17 +1459,6 @@ describe('PluginsPanel', () => {
     expect(details.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('Connect');
 
     authorization.states['plugin-vercel:vercel'] = {
-      status: 'oauth-required',
-      phase: 'idle',
-      error: 'failed to start OAuth flow: software statement is invalid',
-    };
-    await nextTick();
-    const authorizationError = details.querySelector('.plugin-capabilities__authorization-error');
-    expect(authorizationError?.textContent).toContain('Authorization failed. Please try again later');
-    expect(await hoverTooltipText(authorizationError)).toContain('software statement is invalid');
-    expect(details.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('Retry authorization');
-
-    authorization.states['plugin-vercel:vercel'] = {
       status: 'oauth-authorized',
       phase: 'idle',
     };
@@ -1622,50 +1598,14 @@ describe('PluginsPanel', () => {
     expect(host.querySelector('.plugin-details__tagline')).toBeNull();
   });
 
-  it('shows a localized authorization failure message', async () => {
-    rowData.push(row('jira-composio', {
-      catalogEntry: entry('jira-composio', 'Jira'),
-      installedPlugin: installed('jira-composio', 'marketplace'),
-      displayName: 'Jira',
-    }));
-    await mountPanel('zh');
-    authorization.states['plugin-jira-composio:jira-composio'] = {
-      status: 'oauth-required',
-      phase: 'idle',
-      error: 'invalid_software_statement',
-    };
-    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
-      skills: [],
-      mcpServers: [{
-        name: 'jira-composio',
-        runtimeName: 'plugin-jira-composio:jira-composio',
-        enabled: true,
-        transport: 'http',
-      }],
-    });
-
-    clickButton('我的插件');
-    await nextTick();
-    clickButton('Jira');
-    await settle();
-
-    const error = host.querySelector('.plugin-capabilities__authorization-error');
-    expect(error?.textContent?.trim()).toBe('授权失败，请稍后重试');
-    expect(await hoverTooltipText(error)).toBe('invalid_software_statement');
-  });
-
-  it('shows reset failures and keeps the authorized badge control', async () => {
+  it('renders clean idle authorization controls without persistent inline error rows', async () => {
     rowData.push(row('vercel', {
-      catalogEntry: entry('vercel', 'Vercel'),
-      installedPlugin: installed('vercel', 'marketplace'),
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
       displayName: 'Vercel',
     }));
-    await mountPanel();
-    authorization.states['plugin-vercel:vercel'] = {
-      status: 'oauth-authorized',
-      phase: 'idle',
-      error: 'reset failed',
-    };
+    await mountPanel('zh');
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-required', phase: 'idle' };
     vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
       skills: [],
       mcpServers: [{
@@ -1676,15 +1616,18 @@ describe('PluginsPanel', () => {
       }],
     });
 
-    clickButton('My plugins');
-    await nextTick();
     clickButton('Vercel');
     await settle();
 
-    const resetError = host.querySelector('.plugin-capabilities__authorization-error');
-    expect(resetError?.textContent).toContain('Authorization failed. Please try again later');
-    expect(await hoverTooltipText(resetError)).toBe('reset failed');
-    expect(host.querySelector('.plugin-capabilities__actions')).not.toBeNull();
+    expect(host.querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
+    expect(host.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('授权');
+
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-authorized', phase: 'idle' };
+    await nextTick();
+
+    expect(host.querySelector('.plugin-capabilities__identity')?.textContent).toContain('已授权');
+    expect(host.querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
+    expect(host.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('取消授权');
   });
 
   it('does not show OAuth actions in an uninstalled marketplace preview', async () => {
@@ -1766,6 +1709,145 @@ describe('PluginsPanel', () => {
       serverName: 'vercel',
       runtimeName: 'plugin-vercel:vercel',
     });
+  });
+
+  it('does not flash stale authorized state while authorization reloads after reinstall', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-authorized', phase: 'idle' };
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+
+    clickButton('Vercel');
+    await settle();
+    expect(host.querySelector('.plugin-capabilities__identity')?.textContent).toContain('已授权');
+
+    rowData[0] = { ...rowData[0]!, installedPlugin: undefined };
+    await settle();
+    expect(host.querySelector('.plugin-capabilities__identity')?.textContent).not.toContain('已授权');
+
+    let finishRefresh!: () => void;
+    authorization.refresh.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finishRefresh = resolve; });
+      authorization.states['plugin-vercel:vercel'] = { status: 'oauth-required', phase: 'idle' };
+    });
+    rowData[0] = { ...rowData[0]!, installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }) };
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).not.toBeNull();
+    expect(host.querySelector('.plugin-details')?.textContent).not.toContain('已授权');
+    expect(host.querySelector('.plugin-capabilities__actions button')).toBeNull();
+
+    finishRefresh();
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).toBeNull();
+    expect(host.querySelector('.plugin-details')?.textContent).not.toContain('已授权');
+    expect(host.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('授权');
+  });
+
+  it('waits for the initial authorization status before rendering installed MCP actions', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+    let finishRefresh!: () => void;
+    authorization.refresh.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finishRefresh = resolve; });
+      authorization.states['plugin-vercel:vercel'] = { status: 'oauth-required', phase: 'idle' };
+    });
+
+    clickButton('Vercel');
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).not.toBeNull();
+    expect(host.querySelector('.plugin-capabilities__item')).toBeNull();
+
+    finishRefresh();
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).toBeNull();
+    expect(host.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('授权');
+  });
+
+  it('keeps capabilities loading while automatic plugin authorization is discovering servers', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    authorization.states.vercel = { phase: 'starting' };
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+
+    clickButton('Vercel');
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).not.toBeNull();
+
+    authorization.states.vercel = { phase: 'idle' };
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-required', phase: 'waiting' };
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).toBeNull();
+    expect(host.querySelector('.plugin-capabilities__actions')?.textContent).toContain('等待授权…');
+  });
+
+  it('shows waiting actions instead of an empty slot when status is authorized during an active flow', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-authorized', phase: 'waiting' };
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+
+    clickButton('Vercel');
+    await settle();
+
+    const actions = host.querySelector('.plugin-capabilities__actions');
+    expect(actions?.textContent).toContain('等待授权…');
+    expect(actions?.querySelector('button')?.textContent).toBe('取消授权');
+    expect(host.querySelector('.plugin-capabilities__identity')?.textContent).not.toContain('已授权');
   });
 
 });

@@ -4,7 +4,9 @@ import type {
   AppMcpAuthStatus,
   AppPluginCapabilities,
 } from '@moonshot-ai/app-core/api';
-import { getKimiWebApi } from '../client/deps';
+import { getKimiWebApi, t } from '../client/deps';
+import { toast } from '../client/toast';
+import { logError } from '@moonshot-ai/app-core/lib';
 
 export interface McpAuthorizationTarget {
   pluginId: string;
@@ -19,7 +21,6 @@ export interface McpAuthorizationViewState {
   phase: McpAuthorizationPhase;
   flowId?: string;
   authorizationUrl?: string;
-  error?: string;
   discoveryError?: string;
   openBlocked?: boolean;
   cancelled?: boolean;
@@ -70,6 +71,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function showAuthorizationError(operation: string, titleKey: string, error: unknown): void {
+  logError(`[kimi-code] operation failed: ${operation}`, error);
+  toast({
+    layout: 'bar',
+    mode: 'replace',
+    variant: 'danger',
+    title: t(titleKey),
+    duration: 5_000,
+  });
+}
+
 interface PluginAuthorizationSnapshot {
   capabilities: AppPluginCapabilities;
   statuses: AppMcpAuthStatus[];
@@ -111,8 +123,17 @@ async function inspectPluginAuthorization(pluginId: string): Promise<PluginAutho
   return { capabilities, statuses };
 }
 
+function invalidatePluginStatuses(pluginId: string): void {
+  const prefix = `plugin-${pluginId}:`;
+  for (const [key, state] of Object.entries(states)) {
+    if (!key.startsWith(prefix) || state?.phase !== 'idle') continue;
+    states[key] = { ...state, status: undefined };
+  }
+}
+
 async function refresh(pluginId?: string): Promise<void> {
   const generation = ++refreshGeneration;
+  if (pluginId !== undefined) invalidatePluginStatuses(pluginId);
   try {
     const statuses = pluginId === undefined
       ? await getKimiWebApi().getMcpAuthStatuses()
@@ -206,7 +227,6 @@ async function watchCompletion(flow: ActiveFlow, completion: Promise<null>): Pro
         phase: 'idle',
         flowId: undefined,
         authorizationUrl: undefined,
-        error: undefined,
         openBlocked: undefined,
         cancelled: undefined,
       };
@@ -217,6 +237,8 @@ async function watchCompletion(flow: ActiveFlow, completion: Promise<null>): Pro
   } catch (error) {
     if (activeFlows.get(flow.flowId) !== flow) return;
     activeFlows.delete(flow.flowId);
+    const cancelled = flow.controller.signal.aborted ||
+      [...flow.targets.keys()].every((name) => states[name]?.phase === 'cancelling');
     for (const runtimeName of flow.targets.keys()) {
       controllers.delete(runtimeName);
       clearOpenedFlow(runtimeName, flow.flowId);
@@ -225,11 +247,11 @@ async function watchCompletion(flow: ActiveFlow, completion: Promise<null>): Pro
         phase: 'idle',
         flowId: undefined,
         authorizationUrl: undefined,
-        error: errorMessage(error),
         openBlocked: undefined,
-        cancelled: undefined,
+        cancelled: cancelled ? true : undefined,
       };
     }
+    if (!cancelled) showAuthorizationError('completePluginMcpAuth', 'settings.plugins.authorizationFailed', error);
   }
 }
 
@@ -242,8 +264,8 @@ async function performAuthorization(
   try {
     states[target.runtimeName] = {
       ...states[target.runtimeName],
+      status: undefined,
       phase: 'starting',
-      error: undefined,
       openBlocked: undefined,
       cancelled: undefined,
     };
@@ -266,7 +288,6 @@ async function performAuthorization(
         ...states[target.runtimeName],
         status: 'oauth-authorized',
         phase: 'idle',
-        error: undefined,
         openBlocked: undefined,
         cancelled: undefined,
       };
@@ -316,12 +337,13 @@ async function performAuthorization(
     controllers.delete(target.runtimeName);
     states[target.runtimeName] = {
       ...states[target.runtimeName],
+      status: states[target.runtimeName]?.status ?? 'oauth-required',
       phase: 'idle',
       flowId: undefined,
       authorizationUrl: undefined,
-      error: errorMessage(error),
       openBlocked: undefined,
     };
+    if (!controller.signal.aborted) showAuthorizationError('beginPluginMcpAuth', 'settings.plugins.authorizationFailed', error);
   }
 }
 
@@ -357,7 +379,6 @@ export function useMcpAuthorization() {
     states[runtimeName] = {
       ...states[runtimeName],
       phase: 'cancelling',
-      error: undefined,
       cancelled: undefined,
     };
     if (flow.targets.size > 1) {
@@ -369,7 +390,6 @@ export function useMcpAuthorization() {
         phase: 'idle',
         flowId: undefined,
         authorizationUrl: undefined,
-        error: undefined,
         openBlocked: undefined,
         cancelled: true,
       };
@@ -384,8 +404,8 @@ export function useMcpAuthorization() {
           phase: 'waiting',
           flowId: flow.flowId,
           authorizationUrl: flow.authorizationUrl,
-          error: errorMessage(error),
         };
+        showAuthorizationError('cancelPluginMcpAuth', 'settings.plugins.resetAuthorizationFailed', error);
       }
       return;
     }
@@ -400,7 +420,6 @@ export function useMcpAuthorization() {
       phase: 'idle',
       flowId: undefined,
       authorizationUrl: undefined,
-      error: undefined,
       openBlocked: undefined,
       cancelled: true,
     };
@@ -413,7 +432,6 @@ export function useMcpAuthorization() {
       states[target.runtimeName] = {
         ...states[target.runtimeName],
         phase: 'resetting',
-        error: undefined,
         cancelled: undefined,
       };
       try {
@@ -429,7 +447,6 @@ export function useMcpAuthorization() {
           phase: 'idle',
           flowId: undefined,
           authorizationUrl: undefined,
-          error: undefined,
           openBlocked: undefined,
           cancelled: true,
         };
@@ -438,8 +455,8 @@ export function useMcpAuthorization() {
         states[target.runtimeName] = {
           ...states[target.runtimeName],
           phase: 'idle',
-          error: errorMessage(error),
         };
+        showAuthorizationError('resetPluginMcpAuth', 'settings.plugins.resetAuthorizationFailed', error);
       }
     })();
     operations.set(target.runtimeName, operation);
@@ -451,7 +468,8 @@ export function useMcpAuthorization() {
   }
 
   async function authorizePlugin(pluginId: string): Promise<void> {
-    states[pluginId] = { ...states[pluginId], phase: 'idle', discoveryError: undefined };
+    invalidatePluginStatuses(pluginId);
+    states[pluginId] = { ...states[pluginId], phase: 'starting', discoveryError: undefined };
     try {
       const { capabilities, statuses } = await inspectPluginAuthorization(pluginId);
       const required = new Set(
@@ -465,9 +483,10 @@ export function useMcpAuthorization() {
     } catch (error) {
       states[pluginId] = {
         ...states[pluginId],
-        phase: 'idle',
         discoveryError: errorMessage(error),
       };
+    } finally {
+      states[pluginId] = { ...states[pluginId], phase: 'idle' };
     }
   }
 

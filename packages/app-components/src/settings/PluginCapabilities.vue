@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Badge, Button, Icon, Link, Spinner, Tooltip } from '@moonshot-ai/app-ui';
+import { Badge, Button, Icon, Link, Spinner } from '@moonshot-ai/app-ui';
 import type { AppPluginCapabilities } from '@moonshot-ai/app-core/api';
 import type {
   McpAuthorizationTarget,
@@ -75,7 +75,6 @@ function authVisible(server: McpServer): boolean {
     state.status === 'oauth-expired' ||
     state.status === 'oauth-authorized' ||
     state.phase !== 'idle' ||
-    state.error !== undefined ||
     state.cancelled === true;
 }
 
@@ -151,21 +150,30 @@ function confirmReset(): void {
             <span v-if="server.description" class="plugin-capabilities__description">{{ server.description }}</span>
             <template v-if="authVisible(server)">
               <div class="plugin-capabilities__actions">
-                <template v-if="authState(server)?.status === 'oauth-authorized'">
-                  <template v-if="authState(server)?.phase === 'idle'">
-                    <Button size="xs" variant="secondary" @click="reset(server)">
-                      {{ t('settings.plugins.cancelAuthorization') }}
-                    </Button>
-                  </template>
-                  <span v-else-if="authState(server)?.phase === 'resetting'" class="plugin-capabilities__authorization-status">
-                    <Spinner size="sm" />
-                    {{ t('settings.plugins.resettingAuthorization') }}
-                  </span>
+                <template v-if="authState(server)?.phase === 'idle'">
+                  <Button
+                    v-if="authState(server)?.status === 'oauth-authorized'"
+                    size="xs"
+                    variant="secondary"
+                    @click="reset(server)"
+                  >
+                    {{ t('settings.plugins.cancelAuthorization') }}
+                  </Button>
+                  <Button
+                    v-else
+                    size="xs"
+                    variant="primary"
+                    @click="authorize(server)"
+                  >
+                    {{ t('settings.plugins.authorize') }}
+                  </Button>
                 </template>
                 <template v-else>
-                  <span v-if="authState(server)?.phase !== 'idle'" class="plugin-capabilities__authorization-status">
+                  <span class="plugin-capabilities__authorization-status">
                     <Spinner size="sm" />
-                    {{ t('settings.plugins.authorizing') }}
+                    {{ authState(server)?.phase === 'resetting'
+                      ? t('settings.plugins.resettingAuthorization')
+                      : t('settings.plugins.authorizing') }}
                   </span>
                   <Link
                     v-if="authState(server)?.openBlocked === true && authState(server)?.authorizationUrl !== undefined"
@@ -185,29 +193,9 @@ function confirmReset(): void {
                   >
                     {{ t('settings.plugins.cancelAuthorization') }}
                   </Button>
-                  <Button
-                    v-else-if="authState(server)?.phase === 'idle'"
-                    size="xs"
-                    variant="primary"
-                    @click="authorize(server)"
-                  >
-                    {{ authState(server)?.cancelled === true
-                      ? t('settings.plugins.authorize')
-                      : authState(server)?.error !== undefined
-                        ? t('settings.plugins.retryAuthorization')
-                        : t('settings.plugins.authorize') }}
-                  </Button>
                 </template>
               </div>
             </template>
-            <Tooltip v-if="authState(server)?.error !== undefined" :text="authState(server)?.error">
-              <p
-                class="plugin-capabilities__error plugin-capabilities__authorization-error"
-                role="alert"
-              >
-                {{ t('settings.plugins.authorizationFailed') }}
-              </p>
-            </Tooltip>
           </li>
         </ul>
       </section>
@@ -356,11 +344,6 @@ function confirmReset(): void {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
   white-space: nowrap;
-}
-
-.plugin-capabilities__authorization-error {
-  grid-column: 2 / -1;
-  overflow-wrap: anywhere;
 }
 
 .plugin-capabilities__loading,
