@@ -2,6 +2,8 @@
 import { createApp, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
+import { IconResolverKey } from '@moonshot-ai/app-ui';
+import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
 import { dismissToastByKey, onToast, toast } from '@moonshot-ai/app-client/client';
 import { warningsStore } from '@moonshot-ai/app-client/stores';
 import AppToasts from '../src/AppToasts.vue';
@@ -15,6 +17,7 @@ beforeEach(() => {
   warningsStore().setWarnings([]);
   app = createApp({ render: () => h(AppToasts) });
   app.use(createKimiI18n({ locale: 'en' }));
+  app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
   app.mount(host);
 });
 
@@ -86,6 +89,23 @@ describe('AppToasts command items', () => {
     await nextTick();
     expect(count()).toBe(1);
     await vi.waitFor(() => expect(count()).toBe(0), { timeout: 2000 });
+  });
+
+  it('shows a leading error icon on a danger bar toast and keeps default bars icon-free', async () => {
+    toast({ layout: 'bar', mode: 'replace', variant: 'danger', title: 'Authorization failed', duration: 5_000 });
+    await nextTick();
+
+    const dangerBar = host.querySelector<HTMLElement>('.ui-toast-bar.ui-toast--danger')!;
+    expect(dangerBar).not.toBeNull();
+    expect(dangerBar.firstElementChild?.classList.contains('ui-toast__icon')).toBe(true);
+    expect(dangerBar.querySelector('.ui-toast__icon svg')).not.toBeNull();
+    expect(dangerBar.querySelector('.ui-toast__msg')).toBeNull();
+
+    toast({ layout: 'bar', mode: 'replace', title: 'Deleted' });
+    await vi.waitFor(() => {
+      expect(host.querySelector('.ui-toast-bar.ui-toast--danger')).toBeNull();
+    });
+    expect(host.querySelector('.ui-toast-bar .ui-toast__icon')).toBeNull();
   });
 });
 
