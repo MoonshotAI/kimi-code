@@ -2,7 +2,7 @@
   "store-cross-import": {
     "packages/app-client/src/stores/approvals.ts": 1,
     "packages/app-client/src/stores/auth.ts": 2,
-    "packages/app-client/src/stores/config.ts": 2,
+    "packages/app-client/src/stores/config.ts": 1,
     "packages/app-client/src/stores/effortSwitch.ts": 1,
     "packages/app-client/src/stores/files.ts": 2,
     "packages/app-client/src/stores/goal.ts": 5,
