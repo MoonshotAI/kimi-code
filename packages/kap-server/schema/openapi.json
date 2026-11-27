@@ -2204,6 +2204,102 @@
         ],
         "type": "object"
       },
+      "ErrorWorktreeNotFound": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              40423
+            ],
+            "type": "number"
+          },
+          "data": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "details": {},
+          "msg": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ErrorWorktreeStateInvalid": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              40942
+            ],
+            "type": "number"
+          },
+          "data": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "details": {},
+          "msg": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ErrorWorktreeUnsupported": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              40938
+            ],
+            "type": "number"
+          },
+          "data": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "details": {},
+          "msg": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "GetCapabilitiesResponseCapability": {
         "additionalProperties": false,
         "properties": {
@@ -3754,6 +3850,34 @@
           }
         ]
       },
+      "GetWorktreesResponseItemSessions": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "archived": {
+              "type": "boolean"
+            },
+            "busy": {
+              "type": "boolean"
+            },
+            "id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "archived",
+            "busy"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
       "MessageContent": {
         "oneOf": [
           {
@@ -5176,6 +5300,9 @@
           },
           {
             "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
           }
         ]
       },
@@ -5280,73 +5407,33 @@
         ],
         "type": "object"
       },
-      "PostSessionsPromptsResponse": {
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "code": {
-                "enum": [
-                  0
-                ],
-                "type": "number"
-              },
-              "data": {
-                "$ref": "#/components/schemas/GetSessionsPromptsResponseOkQueuedItem"
-              },
-              "details": {},
-              "msg": {
-                "type": "string"
-              },
-              "request_id": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "msg",
-              "data",
-              "request_id"
+      "PostSessionsPromptsResponseOk": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              0
             ],
-            "type": "object"
+            "type": "number"
           },
-          {
-            "$ref": "#/components/schemas/ErrorValidationFailedWithDetails"
+          "data": {
+            "$ref": "#/components/schemas/GetSessionsPromptsResponseOkQueuedItem"
           },
-          {
-            "$ref": "#/components/schemas/ErrorAuthModelNotResolved"
+          "details": {},
+          "msg": {
+            "type": "string"
           },
-          {
-            "$ref": "#/components/schemas/ErrorSessionNotFound"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorFileNotFound"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorSkillNotFound"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorEnvironmentNotFound"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorSkillNotActivatable"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorEnvironmentUnavailable"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorPromptIdConflict"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorWireVersionTooLow"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorSessionOccupied"
-          },
-          {
-            "$ref": "#/components/schemas/ErrorSessionStale"
+          "request_id": {
+            "type": "string"
           }
-        ]
+        },
+        "required": [
+          "code",
+          "msg",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
       },
       "PostSessionsRequestMetadata": {
         "additionalProperties": {},
@@ -5851,6 +5938,40 @@
         ],
         "type": "object"
       },
+      "PostSessionsWorktreeRetryResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PostSessionsResponseOk"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorValidationFailed"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorSessionNotFound"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorWorkspaceNotFound"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorSessionBusy"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorWireVersionTooLow"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorSessionOccupied"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorSessionStale"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorWorktreeUnsupported"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
+          }
+        ]
+      },
       "PostWorkspaceFsSearchResponseOk": {
         "additionalProperties": false,
         "properties": {
@@ -5889,18 +6010,6 @@
           "msg",
           "data",
           "request_id"
-        ],
-        "type": "object"
-      },
-      "PostWorkspacesPrimaryRequest": {
-        "properties": {
-          "path": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "path"
         ],
         "type": "object"
       },
@@ -5965,53 +6074,7 @@
             "type": "number"
           },
           "data": {
-            "additionalProperties": false,
-            "properties": {
-              "additional_dirs": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "created_at": {},
-              "id": {
-                "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                "type": "string"
-              },
-              "kind": {
-                "enum": [
-                  "managed",
-                  "implicit"
-                ],
-                "type": "string"
-              },
-              "last_opened_at": {},
-              "name": {
-                "maxLength": 100,
-                "minLength": 1,
-                "type": "string"
-              },
-              "root": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "session_count": {
-                "maximum": 9007199254740991,
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "id",
-              "root",
-              "name",
-              "kind",
-              "additional_dirs",
-              "created_at",
-              "last_opened_at",
-              "session_count"
-            ],
-            "type": "object"
+            "$ref": "#/components/schemas/PostWorktreesLookupResponseOkWorktreeWorkspace"
           },
           "details": {},
           "msg": {
@@ -6026,6 +6089,91 @@
           "msg",
           "data",
           "request_id"
+        ],
+        "type": "object"
+      },
+      "PostWorktreesInspectResponseOkErrors": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/PostWorktreesInspectResponseOkErrorsValue"
+        },
+        "type": "object"
+      },
+      "PostWorktreesInspectResponseOkErrorsValue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "msg": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg"
+        ],
+        "type": "object"
+      },
+      "PostWorktreesLookupRequest": {
+        "properties": {
+          "path": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "PostWorktreesLookupResponseOkWorktreeWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "additional_dirs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "created_at": {},
+          "id": {
+            "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "managed",
+              "implicit"
+            ],
+            "type": "string"
+          },
+          "last_opened_at": {},
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "root": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "session_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "root",
+          "name",
+          "kind",
+          "additional_dirs",
+          "created_at",
+          "last_opened_at",
+          "session_count"
         ],
         "type": "object"
       },
@@ -6184,6 +6332,9 @@
           },
           "workspace_root": {
             "type": "string"
+          },
+          "worktree": {
+            "$ref": "#/components/schemas/SessionWorktree"
           }
         },
         "required": [
@@ -6196,6 +6347,263 @@
           "activity"
         ],
         "type": "object"
+      },
+      "SessionWorktree": {
+        "additionalProperties": false,
+        "properties": {
+          "base": {
+            "additionalProperties": false,
+            "properties": {
+              "commit": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "remote": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ref",
+              "remote"
+            ],
+            "type": "object"
+          },
+          "branch": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "branch_missing": {
+            "type": "boolean"
+          },
+          "held_prompt": {
+            "$ref": "#/components/schemas/WorktreeHeldPrompt"
+          },
+          "included_local_changes": {
+            "type": "boolean"
+          },
+          "missing": {
+            "type": "boolean"
+          },
+          "path": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "setup": {
+            "$ref": "#/components/schemas/WorktreeSetup"
+          }
+        },
+        "required": [
+          "setup"
+        ],
+        "type": "object"
+      },
+      "WorktreeHeldPrompt": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/GetSessionsPromptsResponseOkActiveContent"
+          },
+          "created_at": {},
+          "failure": {
+            "$ref": "#/components/schemas/PostWorktreesInspectResponseOkErrorsValue"
+          },
+          "kind": {
+            "enum": [
+              "prompt",
+              "skill"
+            ],
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "prompt_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "skill": {
+            "$ref": "#/components/schemas/WorktreeHeldPromptSkill"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/WorktreeHeldPromptSkill"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "prompt_id",
+          "kind",
+          "created_at",
+          "content"
+        ],
+        "type": "object"
+      },
+      "WorktreeHeldPromptSkill": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "WorktreeSetup": {
+        "additionalProperties": false,
+        "properties": {
+          "commands_ran": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ended_at": {},
+          "failure": {
+            "additionalProperties": false,
+            "properties": {
+              "conflict_files": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "fetch_failed",
+                  "fetch_timeout",
+                  "conflict",
+                  "disk_full",
+                  "create_failed"
+                ],
+                "type": "string"
+              },
+              "remote_ref": {
+                "type": "string"
+              },
+              "timeout_seconds": {
+                "exclusiveMinimum": true,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "purpose": {
+            "enum": [
+              "create",
+              "recreate"
+            ],
+            "type": "string"
+          },
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "include_local_changes": {
+                "type": "boolean"
+              },
+              "source_branch": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "use_remote": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source_branch"
+            ],
+            "type": "object"
+          },
+          "started_at": {},
+          "status": {
+            "enum": [
+              "running",
+              "ready",
+              "failed",
+              "stopped",
+              "local"
+            ],
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/WorktreeSetupStepKind"
+                },
+                "output": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "pending",
+                    "running",
+                    "done",
+                    "failed",
+                    "stopped",
+                    "skipped"
+                  ],
+                  "type": "string"
+                },
+                "timed_out": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind",
+                "state"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "stopped_step": {
+            "$ref": "#/components/schemas/WorktreeSetupStepKind"
+          }
+        },
+        "required": [
+          "status",
+          "purpose",
+          "request",
+          "steps",
+          "commands_ran",
+          "started_at"
+        ],
+        "type": "object"
+      },
+      "WorktreeSetupStepKind": {
+        "enum": [
+          "fetch",
+          "prune",
+          "create",
+          "changes",
+          "include"
+        ],
+        "type": "string"
       }
     }
   },
@@ -13378,7 +13786,7 @@
         ]
       },
       "post": {
-        "description": "Create a new session",
+        "description": "Create a new session. With worktree, the session is returned at once at the workspace root with worktree.setup.status \"running\"; the setup continues in the background and each change is published as a session \"updated\" event",
         "requestBody": {
           "content": {
             "application/json": {
@@ -13460,6 +13868,24 @@
                   "workspace_root": {
                     "minLength": 1,
                     "type": "string"
+                  },
+                  "worktree": {
+                    "properties": {
+                      "include_local_changes": {
+                        "type": "boolean"
+                      },
+                      "source_branch": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "use_remote": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "source_branch"
+                    ],
+                    "type": "object"
                   }
                 },
                 "type": "object"
@@ -13515,6 +13941,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorEnvironmentUnavailable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeUnsupported"
                     }
                   ]
                 }
@@ -16727,7 +17156,50 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PostSessionsPromptsResponse"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PostSessionsPromptsResponseOk"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorValidationFailedWithDetails"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorAuthModelNotResolved"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSessionNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorFileNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSkillNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvironmentNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSkillNotActivatable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvironmentUnavailable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorPromptIdConflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWireVersionTooLow"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSessionOccupied"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSessionStale"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
+                    }
+                  ]
                 }
               }
             },
@@ -17274,6 +17746,12 @@
                               ],
                               "type": "boolean"
                             },
+                            "held": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            },
                             "skill_name": {
                               "minLength": 1,
                               "type": "string"
@@ -17333,6 +17811,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorSessionStale"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -17376,7 +17857,47 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PostSessionsPromptsResponse"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PostSessionsPromptsResponseOk"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorValidationFailedWithDetails"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorAuthModelNotResolved"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSessionNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorFileNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSkillNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvironmentNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSkillNotActivatable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorEnvironmentUnavailable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorPromptIdConflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWireVersionTooLow"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSessionOccupied"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorSessionStale"
+                    }
+                  ]
                 }
               }
             },
@@ -17598,6 +18119,185 @@
         ]
       }
     },
+    "/api/v1/sessions/{session_id}/worktree:cancel": {
+      "post": {
+        "description": "Stop the running worktree setup and remove what it created. Returns the updated session",
+        "operationId": "runSessionWorktreeCancelAction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {},
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostSessionsWorktreeRetryResponse"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/worktree:recreate": {
+      "post": {
+        "description": "Recreate a missing worktree directory from its recorded branch. Returns the updated session",
+        "operationId": "runSessionWorktreeRecreateAction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {},
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostSessionsWorktreeRetryResponse"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/worktree:retry": {
+      "post": {
+        "description": "Start a fresh worktree setup after a failed or stopped one; the body may override use_remote and include_local_changes. Returns the updated session",
+        "operationId": "runSessionWorktreeRetryAction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "include_local_changes": {
+                    "type": "boolean"
+                  },
+                  "use_remote": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostSessionsWorktreeRetryResponse"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/worktree:use_local": {
+      "post": {
+        "description": "Give up the worktree and keep working in the workspace root. Returns the updated session",
+        "operationId": "runSessionWorktreeUseLocalAction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {},
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostSessionsWorktreeRetryResponse"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
     "/api/v1/sessions/{session_id}/{tail}": {
       "post": {
         "description": "Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, search, grep, git_status, git_status:batch, pull_request, pull_request:batch, diff, open, open-in, reveal. The request and response schemas depend on the `fs:<action>` path tail and are represented as OpenAPI `oneOf` unions.",
@@ -17765,7 +18465,7 @@
                     "type": "object"
                   },
                   {
-                    "$ref": "#/components/schemas/PostWorkspacesPrimaryRequest"
+                    "$ref": "#/components/schemas/PostWorktreesLookupRequest"
                   },
                   {
                     "properties": {
@@ -17898,6 +18598,9 @@
                       "include_pull_request": {
                         "type": "boolean"
                       },
+                      "include_untracked": {
+                        "type": "boolean"
+                      },
                       "paths": {
                         "items": {
                           "minLength": 1,
@@ -17967,7 +18670,7 @@
                     "type": "object"
                   },
                   {
-                    "$ref": "#/components/schemas/PostWorkspacesPrimaryRequest"
+                    "$ref": "#/components/schemas/PostWorktreesLookupRequest"
                   }
                 ]
               }
@@ -18117,25 +18820,7 @@
                           "nullable": true,
                           "properties": {
                             "partial_errors": {
-                              "additionalProperties": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "code": {
-                                    "maximum": 9007199254740991,
-                                    "minimum": -9007199254740991,
-                                    "type": "integer"
-                                  },
-                                  "msg": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "code",
-                                  "msg"
-                                ],
-                                "type": "object"
-                              },
-                              "type": "object"
+                              "$ref": "#/components/schemas/PostWorktreesInspectResponseOkErrors"
                             },
                             "results": {
                               "$ref": "#/components/schemas/PostSessionsResponseChildrenByPath"
@@ -18397,11 +19082,17 @@
                               "minimum": 0,
                               "type": "integer"
                             },
+                            "detached": {
+                              "type": "boolean"
+                            },
                             "entries": {
                               "additionalProperties": {
                                 "$ref": "#/components/schemas/PostSessionsResponseEntriesValue2"
                               },
                               "type": "object"
+                            },
+                            "head": {
+                              "type": "string"
                             },
                             "pullRequest": {
                               "additionalProperties": false,
@@ -18432,6 +19123,24 @@
                                 "url"
                               ],
                               "type": "object"
+                            },
+                            "pull_request_error": {
+                              "type": "string"
+                            },
+                            "pull_request_status": {
+                              "enum": [
+                                "found",
+                                "none",
+                                "unavailable",
+                                "failed"
+                              ],
+                              "type": "string"
+                            },
+                            "stats_error": {
+                              "type": "string"
+                            },
+                            "upstream": {
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -18663,6 +19372,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -18763,6 +19475,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -18891,6 +19606,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -19008,6 +19726,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -19120,6 +19841,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -19148,6 +19872,24 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "delete_branch": {
+                    "type": "boolean"
+                  },
+                  "remove_worktree": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "content": {
@@ -19155,7 +19897,73 @@
                 "schema": {
                   "oneOf": [
                     {
-                      "$ref": "#/components/schemas/DeleteWorkspacesResponseOk"
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deleted": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            },
+                            "worktree": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "branch_deleted": {
+                                  "type": "boolean"
+                                },
+                                "other_sessions": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "outcome": {
+                                  "enum": [
+                                    "removed",
+                                    "kept_in_use",
+                                    "missing",
+                                    "failed"
+                                  ],
+                                  "type": "string"
+                                },
+                                "output": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "outcome"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "deleted"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
                     },
                     {
                       "$ref": "#/components/schemas/ErrorValidationFailedWithDetails"
@@ -19195,6 +20003,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -19428,6 +20239,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -19630,6 +20444,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -19764,6 +20581,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ErrorTurnNotContinuable"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeStateInvalid"
                     }
                   ]
                 }
@@ -20694,6 +21514,128 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/git/branches": {
+      "get": {
+        "description": "List the local branches of the workspace root, newest commit first, each with the remote branch a worktree would fetch. Never touches the network; is_repo is false when the root is not the root of a git repository",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "branches": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "committed_at": {},
+                                  "name": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "remote": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "remote_ref": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "remote_source": {
+                                    "enum": [
+                                      "upstream",
+                                      "same_name"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "committed_at"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "dirty": {
+                              "type": "boolean"
+                            },
+                            "head_branch": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "is_repo": {
+                              "type": "boolean"
+                            },
+                            "remotes": {
+                              "items": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "is_repo",
+                            "dirty",
+                            "remotes",
+                            "branches"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorkspaceNotFound"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/primary": {
       "post": {
         "description": "Promote a source folder to the primary directory (atomic swap; id and bucket unchanged). An implicit workspace keeps the directory it was opened from and is rejected with WORKSPACE_PRIMARY_IMMUTABLE",
@@ -20712,7 +21654,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PostWorkspacesPrimaryRequest"
+                "$ref": "#/components/schemas/PostWorktreesLookupRequest"
               }
             }
           },
@@ -20881,6 +21823,499 @@
         ]
       }
     },
+    "/api/v1/worktrees": {
+      "get": {
+        "description": "List the linked git worktrees of every registered workspace: the ones created for sessions (origin \"product\") and any other (origin \"external\"), each with the sessions working in it. size_bytes is computed in the background and omitted until known; refresh=sizes recomputes every size before answering",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "enum": [
+                "sizes"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "branch": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "name": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "origin": {
+                                "enum": [
+                                  "product",
+                                  "external"
+                                ],
+                                "type": "string"
+                              },
+                              "path": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "repo_root": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "sessions": {
+                                "$ref": "#/components/schemas/GetWorktreesResponseItemSessions"
+                              },
+                              "size_bytes": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "workspace_id": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "workspace_name": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "name",
+                              "repo_root",
+                              "origin",
+                              "sessions"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "total_size_bytes": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "items"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
+    "/api/v1/worktrees:inspect": {
+      "post": {
+        "description": "Report what removing each worktree would lose: uncommitted files and commits that are on no remote, plus the sessions working in it. Paths that are not known worktrees fold into errors",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "paths": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "paths"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "errors": {
+                              "$ref": "#/components/schemas/PostWorktreesInspectResponseOkErrors"
+                            },
+                            "items": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "branch": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessions": {
+                                    "$ref": "#/components/schemas/GetWorktreesResponseItemSessions"
+                                  },
+                                  "uncommitted_files": {
+                                    "maximum": 9007199254740991,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "unpushed_commits": {
+                                    "maximum": 9007199254740991,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": [
+                                  "path",
+                                  "uncommitted_files",
+                                  "unpushed_commits",
+                                  "sessions"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "items",
+                            "errors"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorValidationFailed"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
+    "/api/v1/worktrees:lookup": {
+      "post": {
+        "description": "Tell whether a directory is a linked git worktree, and of which repository, branch and registered workspace. worktree is null for anything else. enclosing_repo_root is the top folder of the git repository the directory sits in when the directory is below that folder, and null otherwise",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostWorktreesLookupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "enclosing_repo_root": {
+                              "minLength": 1,
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "worktree": {
+                              "additionalProperties": false,
+                              "nullable": true,
+                              "properties": {
+                                "branch": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "repo_root": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "session_count": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "workspace": {
+                                  "$ref": "#/components/schemas/PostWorktreesLookupResponseOkWorktreeWorkspace"
+                                }
+                              },
+                              "required": [
+                                "repo_root",
+                                "session_count"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "worktree",
+                            "enclosing_repo_root"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorValidationFailed"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
+    "/api/v1/worktrees:remove": {
+      "post": {
+        "description": "Remove a worktree directory and its git registration, even with uncommitted changes, and optionally its local branch. Refused while a session that uses it is running; sessions that used it then report worktree.missing",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "delete_branch": {
+                    "type": "boolean"
+                  },
+                  "path": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "branch_deleted": {
+                              "type": "boolean"
+                            },
+                            "removed": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "removed",
+                            "branch_deleted"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorValidationFailed"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWorktreeNotFound"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40937
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": false,
+                          "nullable": true,
+                          "properties": {
+                            "output": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "enum": [
+                                "in_use",
+                                "session_busy",
+                                "unknown"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "output"
+                          ],
+                          "type": "object"
+                        },
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "worktrees"
+        ]
+      }
+    },
     "/asyncapi.json": {
       "get": {
         "responses": {
@@ -20924,6 +22359,10 @@
     {
       "description": "Workspace registry + folder picker",
       "name": "workspaces"
+    },
+    {
+      "description": "Git worktrees for sessions",
+      "name": "worktrees"
     },
     {
       "description": "Message history",

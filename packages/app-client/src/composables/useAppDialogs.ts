@@ -2,7 +2,9 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useKimiWebClient } from '../client';
 import type { PromptEnvelope } from '../client';
 import { registerArchivedSettingsOpener, registerModelPickerOpener } from '../client/deps';
+import { workspacesStore } from '../stores/workspaces';
 import { useIsMobile } from './useIsMobile';
+import { registerWorktreeSettingsOpener } from './useWorktreeManageDialogs';
 import { openDialogCount } from '@moonshot-ai/app-ui';
 import { resolveUpgradeRegion } from '@moonshot-ai/app-core/lib';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
@@ -33,7 +35,7 @@ const authRequired = ref(false);
 
 export type SettingsHighlightKey = 'running-send-mode';
 
-const settingsInitialTab = ref<'providers' | 'archived' | 'agent' | 'hosts' | undefined>(undefined);
+const settingsInitialTab = ref<'providers' | 'archived' | 'agent' | 'hosts' | 'worktrees' | undefined>(undefined);
 const mobileSettingsInitialTab = ref<'providers' | undefined>(undefined);
 const settingsHighlightKey = ref<SettingsHighlightKey | undefined>(undefined);
 const configSaving = ref(false);
@@ -100,6 +102,25 @@ export function openAgentSettings(mobile = false): void {
     }
   }
 }
+
+function openWorktreeSettingsTab(): void {
+  const seq = ++dialogOpenSeq;
+  showMobileSettings.value = false;
+  settingsHighlightKey.value = undefined;
+  settingsInitialTab.value = 'worktrees';
+  if (!showSettings.value) {
+    showSettings.value = true;
+    return;
+  }
+  showSettings.value = false;
+  void nextTick(() => {
+    if (seq !== dialogOpenSeq) return;
+    settingsInitialTab.value = 'worktrees';
+    showSettings.value = true;
+  });
+}
+
+registerWorktreeSettingsOpener(openWorktreeSettingsTab);
 
 export function openHostSettings(hostId?: string, options?: { addIfEmpty?: boolean }): void {
   const seq = ++dialogOpenSeq;
@@ -223,7 +244,7 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
   async function addWorkspace(root: string): Promise<boolean> {
     addWorkspaceError.value = null;
     const added = await client.addWorkspaceByPath(root);
-    if (!added) return false;
+    if (!added) return workspacesStore().takeAddWorkspaceCancelled();
     return completeWorkspaceCreation();
   }
 

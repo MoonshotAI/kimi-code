@@ -171,7 +171,11 @@ import RiFileAddLine from '~icons/ri/file-add-line';
 import RiFlashlightLine from '~icons/ri/flashlight-line';
 import RiSparklingLine from '~icons/ri/sparkling-line';
 import RiFolderFill from '~icons/ri/folder-fill';
+import RiGitBranchLine from '~icons/ri/git-branch-line';
 import RiGitForkLine from '~icons/ri/git-fork-line';
+import KimiGitBranchCloud from '~icons/kimi/git-branch-cloud';
+import KimiGitForkCloud from '~icons/kimi/git-fork-cloud';
+import KimiGitForkOff from '~icons/kimi/git-fork-off';
 import RiGitMergeLine from '~icons/ri/git-merge-line';
 import RiGitPullRequestLine from '~icons/ri/git-pull-request-line';
 import RiNodeTree from '~icons/ri/node-tree';
@@ -410,7 +414,11 @@ import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
 import RawSparklingLine from '~icons/ri/sparkling-line?raw';
 import RawFolderFill from '~icons/ri/folder-fill?raw';
+import RawGitBranchLine from '~icons/ri/git-branch-line?raw';
 import RawGitForkLine from '~icons/ri/git-fork-line?raw';
+import RawKimiGitBranchCloud from '~icons/kimi/git-branch-cloud?raw';
+import RawKimiGitForkCloud from '~icons/kimi/git-fork-cloud?raw';
+import RawKimiGitForkOff from '~icons/kimi/git-fork-off?raw';
 import RawGitMergeLine from '~icons/ri/git-merge-line?raw';
 import RawGitPullRequestLine from '~icons/ri/git-pull-request-line?raw';
 import RawNodeTree from '~icons/ri/node-tree?raw';
@@ -632,6 +640,10 @@ export type IconName =
   | 'keyboard'
   | 'trash'
   | 'git-fork'
+  | 'git-fork-cloud'
+  | 'git-fork-off'
+  | 'git-branch-cloud'
+  | 'worktree-branch'
   | 'git-merge'
   | 'git-pull-request'
   | 'message'
@@ -888,6 +900,10 @@ export const ICONS: Record<IconName, IconEntry> = {
   keyboard: entry(KimiKeyboard, RawKimiKeyboard),
   trash: entry(KimiTrash, RawKimiTrash),
   'git-fork': entry(RiGitForkLine, RawGitForkLine),
+  'git-fork-cloud': entry(KimiGitForkCloud, RawKimiGitForkCloud),
+  'git-fork-off': entry(KimiGitForkOff, RawKimiGitForkOff),
+  'git-branch-cloud': entry(KimiGitBranchCloud, RawKimiGitBranchCloud),
+  'worktree-branch': entry(RiGitBranchLine, RawGitBranchLine),
   'git-merge': entry(RiGitMergeLine, RawGitMergeLine),
   'git-pull-request': entry(RiGitPullRequestLine, RawGitPullRequestLine),
   message: entry(KimiComment, RawKimiComment),

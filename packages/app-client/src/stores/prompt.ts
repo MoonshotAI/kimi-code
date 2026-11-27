@@ -22,6 +22,7 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
   const queuedBySession = ref<Record<string, QueuedPrompt[]>>({});
   const inFlightBySession = ref<Record<string, boolean>>({});
   const optimisticMessagesBySession = ref<Record<string, AppMessage[]>>({});
+  const heldFirstPromptBySession = ref<Record<string, AppMessage>>({});
   const draftEntry = ref<'newChat' | 'workspace'>('newChat');
   const draftEntryNonce = ref(0);
 
@@ -227,6 +228,23 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     optimisticMessagesBySession.value = next;
   }
 
+  function holdFirstPrompt(sid: string, message: AppMessage): void {
+    heldFirstPromptBySession.value = { ...heldFirstPromptBySession.value, [sid]: message };
+  }
+
+  function releaseHeldFirstPrompt(sid: string): AppMessage | undefined {
+    const held = heldFirstPromptBySession.value[sid];
+    if (held === undefined) return undefined;
+    const next = { ...heldFirstPromptBySession.value };
+    delete next[sid];
+    heldFirstPromptBySession.value = next;
+    return held;
+  }
+
+  function hasHeldFirstPrompt(sid: string): boolean {
+    return heldFirstPromptBySession.value[sid] !== undefined;
+  }
+
   function tryBeginStartingFirstPrompt(workspaceId: string): boolean {
     if (startingFirstPromptWorkspaces.has(workspaceId)) return false;
     startingFirstPromptWorkspaces.add(workspaceId);
@@ -310,6 +328,7 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     autoCompactedAtBySession.delete(sid);
     steerInFlightCounts.delete(sid);
     steerChainBySession.delete(sid);
+    releaseHeldFirstPrompt(sid);
     settleContinueTurnStart(sid);
     settleCompactStart(sid);
   }
@@ -337,6 +356,7 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     queuedBySession,
     inFlightBySession,
     optimisticMessagesBySession,
+    heldFirstPromptBySession,
     draftEntry,
     draftEntryNonce,
     isStartingFirstPrompt,
@@ -368,6 +388,9 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     removeOptimisticMessage,
     patchOptimisticMessage,
     clearOptimisticMessages,
+    holdFirstPrompt,
+    releaseHeldFirstPrompt,
+    hasHeldFirstPrompt,
     tryBeginStartingFirstPrompt,
     endStartingFirstPrompt,
     beginContinueTurnStart,

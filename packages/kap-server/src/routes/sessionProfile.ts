@@ -12,11 +12,14 @@ import type { UpdateSessionProfileRequest } from '@moonshot-ai/agent-core-v2/app
 import { workspaceRootOf } from '../services/workspaceVisibility';
 import type { SessionWireFields } from './sessions';
 
+import { SESSION_WORKTREE_METADATA_KEY } from '../services/worktrees/sessionWorktreeState';
+
 const RESERVED_METADATA_KEYS: ReadonlySet<string> = new Set([
   'cwd',
   'goal',
   PARENT_SESSION_ID_KEY,
   CHILD_SESSION_KIND_KEY,
+  SESSION_WORKTREE_METADATA_KEY,
 ]);
 
 export function customSessionMetadata(

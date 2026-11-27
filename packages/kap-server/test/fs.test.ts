@@ -5,7 +5,7 @@ import { IProjectPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent
 import { IProjectPersistence } from '@moonshot-ai/agent-core-v2/app/project/projectPersistence';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { delimiter, join, sep } from 'node:path';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -13,12 +13,13 @@ import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environme
 import { createGitRepository, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { sendMappedError } from '../src/routes/fs';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 import { fakeModelCatalog } from './helpers/fakeModelCatalog';
+import { initRepo } from './helpers/gitRepo';
 import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 interface Envelope<T> {
@@ -26,7 +27,7 @@ interface Envelope<T> {
   msg: string;
   data: T;
   request_id: string;
-  details?: { path: string; message: string }[];
+  details?: unknown;
 }
 
 interface FsEntryWire {
@@ -728,6 +729,83 @@ describe('server-v2 /api/v1 fs routes', () => {
       await rm(extra, { recursive: true, force: true });
     }
   }, 20000);
+
+  it('fs:git_status reports the head, untracked additions and the pull request lookup outcome', async () => {
+    const fakeBin = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fake-gh-'));
+    await writeFile(join(fakeBin, 'gh'), `#!/bin/sh\necho 'no pull requests found for branch "main"' >&2\nexit 1\n`, {
+      mode: 0o755,
+    });
+    vi.stubEnv('PATH', `${fakeBin}${delimiter}${process.env['PATH'] ?? ''}`);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(fakeBin, { recursive: true, force: true });
+    });
+    await initRepo(work!, { 'main.txt': 'one\n' });
+    await writeFile(join(work!, 'fresh.txt'), 'one\ntwo\n');
+    const id = await createSession();
+
+    const status = await postFs<{
+      head?: string;
+      detached?: boolean;
+      upstream?: string;
+      additions: number;
+      pullRequest: null;
+      pull_request_status?: string;
+      stats_error?: string;
+    }>(id, 'git_status', { include_untracked: true });
+    const tracked = await postFs<{ additions: number }>(id, 'git_status', {});
+    const batch = await postFs<{ results: Record<string, { additions: number }> }>(id, 'git_status:batch', {
+      roots: [work],
+      include_untracked: true,
+    });
+    const pullRequest = await postFs<null>(id, 'pull_request', {});
+    const prBatch = await postFs<{
+      results: Record<string, null>;
+      statuses: Record<string, { pull_request_status: string }>;
+    }>(id, 'pull_request:batch', { roots: [work] });
+
+    expect(status.code).toBe(0);
+    expect(status.data.head).toBe(execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: work! }).toString().trim());
+    expect(status.data.detached).toBe(false);
+    expect(status.data.upstream).toBeUndefined();
+    expect(status.data.additions).toBe(2);
+    expect(tracked.data.additions).toBe(0);
+    expect(batch.data.results[work!]?.additions).toBe(2);
+    expect(status.data.stats_error).toBeUndefined();
+    expect(status.data.pullRequest).toBeNull();
+    expect(status.data.pull_request_status).toBe('none');
+    expect(pullRequest.code).toBe(0);
+    expect(pullRequest.data).toBeNull();
+    expect(pullRequest.details).toEqual({ pull_request_status: status.data.pull_request_status });
+    expect(prBatch.data.results).toEqual({ [work!]: null });
+    expect(prBatch.data.statuses).toEqual({
+      [work!]: { pull_request_status: status.data.pull_request_status },
+    });
+  }, 20000);
+
+  it('tells a directory that no longer exists apart from one that is not a repository', async () => {
+    const id = await createSession();
+    await mkdir(join(work!, 'plain'));
+
+    const gone = await postFs<null>(id, 'git_status', { root: 'gone' });
+    const plain = await postFs<null>(id, 'git_status', { root: 'plain' });
+    const batch = await postFs<{ errors: Record<string, { code: number }> }>(id, 'git_status:batch', {
+      roots: ['gone', 'plain'],
+    });
+
+    expect(gone.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+    expect(plain.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
+    expect(batch.data.errors['gone']?.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+    expect(batch.data.errors['plain']?.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
+
+    await rm(work!, { recursive: true, force: true });
+    const rootGone = await postFs<null>(id, 'git_status', {});
+    const rootGoneBatch = await postFs<{ errors: Record<string, { code: number }> }>(id, 'git_status:batch', {
+      roots: [work],
+    });
+    expect(rootGone.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+    expect(rootGoneBatch.data.errors[work!]?.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+  });
 
   it('serves project additional dirs but not the main checkout to a session pinned in a worktree', async () => {
     const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-worktree-'));

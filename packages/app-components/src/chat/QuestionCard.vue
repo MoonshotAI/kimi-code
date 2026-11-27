@@ -710,6 +710,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .qbtns {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-2);
 }
@@ -741,27 +743,31 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
     margin-top: var(--space-2);
   }
 
-  .qfoot { flex-direction: column; align-items: stretch; }
-  .qbtns {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    width: 100%;
-  }
-  .qbtns > :deep(.ui-button) {
-    width: 100%;
-    min-width: 0;
-    min-height: 46px;
-    justify-content: center;
-    white-space: normal;
-  }
-  .qbtns .qmain {
-    order: -1;
-    grid-column: 1 / -1;
-  }
-  .qbtns > :deep(.qback:disabled) { display: none; }
-  .qbtns > :deep(.qdismiss:first-child),
-  .qbtns > :deep(.qback:disabled + .qdismiss) {
-    grid-column: 1 / -1;
+}
+@media (pointer: coarse) {
+  @container (max-width: 640px) {
+    .qfoot { flex-direction: column; align-items: stretch; }
+    .qbtns {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+    }
+    .qbtns > :deep(.ui-button) {
+      width: 100%;
+      min-width: 0;
+      min-height: 46px;
+      justify-content: center;
+      white-space: normal;
+    }
+    .qbtns .qmain {
+      order: -1;
+      grid-column: 1 / -1;
+    }
+    .qbtns > :deep(.qback:disabled) { display: none; }
+    .qbtns > :deep(.qdismiss:first-child),
+    .qbtns > :deep(.qback:disabled + .qdismiss) {
+      grid-column: 1 / -1;
+    }
   }
 }
 </style>

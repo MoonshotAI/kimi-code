@@ -211,7 +211,7 @@ function isThinkingStreaming(item: ActivityRunItem): boolean {
         <component
           :is="forceOpen ? 'div' : 'button'"
           ref="headEl"
-          class="ar-head"
+          class="ar-head disclosure-head"
           :class="{ 'is-static': forceOpen }"
           v-bind="forceOpen ? {} : { type: 'button', 'aria-expanded': effectiveOpen }"
           @click="toggle"
@@ -268,6 +268,7 @@ function isThinkingStreaming(item: ActivityRunItem): boolean {
   </div>
 </template>
 
+<style scoped src="../lib/disclosure-head.css"></style>
 <style scoped>
 .activity-run {
   display: flex;
@@ -283,24 +284,9 @@ function isThinkingStreaming(item: ActivityRunItem): boolean {
   min-width: 0;
 }
 .ar-head {
-  display: flex;
   flex: 1;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
-  min-height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
-  font-size: var(--text-base);
-  line-height: 20px;
-  text-align: left;
-  cursor: pointer;
-  user-select: none;
   transition: color var(--duration-base) var(--ease-out);
 }
 .ar-head:hover {

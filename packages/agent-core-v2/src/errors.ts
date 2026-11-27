@@ -227,6 +227,7 @@ export type KimiErrorCode =
   | 'fs.too_many_results'
   | 'fs.grep_timeout'
   | 'fs.git_unavailable'
+  | 'fs.directory_not_found'
   | 'os.fs.not_found'
   | 'os.fs.is_directory'
   | 'os.fs.not_directory'

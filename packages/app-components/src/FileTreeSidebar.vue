@@ -153,6 +153,13 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => treeState.value?.children[treeBase.value] === undefined,
+  (missing) => {
+    if (missing) ensureRoot();
+  },
+);
+
 onBeforeUnmount(() => {
   if (debounceTimer !== null) clearTimeout(debounceTimer);
   searchSeq += 1;

@@ -43,6 +43,7 @@ describe('server-v2 OpenAPI', () => {
     expect([...references].filter((reference) => schemas[reference.replace('#/components/schemas/', '')] === undefined)).toEqual([]);
     expect(Object.keys(schemas).filter((name) => !references.has(`#/components/schemas/${name}`))).toEqual([]);
     expect(Object.keys(schemas)).toEqual(expect.arrayContaining(['Session', 'MessageContent', 'ErrorSessionNotFound']));
+    expect(asRecord(schemas['Session'])['properties']).toMatchObject({ worktree: { $ref: '#/components/schemas/SessionWorktree' } });
   });
 
   it('covers the core /api/v1 routes v2 registers', async () => {
@@ -99,10 +100,10 @@ describe('server-v2 OpenAPI', () => {
       asRecord(asRecord(asRecord(asRecord(requestBody(action))['content'])['application/json'])['schema']);
 
     expect(requestBody('undo')).toMatchObject({ required: true });
-    for (const action of ['fork', 'compact', 'cancel', 'wait']) {
+    for (const action of ['fork', 'compact', 'cancel', 'wait', 'delete']) {
       expect(requestBody(action)).toMatchObject({ required: false });
     }
-    for (const action of ['continue', 'btw', 'restore', 'archive', 'delete', 'reload', 'takeover']) {
+    for (const action of ['continue', 'btw', 'restore', 'archive', 'reload', 'takeover']) {
       expect(requestBody(action)).toBeUndefined();
     }
 
@@ -111,6 +112,7 @@ describe('server-v2 OpenAPI', () => {
     const cancelProps = asRecord(bodySchema('cancel')['properties']);
     expect(cancelProps['agent_id']).toMatchObject({ type: 'string' });
     expect(cancelProps['include_background']).toMatchObject({ type: 'boolean' });
+    expect(asRecord(bodySchema('delete')['properties'])['remove_worktree']).toMatchObject({ type: 'boolean' });
   });
 
   it('documents the data :undo returns when the requested turns cannot be undone', async () => {

@@ -1257,6 +1257,41 @@ describe('WorktreeService', () => {
       open.dispose();
     });
 
+    it('does not count worktrees removed together as keeping commits alive', async () => {
+      const first = (await create({ name: 'together-a' })).worktree.path;
+      const second = (await create({ name: 'together-b' })).worktree.path;
+      const shared = commitFile(first, 'shared.txt', 'shared\n');
+      git(second, 'checkout', '-q', '--detach', shared);
+      const inspect = { repoRoot: realRepo, path: first, deleteBranch: true };
+
+      expect(await service.inspectRemoval(inspect)).toMatchObject({ uniqueCommits: 0 });
+      expect(await service.inspectRemoval({ ...inspect, removedTogether: [second] })).toMatchObject({ uniqueCommits: 1 });
+
+      git(first, 'switch', '-q', '-c', 'together-a');
+      git(second, 'switch', '-q', '-c', 'together-b');
+      expect(await service.inspectRemoval(inspect)).toMatchObject({ uniqueCommits: 0 });
+      expect(await service.inspectRemoval({ ...inspect, removedTogether: [second] })).toMatchObject({ uniqueCommits: 1 });
+      expect(
+        await service.inspectRemoval({ ...inspect, deleteBranch: false, removedTogether: [second] }),
+      ).toMatchObject({ uniqueCommits: 0 });
+    });
+
+    it('leaves out every listed session when several are excluded', async () => {
+      const created = await create({ name: 'several' });
+      const wt = created.worktree.path;
+      const first = presence.markOpen(indexSession('first', wt));
+      const second = presence.markOpen(indexSession('second', join(wt, 'src')));
+      const third = presence.markOpen(indexSession('third', wt));
+      const inspect = { repoRoot: realRepo, path: wt, deleteBranch: false };
+
+      expect(
+        await service.inspectRemoval({ ...inspect, excludeSessionId: 'first', excludeSessionIds: ['second'] }),
+      ).toMatchObject({ openSessionIds: ['third'] });
+      await service.remove({ ...removal(wt), excludeSessionIds: ['first', 'second', 'third'] });
+      expect(existsSync(wt)).toBe(false);
+      for (const marker of [first, second, third]) marker.dispose();
+    });
+
     it('counts a session whose marker was left by a dead process as closed', async () => {
       const created = await create({ name: 'crashed' });
       const markers = join(indexSession('crashed', created.worktree.path), SESSION_PRESENCE_DIR);

@@ -1,17 +1,11 @@
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
-import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
-import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { normalizeSessionMeta, encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 
-import { sessionScopeOf, legacySessionMetaScopeOf, projectPersistenceScope } from './internal/addressing';
+import { withColdSessionMeta } from './internal/coldSessionMeta';
 import { SessionArchived, SessionRestored } from './sessionLifecycleEvents';
 
 export type ColdSessionArchiveOutcome = 'updated' | 'not_found';
@@ -21,57 +15,19 @@ export async function setColdSessionArchived(
   sessionId: string,
   archived: boolean,
 ): Promise<ColdSessionArchiveOutcome> {
-  const summary = await accessor.get(ISessionIndex).get(sessionId);
-  if (summary === undefined) return 'not_found';
-  const lease = accessor.get(ISessionLockService).lease(sessionId);
-  try {
-    const docs = accessor.get(IAtomicDocumentStore);
-    const metaScope = sessionScopeOf(
-      projectPersistenceScope(
-        accessor.get(IBootstrapService).scope('sessions'),
-        summary.workspaceId,
-      ),
-      sessionId,
-    );
-    let raw = await docs.get<SessionMeta>(metaScope, 'state.json');
-    let legacyMetaScope: string | undefined;
-    if (raw === undefined) {
-      legacyMetaScope = legacySessionMetaScopeOf(metaScope);
-      raw = await docs.get<SessionMeta>(legacyMetaScope, 'state.json');
-    }
-    if (raw === undefined) return 'not_found';
-    const persisted = normalizeSessionMeta(raw, sessionId);
+  const outcome = await withColdSessionMeta(accessor, sessionId, async ({ summary, persisted, write }) => {
     const archivedAt = archived ? Date.now() : undefined;
     const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
-    await docs.set(metaScope, 'state.json', encodeSessionMeta(nextMeta));
-    if (legacyMetaScope !== undefined) await docs.delete(legacyMetaScope, 'state.json');
-    accessor.get(ISessionIndexMirror).record(
-      buildSessionSummary({
-        id: sessionId,
-        workspaceId: summary.workspaceId,
-        cwd: nextMeta.cwd ?? summary.cwd,
-        environmentId: nextMeta.environmentId,
-        environmentCwd: nextMeta.environmentCwd,
-        title: nextMeta.title,
-        lastPrompt: nextMeta.lastPrompt,
-        createdAt: nextMeta.createdAt,
-        updatedAt: nextMeta.updatedAt,
-        archived,
-        archivedAt,
-        custom: nextMeta.custom,
-        lastTurnReason: nextMeta.lastTurnReason,
-      }),
-    );
+    await write(nextMeta);
     const payload = { sessionId, workspaceId: summary.workspaceId };
     if (archived) {
       accessor.get(IEventService).publish(new SessionArchived({ payload }));
     } else if (persisted.archived) {
       accessor.get(IEventService).publish(new SessionRestored({ payload }));
     }
-    return 'updated';
-  } finally {
-    lease.release();
-  }
+    return 'updated' as const;
+  });
+  return outcome ?? 'not_found';
 }
 
 export async function setSessionArchived(

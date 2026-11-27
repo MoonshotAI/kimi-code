@@ -5,6 +5,7 @@ export const SESSION_PRESENCE_DIR = 'presence';
 
 export interface SessionsUnderOptions {
   readonly excludeSessionId?: string;
+  readonly excludeSessionIds?: readonly string[];
 }
 
 export interface SessionsUnder {

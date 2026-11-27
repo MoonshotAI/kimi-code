@@ -90,6 +90,8 @@ import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeMan
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
+import { heldPromptDispatcher } from './routes/heldPromptDispatcher';
+import { SessionWorktreeService } from './services/worktrees/sessionWorktreeService';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
@@ -329,6 +331,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
 
+  const worktrees = new SessionWorktreeService(core, { logger, dispatchHeld: heldPromptDispatcher(core) });
+  try {
+    await worktrees.recoverInterrupted();
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'interrupted worktree setups could not be settled',
+    );
+  }
+
   const app = Fastify({
     loggerInstance: logger,
     disableRequestLogging: true,
@@ -372,6 +384,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
     configChangedPublisher.close();
     await remoteControlManager.close();
+    await worktrees.close();
     await app.close();
     conversations.dispose();
     sessionRating.dispose();
@@ -449,6 +462,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     core,
     logger,
     conversations,
+    worktrees,
   });
   notifyHosts = () => {
     if (hostNotifyTimer !== undefined) clearTimeout(hostNotifyTimer);
@@ -509,6 +523,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
+          { name: 'worktrees', description: 'Git worktrees for sessions' },
           { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
           { name: 'prompts', description: 'Prompt submission & abort' },
@@ -660,6 +675,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       drainIdleSessions,
       hostBridges,
       conversations,
+      worktrees,
       sessionRating,
       dangerousBypassAuth: opts.disableAuth === true,
       managedHost: opts.managedBy === 'ensure-daemon',

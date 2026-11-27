@@ -33,7 +33,7 @@ const hostFailure = computed(() => {
 <template>
   <Menu class="workspace-hover-card" data-workspace-hover-card role="dialog" :register="false" :aria-label="workspace.name">
     <div class="whc-head">
-      <span class="whc-title">{{ workspace.name }}</span>
+      <span class="hover-card-title">{{ workspace.name }}</span>
     </div>
     <div class="whc-directories">
       <template v-if="remote">
@@ -68,6 +68,7 @@ const hostFailure = computed(() => {
   </Menu>
 </template>
 
+<style scoped src="../lib/hover-card.css"></style>
 <style scoped>
 .workspace-hover-card {
   position: fixed;
@@ -84,15 +85,6 @@ const hostFailure = computed(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3) var(--space-1);
-}
-.whc-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-strong);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
 }
 .whc-directories { display: grid; gap: 0; }
 .whc-directory {

@@ -412,7 +412,10 @@ const isDev = import.meta.env.DEV;
 
     <!-- Open workspace in editor/terminal; the pill self-hides on an empty
          service catalog (the no-bridge degradation). -->
-    <OpenInMenu v-if="panelRoot && workspacesStore().isLocalWorkspace" :work-dir="panelRoot" />
+    <OpenInMenu
+      v-if="panelRoot && workspacesStore().isLocalWorkspace && client.activeSessionEnvironment.value !== 'invalid'"
+      :work-dir="panelRoot"
+    />
 
     <IconButton
       class="ch-session-info"

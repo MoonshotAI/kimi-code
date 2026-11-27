@@ -8,6 +8,7 @@ export type SettingsTab =
   | 'providers'
   | 'hosts'
   | 'remoteControl'
+  | 'worktrees'
   | 'plugins'
   | 'advanced'
   | 'lab'
@@ -28,6 +29,7 @@ export const SETTINGS_TABS: readonly SettingsTabDef[] = [
   { id: 'hosts', labelKey: 'settings.tabs.hosts', icon: 'server' },
   { id: 'remoteControl', labelKey: 'settings.tabs.remoteControl', icon: 'device-mobile' },
   { id: 'browser', labelKey: 'settings.tabs.browser', icon: 'browser' },
+  { id: 'worktrees', labelKey: 'worktreeManage.tabLabel', icon: 'git-fork' },
   { id: 'plugins', labelKey: 'settings.tabs.plugins', icon: 'plugin' },
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', icon: 'keyboard' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'info' },

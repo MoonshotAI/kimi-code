@@ -1,7 +1,7 @@
-import type { AppSkillAttachment } from '@moonshot-ai/app-core/api';
+import type { AppMessageContent, AppSkillAttachment } from '@moonshot-ai/app-core/api';
 import { composerSnapshotDocument, parseBrowserReferenceLinks, stripAttachmentLinks, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import type { PromptEnvelope } from '../client/types';
-import { attachmentsToContent } from '../client/attachmentsToContent';
+import { attachmentsToContent, contentToAttachments } from '../client/attachmentsToContent';
 import { withSessionReferences } from './sessionReferences';
 
 function xml(value: string): string {
@@ -64,14 +64,41 @@ export function composerDisplayText(snapshot: ComposerDocumentSnapshot): string 
   return [text, ...media.map((entry) => entry.name)].filter(Boolean).join('\n');
 }
 
-export function buildPromptContent(prompt: Pick<PromptEnvelope, 'text' | 'attachments' | 'snapshot'>): AppSkillAttachment[] {
-  const snapshot = prompt.snapshot;
+const BROWSER_REFERENCES_OPEN = '<browser_references version="1">';
+
+function browserReferenceIds(snapshot: ComposerDocumentSnapshot | undefined): string[] {
   const ids: string[] = [];
   for (const paragraph of snapshot?.doc.content ?? []) {
     for (const node of paragraph.content ?? []) {
       if (node.type === 'browser_reference' && typeof node.attrs?.['refId'] === 'string' && !ids.includes(node.attrs['refId'])) ids.push(node.attrs['refId']);
     }
   }
+  return ids;
+}
+
+export function promptFromSentContent(
+  content: readonly AppMessageContent[],
+  sessionId: string,
+  snapshot?: ComposerDocumentSnapshot,
+): Pick<PromptEnvelope, 'text' | 'attachments'> {
+  const texts = content.flatMap((part) => (part.type === 'text' ? [part.text] : []));
+  const attachments = contentToAttachments(content, sessionId);
+  if (snapshot === undefined) return { text: texts.join('\n'), attachments };
+  const unclaimed = [...snapshot.attachments];
+  const restored = attachments.map((attachment) => {
+    const index = unclaimed.findIndex((entry) => entry.fileId === attachment.fileId);
+    const entry = index < 0 ? undefined : unclaimed.splice(index, 1)[0];
+    return entry === undefined ? attachment : { ...attachment, clientId: entry.attId, sessionId: entry.sessionId };
+  });
+  if (browserReferenceIds(snapshot).length === 0) return { text: texts.join('\n'), attachments: restored };
+  const first = texts[0] ?? '';
+  const context = first.lastIndexOf(BROWSER_REFERENCES_OPEN);
+  return { text: (context < 0 ? first : first.slice(0, context)).trimEnd(), attachments: restored };
+}
+
+export function buildPromptContent(prompt: Pick<PromptEnvelope, 'text' | 'attachments' | 'snapshot'>): AppSkillAttachment[] {
+  const snapshot = prompt.snapshot;
+  const ids = browserReferenceIds(snapshot);
   if (snapshot === undefined || ids.length === 0) {
     const text = withSessionReferences(stripAttachmentLinks(prompt.text));
     return [...(text ? [{ type: 'text' as const, text }] : []), ...attachmentsToContent(prompt.attachments)];
@@ -81,7 +108,7 @@ export function buildPromptContent(prompt: Pick<PromptEnvelope, 'text' | 'attach
   const imageRefs = new Map<string, string[]>();
   const captureIds = new Set<string>();
   const screenshotCaptureIds = new Set<string>();
-  const context: string[] = ['<browser_references version="1">'];
+  const context: string[] = [BROWSER_REFERENCES_OPEN];
   for (const id of ids) {
     const reference = referenceById.get(id);
     if (reference === undefined) throw new Error('Browser reference information is missing');

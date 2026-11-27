@@ -1,0 +1,148 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+  AppSession,
+  KimiEventConnection,
+  KimiEventHandlers,
+  KimiWebApi,
+  PromptSubmission,
+} from '@moonshot-ai/app-core/api';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import {
+  appSession,
+  appWorkspace,
+  heldPromptFixture,
+  memoryStorage,
+  sessionWorktree as worktree,
+  workspaceGitBranches,
+} from '../src/testing/worktreeFixtures';
+
+async function flushMicrotasks(): Promise<void> {
+  for (let round = 0; round < 20; round++) await Promise.resolve();
+}
+
+const SID = 'worktree-session';
+
+function session(overrides: Partial<AppSession> = {}): AppSession {
+  return appSession({
+    id: SID,
+    title: SID,
+    mainTurnActive: false,
+    pendingInteraction: 'none',
+    model: 'model-1',
+    workspaceId: 'workspace-1',
+    ...overrides,
+  });
+}
+
+afterEach(() => {
+  resetKimiClientDeps();
+  vi.unstubAllGlobals();
+});
+
+describe('useKimiWebClient worktree session', () => {
+  it('shows the prompt the server holds until the session update reports a ready worktree', { timeout: 30_000 }, async () => {
+    vi.stubGlobal('WebSocket', class { close(): void {} });
+    vi.stubGlobal('localStorage', memoryStorage());
+    vi.resetModules();
+
+    let handlers: KimiEventHandlers | undefined;
+    const connection: KimiEventConnection = {
+      subscribeConversation: vi.fn((sid: string, agentId: string) => {
+        queueMicrotask(() => handlers?.onConversation?.(sid, agentId, { type: 'turns', turns: [], has_more: false }));
+      }),
+      unsubscribeConversation: vi.fn(),
+      health: () => ({ connected: true, open: true, stale: false }),
+      reconnect: vi.fn(),
+      close: vi.fn(),
+    };
+    const created = session({ worktree: worktree('running') });
+    const submitPrompt = vi.fn(async (_sid: string, input: PromptSubmission) => {
+      const heldPrompt = heldPromptFixture({ promptId: input.promptId!, content: input.content });
+      const holding = session({ worktree: { ...worktree('running'), heldPrompt } });
+      handlers!.onEvent(
+        { type: 'sessionWorkChanged', sessionId: SID, busy: false, mainTurnActive: false, session: holding },
+        { sessionId: SID },
+      );
+      return { promptId: input.promptId!, userMessageId: input.promptId! };
+    });
+    const getGitStatus = vi.fn(async () => ({
+      branch: 'main',
+      ahead: 0,
+      behind: 0,
+      entries: {},
+      additions: 0,
+      deletions: 0,
+      pullRequest: null,
+    }));
+    const api: Partial<KimiWebApi> = {
+      getAuth: vi.fn(async () => ({ modelsReady: true, providersCount: 1, managedProvider: null })),
+      getMeta: vi.fn(async () => ({
+        protocolVersion: '1',
+        serverVersion: '0.0.0',
+        serverId: 'server-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        capabilities: {},
+        openInApps: [],
+        dangerousBypassAuth: false,
+        experimentalFlags: {},
+        backend: 'v2' as const,
+        webTitle: '',
+      })),
+      getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' }) as never),
+      listModels: vi.fn(async () => [{ id: 'model-1', provider: 'p', model: 'model-1', maxContextSize: 0 }]),
+      listWorkspaces: vi.fn(async () => [appWorkspace('workspace-1', { root: '/workspace', additionalDirs: ['/extra'] })]),
+      listSessions: vi.fn(async () => ({ items: [], hasMore: false, nextPageToken: null, total: 0 })),
+      getWorkspaceGitBranches: vi.fn(async () => workspaceGitBranches()),
+      createSession: vi.fn(async () => created),
+      getSession: vi.fn(async () => created),
+      updateSession: vi.fn(async () => created),
+      submitPrompt,
+      getGitStatus,
+      connectEvents: vi.fn((nextHandlers) => {
+        handlers = nextHandlers;
+        return connection;
+      }),
+    };
+    setKimiClientDeps({ api: () => api as KimiWebApi, t: (key) => key });
+
+    const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
+    const { useNewSessionEnvironment } = await import('../src/composables/useNewSessionEnvironment');
+    const { promptStore } = await import('../src/stores/prompt');
+    const { workspacesStore } = await import('../src/stores/workspaces');
+    const client = useKimiWebClient();
+    await client.load();
+    useNewSessionEnvironment().selectEnvironment('worktree');
+    await useNewSessionEnvironment().ensureBranches('workspace-1');
+
+    const started = await client.startSessionAndSendPrompt('workspace-1', client.createPromptEnvelope({ text: 'hello' }));
+
+    expect(started).toEqual({ sessionId: SID, promptRejected: false });
+    expect(client.activeSessionEnvironment.value).toBe('settingUp');
+    expect(workspacesStore().activePanelRoot).toBe('/workspace');
+    await flushMicrotasks();
+    expect(client.turns.value.filter((turn) => turn.role === 'user').map((turn) => turn.text)).toEqual(['hello']);
+    expect(submitPrompt).toHaveBeenCalledTimes(1);
+    expect(promptStore().heldFirstPromptBySession[SID]).toBeDefined();
+
+    getGitStatus.mockClear();
+    const ready = session({ cwd: '/wt/a', worktree: worktree('ready', { path: '/wt/a', branch: 'kimi/a' }) });
+    handlers!.onEvent(
+      { type: 'sessionWorkChanged', sessionId: SID, busy: false, mainTurnActive: false, session: ready },
+      { sessionId: SID },
+    );
+
+    await vi.waitFor(() => expect(client.activeSessionEnvironment.value).toBe('worktree'));
+    expect(workspacesStore().activePanelRoot).toBe('/wt/a');
+    expect(client.status.value.cwd).toBe('/wt/a');
+    expect(getGitStatus).toHaveBeenCalled();
+    expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();
+    expect(client.turns.value.filter((turn) => turn.role === 'user').map((turn) => turn.text)).toEqual(['hello']);
+
+    handlers!.onEvent(
+      { type: 'sessionWorkChanged', sessionId: SID, busy: false, mainTurnActive: false, session: ready },
+      { sessionId: SID },
+    );
+    await flushMicrotasks();
+    expect(submitPrompt).toHaveBeenCalledTimes(1);
+  });
+});

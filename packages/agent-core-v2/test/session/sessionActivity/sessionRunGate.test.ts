@@ -22,6 +22,7 @@ import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockService';
+import { SessionAdmissionService } from '#/app/sessionAdmission/sessionAdmissionService';
 import { SessionRunGateService } from '#/session/sessionActivity/sessionRunGateService';
 import { noopLogger } from '../../wire/stubs';
 
@@ -70,6 +71,7 @@ describe('SessionRunGateService', () => {
   let serviceA: SessionLockService;
   let serviceB: SessionLockService;
   let activity: ReturnType<typeof activityStub>;
+  let admission: SessionAdmissionService;
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'session-run-gate-'));
@@ -82,6 +84,7 @@ describe('SessionRunGateService', () => {
     serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'), noopLogger);
     serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'), noopLogger);
     activity = activityStub(disposables);
+    admission = new SessionAdmissionService();
   });
 
   afterEach(() => {
@@ -107,7 +110,7 @@ describe('SessionRunGateService', () => {
 
   function gate(agents: IAgentLifecycleService = agentsOf('main')): SessionRunGateService {
     return disposables.add(
-      new SessionRunGateService(sessionContextStub, serviceA, log, agents, activity.view),
+      new SessionRunGateService(sessionContextStub, serviceA, log, agents, activity.view, admission),
     );
   }
 
@@ -129,6 +132,26 @@ describe('SessionRunGateService', () => {
       gate().begin();
     }).not.toThrow();
     expect(serviceA.held(SID)).toBe(true);
+    serviceA.release(SID);
+  });
+
+  it('refuses new work while the session is suspended, until the suspension ends', async () => {
+    await readAll();
+    const runGate = gate();
+    const suspension = admission.suspend([SID, SID], 'worktree is being removed');
+    let caught: unknown;
+    try {
+      runGate.begin();
+    } catch (error) {
+      caught = error;
+    }
+    expect(isError2(caught) && caught.code === 'session.busy' && caught.message).toBe('worktree is being removed');
+    expect(serviceA.held(SID)).toBe(false);
+    runGate.acquire().release();
+    suspension.dispose();
+    expect(() => {
+      runGate.begin();
+    }).not.toThrow();
     serviceA.release(SID);
   });
 

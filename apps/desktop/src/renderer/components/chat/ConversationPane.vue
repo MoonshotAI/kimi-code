@@ -24,6 +24,7 @@ import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
 import TranscriptSearch from './TranscriptSearch.vue';
 import { KimiCodeWordmark, KimiMascotPeek } from '@moonshot-ai/app-components';
+import { CreateEnvironmentPicker, CreateSourceBranchPicker } from '@moonshot-ai/app-components';
 import { Icon, Menu, MenuItem, MenuSearch, menuNavigationIndex, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { filterWorkspaces } from '@moonshot-ai/app-core/lib';
 import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
@@ -141,6 +142,10 @@ const workspaceName = computed(() => client.visibleWorkspace.value?.name);
 const activeHostId = computed(() => client.visibleWorkspace.value?.hostId);
 const hostBlocked = computed(() => hostsStore().blocked(activeHostId.value));
 const panelRoots = computed(() => workspacesStore().activePanelRoots);
+const sessionWorktree = client.activeSessionWorktree;
+const interruptible = computed(
+  () => props.working === true || client.activeSessionEnvironment.value === 'settingUp',
+);
 const turnError = computed(() => client.activeTurnError.value ?? null);
 const turnRetry = computed(() => client.activeTurnRetry.value ?? null);
 const turnEnd = client.activeTurnEnd;
@@ -728,7 +733,7 @@ const forkPending = computed(
 
 const { armed: escInterruptArmed, press: pressEscInterrupt, reset: resetEscInterrupt } = useEscInterrupt({
   sessionId: () => props.sessionId,
-  working: () => props.working,
+  working: () => interruptible.value,
   interrupt: handleInterrupt,
 });
 
@@ -779,7 +784,7 @@ function onKeyDown(event: KeyboardEvent): void {
     !event.repeat &&
     !isComposingKeyEvent(event)
   ) {
-    if (props.working) {
+    if (interruptible.value) {
       event.preventDefault();
       pressEscInterrupt();
     }
@@ -908,7 +913,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                   <button
                     ref="wsChipRef"
                     type="button"
-                    class="ws-chip"
+                    class="chip-trigger ws-chip"
                     :class="{ open: wsPickOpen }"
                     aria-haspopup="dialog"
                     :aria-expanded="wsPickOpen"
@@ -916,7 +921,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                   >
                     <WorkspaceIcon :host-id="activeHostId" status="all" />
                     <span class="ws-chip-name">{{ activeWorkspaceLabel }}</span>
-                    <Icon class="ws-chip-chev" name="chevron-down" size="sm" />
+                    <Icon class="chip-trigger-chev" name="chevron-down" size="sm" />
                   </button>
                 </Tooltip>
                 <Menu
@@ -965,10 +970,14 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                   </MenuItem>
                 </Menu>
               </div>
-              <button v-else type="button" class="ws-chip ws-ghost" @click="emit('addWorkspace')">
+              <button v-else type="button" class="chip-trigger ws-chip ws-ghost" @click="emit('addWorkspace')">
                 <Icon name="folder-plus" />
                 <span>{{ t('conversation.addWorkspace') }}</span>
               </button>
+              <template v-if="hasWorkspaces">
+                <CreateEnvironmentPicker :workspace-id="activeWorkspaceId" />
+                <CreateSourceBranchPicker :workspace-id="activeWorkspaceId" />
+              </template>
               <HostNotice class="empty-host-notice" :host-id="activeHostId" />
               <KimiMascotPeek ref="mascotRef" class="ws-mascot" />
             </div>
@@ -1017,6 +1026,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :history-state="historyState"
               :render-all-history="transcriptSearchOpen || historySelection"
               :cwd="status.cwd"
+              :worktree="sessionWorktree"
               :approvals="approvals"
               :questions="questions"
               :turn-active="turnActive"
@@ -1147,6 +1157,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   </section>
 </template>
 
+<style scoped src="@moonshot-ai/app-components/chip-trigger.css"></style>
 <style scoped>
 .con {
   --read-max: 760px;
@@ -1314,6 +1325,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   box-sizing: border-box;
   display: flex;
   align-items: flex-end;
+  gap: var(--space-1);
   height: 36px;
   padding: 0 var(--dock-inline-right, 16px) 0 calc(var(--dock-inline-left, 16px) + var(--space-4));
   font-family: var(--font-ui);
@@ -1332,30 +1344,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   min-width: 0;
 }
 
-.ws-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  height: 28px;
-  margin-bottom: 4px;
-  padding: 0 var(--space-2);
-  background: var(--color-selected);
-  -webkit-backdrop-filter: blur(30px);
-  backdrop-filter: blur(30px);
-  border: none;
-  border-radius: 10px;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.ws-chip:hover,
-.ws-chip.open {
-  color: var(--color-text-strong);
-}
-.ws-chip:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ws-chip > .kw-icon { flex: none; }
 .ws-chip-name {
   min-width: 0;
@@ -1364,11 +1352,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   white-space: nowrap;
   font-weight: var(--weight-option-label);
 }
-.ws-chip-chev {
-  flex: none;
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.ws-chip.open .ws-chip-chev { transform: rotate(180deg); }
 
 .ws-backdrop {
   position: fixed;

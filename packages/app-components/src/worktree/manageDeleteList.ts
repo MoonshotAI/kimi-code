@@ -1,0 +1,1 @@
+export const MANAGE_DELETE_LIST_NATURAL_ROWS = 3;

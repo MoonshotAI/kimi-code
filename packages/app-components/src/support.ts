@@ -14,3 +14,4 @@ export { default as ContextComposition } from './composer/ContextComposition.vue
 export { default as ContextSummaryBody, resolveCompactPhase, type CompactPhase } from './composer/ContextSummaryBody.vue';
 export { default as WorkspaceIcon } from './WorkspaceIcon.vue';
 export { default as HostNotice } from './HostNotice.vue';
+export * from './worktree/session';

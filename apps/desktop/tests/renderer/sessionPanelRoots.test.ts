@@ -103,6 +103,7 @@ function mountHeader(): void {
   mocks.client = {
     activeSessionId: computed(() => sessionsStore().activeSessionId ?? ''),
     activeSessionArchived: ref(false),
+    activeSessionEnvironment: ref('local'),
     visibleWorkspace: computed(() => workspacesStore().visibleWorkspace),
   };
   app = createApp({ render: () => h(ChatHeader) });

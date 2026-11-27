@@ -37,7 +37,7 @@ import { ErrorBoundary } from '@moonshot-ai/app-components';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import UpdateDialog from './components/UpdateDialog.vue';
 import { AddWorkspaceDialog, WorkspaceEditDialog } from '@moonshot-ai/app-components';
-import { ConfirmDialogHost, PastedTextDialog, openPastedTextDialog, usePastedTextStats } from '@moonshot-ai/app-components';
+import { ConfirmDialogHost, PastedTextDialog, WorktreeManageDialogHost, openPastedTextDialog, usePastedTextStats } from '@moonshot-ai/app-components';
 import BrowserOverlayConfirmHost from './components/browser-overlay/BrowserOverlayConfirmHost.vue';
 import { StatusPanel } from '@moonshot-ai/app-components';
 import { MobileTopBar } from '@moonshot-ai/app-components';
@@ -2454,6 +2454,10 @@ function handleSelectSession(selection: {
 
 function openPr(url: string): void {
   if (!url) return;
+  if (canOpenBrowserTab.value && panelTabsRef.value !== null) {
+    void panelTabsRef.value.openBrowserUrl(url);
+    return;
+  }
   window.open(url, '_blank', 'noopener');
 }
 </script>
@@ -2760,6 +2764,7 @@ function openPr(url: string): void {
       :hosts="remoteHosts"
       :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
+      :enclosing-repo-root="(dir) => getKimiWebApi().enclosingRepoRoot(dir)"
       :busy="workspaceDialogBusy"
       :primary-immutable="workspaceDialog.mode === 'edit' && workspaceDialog.primaryImmutable"
       @submit="onWorkspaceDialogSubmit"
@@ -2805,6 +2810,7 @@ function openPr(url: string): void {
     <!-- Global modal-confirmation host (driven by useConfirmDialog) -->
     <BrowserOverlayConfirmHost :active="browserConfirmUsesNativeSurface" />
     <ConfirmDialogHost v-if="!browserConfirmUsesNativeSurface" />
+    <WorktreeManageDialogHost />
     <PastedTextDialog />
 
     <!-- Mobile switcher bottom-sheet: workspace groups + sessions (mirrors the

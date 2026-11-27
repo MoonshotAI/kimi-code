@@ -489,7 +489,7 @@ describe('core LoopService integration', () => {
     const acquire = vi.spyOn(ctx.get(ISessionRunGate), 'acquire');
     ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
-    expect(begin).toHaveBeenCalledTimes(2);
+    expect(begin).toHaveBeenCalledTimes(1);
     expect(acquire).toHaveBeenCalledTimes(1);
     expect((loop as unknown as { loop: { historyRevision: number } }).loop).toBe(core);
     expect(core.historyRevision).toBeGreaterThan(previousRevision);

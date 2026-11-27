@@ -13,6 +13,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       activity: vue.ref('idle'),
       working: vue.ref(false),
       isStartingFirstPrompt: vue.ref(false),
+      activeSessionEnvironment: vue.ref('local'),
       queued: vue.ref([]),
       searchFiles: vi.fn(async () => []),
       uploadImage: vi.fn(),

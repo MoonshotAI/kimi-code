@@ -1,0 +1,9 @@
+.hover-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-strong);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}

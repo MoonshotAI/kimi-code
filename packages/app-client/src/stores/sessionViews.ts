@@ -10,6 +10,7 @@ import {
   reconcilePinnedOrder,
   saveUnread,
   sessionDisplayStatus,
+  sessionEnvironmentTag,
 } from '@moonshot-ai/app-core/lib';
 import type { PinnedEntry, Session, WorkspaceGroup } from '@moonshot-ai/app-core/client/types';
 import { createSessionRowMemo, createWorkspaceGroupMemo } from '@moonshot-ai/app-core/client';
@@ -221,22 +222,11 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
     return forViewRows(
       sessionsStore().sessions
         .filter((s) => !s.parentSessionId && visibleWorkspaceIds.has(workspaceIdForSession(s)))
-        .map((s) => {
-          const workspaceId = workspaceIdForSession(s);
-          const ws = workspaceById.get(workspaceId);
-          return {
-            id: s.id,
-            title: s.title,
-            time: formatTime(s.updatedAt),
-            busy: isMainTurnActive(s.id, s.mainTurnActive),
-            pendingInteraction: s.pendingInteraction,
-            lastTurnReason: s.lastTurnReason,
-            lastPrompt: s.lastPrompt,
-            workspaceId,
-            workspaceName: ws?.name,
-            hostId: ws?.hostId,
-          };
-        }),
+        .map((s) => ({
+          ...baseRow(s),
+          ...placedRow(s, workspaceById, workspaceIdForSession),
+          lastPrompt: s.lastPrompt,
+        })),
     );
   });
 
@@ -271,25 +261,14 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
     }
     rows.sort(byUpdatedDesc);
     return flatRows(
-      rows.map((s) => {
-        const workspaceId = workspaceIdForSession(s);
-        const ws = workspaceById.get(workspaceId);
-        return {
-          id: s.id,
-          title: s.title,
-          time: formatTime(s.updatedAt),
-          busy: isMainTurnActive(s.id, s.mainTurnActive),
-          pendingInteraction: s.pendingInteraction,
-          lastTurnReason: s.lastTurnReason,
-          lastPrompt: s.lastPrompt,
-          updatedAt: s.updatedAt,
-          workspaceId,
-          workspaceName: ws?.name,
-          hostId: ws?.hostId,
-          cwdLabel: s.cwd ? basename(s.cwd) : '-',
-          pullRequest: s.pullRequest,
-        };
-      }),
+      rows.map((s) => ({
+        ...baseRow(s),
+        ...placedRow(s, workspaceById, workspaceIdForSession),
+        lastPrompt: s.lastPrompt,
+        updatedAt: s.updatedAt,
+        cwdLabel: s.cwd ? basename(s.cwd) : '-',
+        pullRequest: s.pullRequest,
+      })),
     );
   });
 
@@ -298,6 +277,39 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
     if (pinned.size === 0) return flatSessionsAll.value;
     return flatSessionsAll.value.filter((s) => !pinned.has(s.workspaceId ?? ''));
   });
+
+  function rowTitle(s: { id: string; title: string }): string {
+    if (s.title !== '') return s.title;
+    const held = promptStore().heldFirstPromptBySession[s.id];
+    if (held === undefined) return s.title;
+    const text = held.content
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join(' ')
+      .trim();
+    return text.split('\n')[0]?.slice(0, 80) ?? s.title;
+  }
+
+  function baseRow(s: AppSession): Session {
+    return {
+      id: s.id,
+      title: rowTitle(s),
+      time: formatTime(s.updatedAt),
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
+      environment: sessionEnvironmentTag(s),
+    };
+  }
+
+  function placedRow(
+    s: AppSession,
+    workspaceById: ReadonlyMap<string, { readonly name: string; readonly hostId?: string }>,
+    workspaceIdForSession: (s: AppSession) => string,
+  ): Pick<Session, 'workspaceId' | 'workspaceName' | 'hostId'> {
+    const workspaceId = workspaceIdForSession(s);
+    const ws = workspaceById.get(workspaceId);
+    return { workspaceId, workspaceName: ws?.name, hostId: ws?.hostId };
+  }
 
   function buildWorkspaceGroups(excludePinned: boolean): WorkspaceGroup[] {
     void sessionTimeClock.value;
@@ -314,15 +326,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
         pinnedCountByWorkspace.set(wid, (pinnedCountByWorkspace.get(wid) ?? 0) + 1);
         continue;
       }
-      const view: Session = {
-        id: s.id,
-        title: s.title,
-        time: formatTime(s.updatedAt),
-        busy: isMainTurnActive(s.id, s.mainTurnActive),
-        pendingInteraction: s.pendingInteraction,
-        lastTurnReason: s.lastTurnReason,
-        updatedAt: s.updatedAt,
-      };
+      const view: Session = { ...baseRow(s), updatedAt: s.updatedAt };
       const list = byId.get(wid) ?? [];
       list.push(view);
       byId.set(wid, list);
@@ -366,25 +370,14 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
     );
     const pinned = partitionByPinned(candidates, sessionsStore().pinnedSessionIds).pinned;
     return pinnedRows(
-      pinned.map((s) => {
-        const workspaceId = workspaceIdForSession(s);
-        const ws = workspaceById.get(workspaceId);
-        return {
-          id: s.id,
-          title: s.title,
-          time: formatTime(s.updatedAt),
-          busy: isMainTurnActive(s.id, s.mainTurnActive),
-          pendingInteraction: s.pendingInteraction,
-          lastTurnReason: s.lastTurnReason,
-          updatedAt: s.updatedAt,
-          workspaceId,
-          workspaceName: ws?.name,
-          hostId: ws?.hostId,
-          pinned: true,
-          cwdLabel: s.cwd ? basename(s.cwd) : '-',
-          pullRequest: s.pullRequest,
-        };
-      }),
+      pinned.map((s) => ({
+        ...baseRow(s),
+        ...placedRow(s, workspaceById, workspaceIdForSession),
+        updatedAt: s.updatedAt,
+        pinned: true,
+        cwdLabel: s.cwd ? basename(s.cwd) : '-',
+        pullRequest: s.pullRequest,
+      })),
     );
   });
 
@@ -458,7 +451,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
     if (hostsStore().unavailable(ws?.hostId)) return [];
     const toRow = (s: AppSession, doneAt?: string): Session => ({
       id: s.id,
-      title: s.title,
+      title: rowTitle(s),
       time: formatTime(doneAt ?? s.updatedAt),
       busy: doneAt === undefined && isMainTurnActive(s.id, s.mainTurnActive),
       pendingInteraction: doneAt === undefined ? s.pendingInteraction : undefined,
@@ -471,6 +464,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
       archived: doneAt !== undefined,
       cwdLabel: s.cwd ? basename(s.cwd) : '-',
       pullRequest: s.pullRequest,
+      environment: sessionEnvironmentTag(s),
     });
     const open = sessionsStore().sessions
       .filter(

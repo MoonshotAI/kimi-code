@@ -18,6 +18,7 @@ import { sessionRuntimeStore } from '../src/stores/sessionRuntime';
 import { formatTime, sessionViewsStore } from '../src/stores/sessionViews';
 import { sessionsStore } from '../src/stores/sessions';
 import { workspacesStore } from '../src/stores/workspaces';
+import { sessionWorktree } from '../src/testing/worktreeFixtures';
 
 const T1 = '2026-01-01T00:00:00.000Z';
 const T2 = '2026-01-02T00:00:00.000Z';
@@ -160,6 +161,18 @@ describe('sessionsForView', () => {
       time: formatTime(T1),
     });
     expect(rows[1]).toMatchObject({ id: 's2', workspaceId: 'ws-b', workspaceName: 'Beta' });
+  });
+
+  it('tags worktree sessions with the environment they actually use', () => {
+    seedWorkspaces();
+    sessionsStore().setSessions([
+      sessionRow('local', { updatedAt: T1 }),
+      { ...sessionRow('ready', { updatedAt: T1 }), worktree: sessionWorktree('ready', { path: '/wt/a' }) },
+    ]);
+
+    const tags = Object.fromEntries(sessionViewsStore().sessionsForView.map((row) => [row.id, row.environment]));
+
+    expect(tags).toEqual({ local: undefined, ready: 'worktree' });
   });
 });
 

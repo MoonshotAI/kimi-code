@@ -8,6 +8,7 @@ import {
   type FsGitStatusBatchResponse,
   type FsBatchError,
   type FsPullRequest,
+  type FsPullRequestLookup,
   type FsPullRequestRequest,
   type FsPullRequestBatchRequest,
   type FsPullRequestBatchResponse,
@@ -42,6 +43,7 @@ const FsWireErrorCode = {
   VALIDATION_FAILED: 40001,
   FS_PATH_NOT_FOUND: 40409,
   ENVIRONMENT_NOT_FOUND: 40420,
+  FS_DIRECTORY_NOT_FOUND: 40422,
   SESSION_BUSY: 40901,
   FS_IS_DIRECTORY: 40906,
   FS_IS_BINARY: 40907,
@@ -1260,20 +1262,40 @@ export class ProjectFsService implements IProjectFsService {
       pathFilter: filter,
       scopeToCwd: req.root !== undefined,
       includePullRequest: req.include_pull_request !== false,
+      ...(req.include_untracked === true ? { includeUntracked: true } : {}),
     });
   }
 
   gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse> {
-    return this.batchGitValues(req.roots, (root) => this.gitStatus({ root, include_pull_request: req.include_pull_request }));
+    return this.batchGitValues(req.roots, (root) =>
+      this.gitStatus({
+        root,
+        include_pull_request: req.include_pull_request,
+        include_untracked: req.include_untracked,
+      }),
+    );
   }
 
-  pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse> {
-    return this.batchGitValues(req.roots, (root) => this.pullRequest({ root }));
+  async pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse> {
+    const { results: lookups, errors } = await this.batchGitValues(req.roots, (root) =>
+      this.pullRequestLookup({ root }),
+    );
+    const results = Object.create(null) as FsPullRequestBatchResponse['results'];
+    const statuses = Object.create(null) as NonNullable<FsPullRequestBatchResponse['statuses']>;
+    for (const [root, lookup] of Object.entries(lookups)) {
+      results[root] = lookup.pullRequest;
+      statuses[root] = { pull_request_status: lookup.status, pull_request_error: lookup.error };
+    }
+    return { results, errors, statuses };
   }
 
   async pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null> {
+    return (await this.pullRequestLookup(req)).pullRequest;
+  }
+
+  async pullRequestLookup(req: FsPullRequestRequest): Promise<FsPullRequestLookup> {
     const cwd = await this.resolveGitRoot(req.root);
-    return this.git.pullRequestAt(cwd);
+    return this.git.pullRequestLookupAt(cwd);
   }
 
   private async batchGitValues<T>(
@@ -1312,11 +1334,20 @@ export class ProjectFsService implements IProjectFsService {
   }
 
   private async resolveGitRoot(root?: string): Promise<string> {
-    if (root === undefined) return this.workDir;
-    const cwd = root === '/' && this.isWithinWorkspace(root) ? this.path.resolve(root) : await this.resolveWithin(root);
+    const cwd =
+      root === undefined
+        ? this.workDir
+        : root === '/' && this.isWithinWorkspace(root)
+          ? this.path.resolve(root)
+          : await this.resolveWithin(root);
     const stat = await this.hostFs.stat(cwd).catch(() => undefined);
-    if (stat?.isDirectory !== true) {
-      throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${root}`, {
+    if (stat === undefined) {
+      throw new Error2(ErrorCodes.FS_DIRECTORY_NOT_FOUND, `directory does not exist: ${root ?? cwd}`, {
+        details: { cwd, path: root },
+      });
+    }
+    if (!stat.isDirectory) {
+      throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${root ?? cwd}`, {
         details: { cwd, path: root },
       });
     }
@@ -1945,6 +1976,9 @@ function toGitBatchError(err: unknown): FsBatchError {
   }
   if (err instanceof Error2) {
     if (err.code === ErrorCodes.FS_GIT_UNAVAILABLE) return { code: 40908, msg: err.message };
+    if (err.code === ErrorCodes.FS_DIRECTORY_NOT_FOUND) {
+      return { code: FsWireErrorCode.FS_DIRECTORY_NOT_FOUND, msg: err.message };
+    }
     if (err.code === ErrorCodes.FS_PATH_ESCAPES) {
       return { code: FsWireErrorCode.FS_PATH_ESCAPES_SESSION, msg: err.message };
     }

@@ -8,6 +8,8 @@ defineProps<{
   placeholder?: string;
   ariaLabel?: string;
   divider?: boolean;
+  activeDescendant?: string;
+  controls?: string;
 }>();
 
 const emit = defineEmits<{
@@ -48,6 +50,8 @@ function onKeydown(event: KeyboardEvent): void {
       :value="modelValue"
       :placeholder="placeholder"
       :aria-label="ariaLabel ?? placeholder"
+      :aria-activedescendant="activeDescendant"
+      :aria-controls="controls"
       @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       @compositionstart="handleCompositionStart"
       @compositionend="handleCompositionEnd"
@@ -70,6 +74,10 @@ function onKeydown(event: KeyboardEvent): void {
   border-bottom: var(--p-hairline) solid var(--color-line);
 }
 .ui-menu-search--divider:focus-within { border-bottom-color: var(--color-line-strong); }
+.ui-menu-search--divider:first-child {
+  margin-top: calc(-1 * var(--menu-pad));
+  padding-block: calc(var(--menu-item-padding-block) + var(--menu-pad) / 2);
+}
 .ui-menu-search > :deep(svg) { flex: none; }
 .ui-menu-search__input {
   flex: 1;
@@ -80,7 +88,7 @@ function onKeydown(event: KeyboardEvent): void {
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   line-height: var(--leading-tight);
 }
 .ui-menu-search__input::placeholder { color: var(--color-text-faint); }

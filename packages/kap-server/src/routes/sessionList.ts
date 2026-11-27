@@ -14,6 +14,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
 import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { z } from 'zod';
 
@@ -298,6 +299,7 @@ async function runBatchArchive(
 
 async function listSessionsHere(
   core: Scope,
+  worktrees: Pick<SessionWorktreeService, 'refreshFacts'>,
   gitResolver: GitDomainResolver,
   raw: Omit<ListSessionsQuery, 'hosts'>,
 ): Promise<SessionsListOutcome> {
@@ -400,6 +402,7 @@ async function listSessionsHere(
       const requiredCwdOf = (summary: SessionSummary): string => cwdOf(summary)!;
 
       const buildItems = async (summaries: readonly SessionSummary[]): Promise<Session[]> => {
+        await worktrees.refreshFacts(summaries);
         let gitBySession: ReadonlyMap<string, SessionGit> | undefined;
         if (query.includeGit) {
           gitBySession = await gitResolver.resolveAll(summaries, requiredCwdOf);
@@ -573,6 +576,7 @@ async function listSessionsHere(
 export function registerSessionListAndBatchRoutes(
   app: SessionListRouteHost,
   core: Scope,
+  worktrees: Pick<SessionWorktreeService, 'refreshFacts'>,
   hosts?: HostSources,
 ): void {
   const gitResolver = new GitDomainResolver(core);
@@ -594,7 +598,7 @@ export function registerSessionListAndBatchRoutes(
     async (req, reply) => {
       const raw = req.query;
       const { hosts: includeHosts, ...query } = raw;
-      const local = (next: Omit<ListSessionsQuery, 'hosts'>) => listSessionsHere(core, gitResolver, next);
+      const local = (next: Omit<ListSessionsQuery, 'hosts'>) => listSessionsHere(core, worktrees, gitResolver, next);
       const outcome = includeHosts === 'include' && hosts !== undefined
         ? raw.view !== 'by_workspace' && raw.page_size === undefined && raw.page_token === undefined && raw.page === undefined && raw.before_id === undefined && raw.after_id === undefined
           ? await listAllSessionsAcrossHosts(query, hosts, local)

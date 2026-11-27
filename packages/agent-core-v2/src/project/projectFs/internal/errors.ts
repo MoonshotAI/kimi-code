@@ -12,6 +12,7 @@ export const FsErrors = {
     FS_TOO_MANY_RESULTS: 'fs.too_many_results',
     FS_GREP_TIMEOUT: 'fs.grep_timeout',
     FS_GIT_UNAVAILABLE: 'fs.git_unavailable',
+    FS_DIRECTORY_NOT_FOUND: 'fs.directory_not_found',
   },
 } as const satisfies ErrorDomain;
 

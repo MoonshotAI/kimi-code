@@ -2,8 +2,9 @@
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useContextInspector } from '@moonshot-ai/app-core/composables';
-import type { CompactPhase } from '@moonshot-ai/app-components/support';
-import { sessionInfoStore } from '@moonshot-ai/app-client/stores';
+import { Icon, IconButton, Spinner } from '@moonshot-ai/app-ui';
+import { sessionInfoStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { SessionInfoPopover, sessionWorktreeDisplay, type CompactPhase } from '@moonshot-ai/app-components/support';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import SessionInfoContext from './SessionInfoContext.vue';
@@ -50,7 +51,7 @@ let folderLoadingTimer: ReturnType<typeof setTimeout> | undefined;
 watch(() => rows.value.map(row => row.state.status), (statuses) => {
   if (folderLoadingTimer !== undefined) clearTimeout(folderLoadingTimer);
   folderLoadingTimer = undefined;
-  showFolders.value = statuses.some(status => status === 'ready' || status === 'error');
+  showFolders.value = statuses.some(status => status !== 'loading');
   if (showFolders.value || !statuses.includes('loading')) return;
   folderLoadingTimer = setTimeout(() => {
     showFolders.value = true;
@@ -71,6 +72,35 @@ watch(
     onCleanup(() => store.unobserve(sessionId));
   },
   { immediate: true },
+);
+
+const session = computed(() => sessionsStore().sessions.find(item => item.id === props.sessionId));
+const worktree = computed(() => sessionWorktreeDisplay(session.value));
+const home = computed(() => (session.value?.hostId === undefined ? workspacesStore().fsHome : null));
+const projectName = computed(() => {
+  const current = session.value;
+  if (current === undefined || worktree.value === null) return null;
+  const workspaces = workspacesStore();
+  const id = workspaces.workspaceIdForSession(current);
+  return workspaces.mergedWorkspaces.find((item) => item.id === id)?.name ?? null;
+});
+const primaryStatus = computed(() => rows.value.find(row => row.primary)?.state.status);
+const primaryMissing = computed(() => worktree.value?.missing === true || primaryStatus.value === 'missing');
+const refreshing = computed(() => store.refreshing(props.sessionId));
+const refreshError = computed(() => store.refreshError(props.sessionId));
+
+function refresh(): void {
+  void store.refresh(props.sessionId);
+}
+
+watch(
+  () => [props.sessionId, session.value?.worktree?.missing === true] as const,
+  ([sessionId, missing], [previousSessionId, previousMissing]) => {
+    if (sessionId !== previousSessionId || missing === previousMissing) return;
+    const known = primaryStatus.value;
+    if (known === undefined || known === 'loading' || missing === (known === 'missing')) return;
+    void store.refresh(sessionId);
+  },
 );
 
 watch(
@@ -104,10 +134,39 @@ watch(
           v-for="row in rows"
           :key="row.path"
           :row="row"
-          :show-primary-badge="rows.length > 1"
+          :worktree="worktree"
+          :home="home"
+          :label="row.primary ? projectName : null"
+          :refreshing="refreshing"
           @open-pr="(url) => emit('openPr', url)"
           @open-diff="(root) => emit('openDiff', root)"
-        />
+          @retry="refresh"
+        >
+          <template v-if="row.primary" #heading-action>
+            <SessionInfoPopover
+              v-if="refreshError"
+              class="si-refresh-error"
+              :title="t('worktreeSession.refreshErrorTitle')"
+              :body="t('worktreeSession.refreshErrorBody')"
+              :output="refreshError.output"
+              :busy="refreshing"
+              @retry="refresh"
+            />
+            <IconButton
+              v-else
+              class="si-refresh"
+              :class="{ spinning: refreshing }"
+              size="sm"
+              :label="t('worktreeSession.refresh')"
+              :tooltip="t('worktreeSession.refresh')"
+              :aria-busy="refreshing"
+              @click="refresh"
+            >
+              <Spinner v-if="refreshing" size="sm" />
+              <Icon v-else name="refresh" size="sm" />
+            </IconButton>
+          </template>
+        </SessionInfoFolder>
       </div>
       <SessionInfoContext
         v-if="sessionId && contextInspectorEnabled"
@@ -121,6 +180,7 @@ watch(
       <SessionInfoTabs
         :tabs="tabs"
         :available="available"
+        :browser-only="primaryMissing"
         @activate="(id) => emit('activate', id)"
         @open="(type) => emit('open', type)"
         @show-tabs="emit('showTabs')"
@@ -154,6 +214,13 @@ watch(
   box-shadow: var(--shadow-menu, var(--shadow-sm));
 }
 .si-folders { position: relative; min-height: 0; padding: var(--space-3) 0 var(--space-4); }
+.si-refresh { opacity: 0; transition: opacity var(--duration-fast) var(--ease-out); }
+.session-info:hover .si-refresh,
+.si-refresh:focus-visible,
+.si-refresh.spinning { opacity: 1; }
+@media (hover: none) {
+  .si-refresh { opacity: 1; }
+}
 .si-folders::after,
 .session-info :deep(.si-context:has(+ .sit .sit-section))::after {
   content: "";

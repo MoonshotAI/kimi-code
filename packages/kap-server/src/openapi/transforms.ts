@@ -59,6 +59,7 @@ import {
   waitSessionResponseSchema,
   type SessionAction,
 } from '../protocol/rest-session';
+import { deleteSessionRequestSchema } from '../protocol/rest-worktree';
 import { shareSchemas } from './sharedSchemas';
 
 const binarySchema = {
@@ -140,7 +141,7 @@ const sessionActionDocs: Readonly<
   btw: { response: startBtwSessionResponseSchema },
   restore: { response: restoreSessionResponseSchema },
   archive: { response: archiveSessionResponseSchema },
-  delete: { response: deleteSessionResponseSchema },
+  delete: { response: deleteSessionResponseSchema, body: deleteSessionRequestSchema },
   reload: { response: getSessionResponseSchema },
   takeover: { response: takeoverSessionResponseSchema },
 };

@@ -12,7 +12,7 @@ import type { FontTarget } from '@moonshot-ai/app-core/composables';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
 import { usePlugins } from '@moonshot-ai/app-client/composables';
-import { PluginsPanel, ProvidersPanel, HostsPanel } from '@moonshot-ai/app-components';
+import { PluginsPanel, ProvidersPanel, HostsPanel, WorktreesPanel } from '@moonshot-ai/app-components';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, openTextFileInNative } from '../../lib/nativeOpenIn';
 import { canPickWorkspaceDirectory, pickNativeFile } from '../../lib/nativeWorkspacePicker';
 import { saveDefaultOpenInTarget, useDefaultOpenInTarget } from '@moonshot-ai/app-components';
@@ -748,10 +748,15 @@ async function onRestore(id: string): Promise<void> {
 }
 
 async function onDeleteArchived(s: AppSession): Promise<void> {
-  await client.deleteSessionWithToast(s.id, { title: s.title });
+  await client.deleteSessionWithToast(s.id, { title: s.title, worktree: s.worktree });
   if (client.isSessionDeleted(s.id)) {
     archivedItems.value = archivedItems.value.filter((x) => x.id !== s.id);
   }
+}
+
+function openWorktreeSession(sessionId: string): void {
+  emit('close');
+  void client.selectSession(sessionId);
 }
 
 function archiveTime(iso: string): string {
@@ -1505,6 +1510,10 @@ defineExpose({ confirmDiscard });
 
         <section v-if="activeTab === 'plugins'" class="panel">
           <PluginsPanel />
+        </section>
+
+        <section v-if="activeTab === 'worktrees'" class="panel">
+          <WorktreesPanel @open-session="openWorktreeSession" />
         </section>
 
         <!-- Hotkeys (desktop-only). v-if (not v-show): the panel

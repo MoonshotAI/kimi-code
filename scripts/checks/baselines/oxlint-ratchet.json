@@ -500,7 +500,6 @@
     "packages/app-client/test/session-deleted-teardown.test.ts": 1,
     "packages/app-client/test/session-observation-integration.test.ts": 1,
     "packages/app-client/test/session-work-reconnect.test.ts": 9,
-    "packages/app-client/test/sessionDeleteFacade.test.ts": 1,
     "packages/app-client/test/sessionRowRefresh.test.ts": 3,
     "packages/app-components/test/actionToastReplace.test.ts": 1,
     "packages/app-components/test/useAnchoredMenu.test.ts": 1,

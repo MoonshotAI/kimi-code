@@ -8,3 +8,6 @@
 *.gif binary
 *.ico binary
 *.png binary
+
+packages/kap-server/schema/openapi.json linguist-generated=true
+packages/kap-server/schema/asyncapi.json linguist-generated=true

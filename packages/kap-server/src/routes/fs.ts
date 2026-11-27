@@ -283,6 +283,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
         [ErrorCode.FS_GREP_TIMEOUT]: {},
         [ErrorCode.FS_GIT_UNAVAILABLE]: {},
+        [ErrorCode.FS_DIRECTORY_NOT_FOUND]: {},
         [ErrorCode.FS_ALREADY_EXISTS]: {},
       },
       description:
@@ -897,8 +898,11 @@ async function handlePullRequest(fs: IProjectFsService, req: Req, reply: Reply):
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await fs.pullRequest(parsed.data);
-  reply.send(okEnvelope(data, req.id));
+  const lookup = await fs.pullRequestLookup(parsed.data);
+  reply.send({
+    ...okEnvelope(lookup.pullRequest, req.id),
+    details: { pull_request_status: lookup.status, pull_request_error: lookup.error },
+  });
 }
 
 async function handleDiff(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
@@ -1003,6 +1007,9 @@ export function sendMappedError(reply: Reply, req: { id: string }, err: unknown,
         return;
       case ErrorCodes.FS_GIT_UNAVAILABLE:
         reply.send(errEnvelope(ErrorCode.FS_GIT_UNAVAILABLE, err.message, requestId));
+        return;
+      case ErrorCodes.FS_DIRECTORY_NOT_FOUND:
+        reply.send(errEnvelope(ErrorCode.FS_DIRECTORY_NOT_FOUND, err.message, requestId));
         return;
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));

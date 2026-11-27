@@ -521,39 +521,8 @@ onUpdated(updateScrollSeams);
   </div>
 </template>
 
+<style scoped src="@moonshot-ai/app-components/dock-card.css"></style>
 <style scoped>
-.appr {
-  display: flex;
-  flex-direction: column;
-  max-height: calc(var(--app-height, 100dvh) - var(--dock-card-top-clearance));
-  margin: var(--space-2) 0;
-  background: var(--color-surface-raised);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-input);
-  overflow: hidden auto;
-  animation: kimi-card-in var(--duration-base) var(--ease-out);
-  container-type: inline-size;
-}
-.appr::before {
-  content: '';
-  position: sticky;
-  top: 0;
-  flex: none;
-  height: var(--p-scroll-seam-h);
-  margin-bottom: calc(-1 * var(--p-scroll-seam-h));
-  z-index: var(--z-raised);
-  pointer-events: none;
-  opacity: 0;
-  background:
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
-  transition: opacity var(--duration-slow) var(--ease-out);
-}
-.appr.scrolled::before { opacity: 1; }
-.appr > .ah,
-.apane > .af { flex: none; }
 .apane {
   display: flex;
   flex-direction: column;
@@ -564,43 +533,8 @@ onUpdated(updateScrollSeams);
 .appr.minimized { transition: background var(--duration-fast) var(--ease-out); }
 .appr.minimized:hover { background: var(--color-hover); }
 
-.ah {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: var(--space-4) var(--space-4) 0;
-  flex-wrap: nowrap;
-  transition: padding-bottom 220ms cubic-bezier(0.2, 0, 0, 1);
-}
-
-.adot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 14px;
-  height: 14px;
-}
-.adot::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-attention);
-}
 .appr.minimized .ah { padding-bottom: var(--space-3); }
 .appr.minimized .ah.clickable { cursor: pointer; }
-.akind {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text);
-  font-size: var(--text-lg);
-  line-height: var(--leading-normal);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 .apeek {
   flex: 1 1 auto;
   min-width: 0;
@@ -630,13 +564,6 @@ onUpdated(updateScrollSeams);
   margin-left: 0;
 }
 
-.ab {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  padding: var(--space-2) var(--space-4) 0;
-}
 .ab.has-feedback { overflow: hidden auto; }
 .ab > * { flex: 0 1 auto; min-height: 0; }
 .ab > .plan-path,
@@ -887,20 +814,6 @@ onUpdated(updateScrollSeams);
   box-shadow: none;
 }
 
-.af {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 0 var(--space-4) var(--space-4);
-}
-.abtns {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  width: 100%;
-}
 .abtns > :deep(.asession) {
   margin-right: auto;
 }
@@ -923,19 +836,12 @@ onUpdated(updateScrollSeams);
   .abtn-enter-active,
   .abtn-leave-active,
   .apeek-enter-active,
-  .apeek-leave-active,
-  .ah {
+  .apeek-leave-active {
     transition: none;
   }
 }
-@media (max-width: 640px) {
-  .appr {
-    margin-inline: max(12px, var(--safe-left)) max(12px, var(--safe-right));
-  }
-}
 @media (pointer: coarse) {
-  .popt-key,
-  .abtns :deep(.ui-button__cap) {
+  .popt-key {
     display: none;
   }
 }
@@ -944,31 +850,19 @@ onUpdated(updateScrollSeams);
     min-height: 44px;
     padding: var(--space-3);
   }
-
-  .abtns {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .abtns > :deep(.ui-button) {
-    width: 100%;
-    min-width: 0;
-    min-height: 46px;
-    justify-content: center;
-    white-space: normal;
-  }
-  .abtns > :deep(.asession) {
-    margin-right: 0;
-  }
 }
 
-@container (max-width: 480px) {
-  .af { flex-direction: column; align-items: stretch; }
-  .abtns .amain {
-    order: -1;
-    grid-column: 1 / -1;
+@media (pointer: coarse) {
+  @container (max-width: 640px) {
+    .abtns > :deep(.asession) {
+      margin-right: 0;
+    }
   }
-  .abtns > :deep(.asession) {
-    grid-column: 1 / -1;
+
+  @container (max-width: 480px) {
+    .abtns > :deep(.asession) {
+      grid-column: 1 / -1;
+    }
   }
 }
 </style>

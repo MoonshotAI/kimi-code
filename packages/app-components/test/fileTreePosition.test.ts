@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { InsertPathMentionKey, RevealInFolderKey } from '@moonshot-ai/app-client/contracts';
-import { clientPinia, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { clientPinia, filesStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import FileTree from '../src/FileTree.vue';
@@ -270,6 +270,22 @@ describe('FileTreePositionMenu', () => {
     await nextTick();
     expect(useFileTreePosition().position.value).toBe('left');
     expect(window.localStorage.getItem(POSITION_KEY)).toBe('left');
+  });
+});
+
+describe('FileTreeSidebar root', () => {
+  it('loads the root again after its session tree is cleared', async () => {
+    const listDirectory = vi.fn().mockResolvedValue({ items: [], truncated: false });
+    setKimiClientDeps({ api: () => ({ listDirectory }) as unknown as KimiWebApi });
+    mount(FileTreeSidebar, { sessionId: 's-cleared', cwd: '/repo', selectedPath: null });
+    await vi.waitFor(() => expect(filesStore().fileTreeBySession['s-cleared']?.children['.']).toEqual([]));
+    expect(listDirectory).toHaveBeenCalledTimes(1);
+
+    filesStore().clearSessionFileTree('s-cleared');
+    await nextTick();
+
+    expect(listDirectory).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(filesStore().fileTreeBySession['s-cleared']?.children['.']).toEqual([]));
   });
 });
 

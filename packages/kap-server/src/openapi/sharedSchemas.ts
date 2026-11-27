@@ -7,6 +7,7 @@ import { openApiDocumentJsonSchema } from '../middleware/schema';
 import { ErrorCode } from '../protocol/error-codes';
 import { messageContentSchema } from '../protocol/message';
 import { sessionSchema } from '../protocol/session';
+import { sessionWorktreeSchema, worktreeHeldPromptSchema, worktreeSetupSchema } from '../protocol/worktree';
 
 const SCHEMA_REF_PREFIX = '#/components/schemas/';
 const MIN_SHARED_WEIGHT = 10;
@@ -26,6 +27,9 @@ interface Occurrence {
 
 const namedSchemas: ReadonlyArray<readonly [string, z.ZodType]> = [
   ['Session', sessionSchema],
+  ['SessionWorktree', sessionWorktreeSchema],
+  ['WorktreeSetup', worktreeSetupSchema],
+  ['WorktreeHeldPrompt', worktreeHeldPromptSchema],
   ['MessageContent', messageContentSchema],
   [
     'ErrorValidationFailedWithDetails',

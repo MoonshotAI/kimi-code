@@ -1,10 +1,27 @@
 import { toRaw, type ComputedRef } from 'vue';
-import { isDaemonApiError, isSessionOccupiedError } from '@moonshot-ai/app-core/api';
-import type { AppMessage, AppMessageContent, AppSession, AppWorkspace } from '@moonshot-ai/app-core/api';
-import { markSwarmPending, markThinkingPending, markTowerPending, skillIdentity, defaultSkillPath } from '@moonshot-ai/app-core/lib';
+import { isDaemonApiError, isSessionOccupiedError, WORKTREE_UNSUPPORTED_CODE } from '@moonshot-ai/app-core/api';
+import type {
+  AppMessage,
+  AppMessageContent,
+  AppSession,
+  AppWorkspace,
+  AppWorktreeHeldPrompt,
+  SessionWorktreeAction,
+  SessionWorktreeRetryInput,
+} from '@moonshot-ai/app-core/api';
+import {
+  defaultSkillPath,
+  isSessionWorktreeSettingUp,
+  markSwarmPending,
+  markThinkingPending,
+  markTowerPending,
+  sessionWorktreeBlocksSend,
+  sessionWorktreeHoldsPrompts,
+  skillIdentity,
+} from '@moonshot-ai/app-core/lib';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
-import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
+import { buildPromptContent, buildPromptMetadata, promptFromSentContent } from '../lib/browserReferenceSubmission';
 import { prepareMergedPromptSnapshots } from '../lib/composerMessageSnapshot';
 import { consumeSessionIntent, getKimiWebApi, t, type SessionCreatedSource } from './deps';
 import { markDraftPromotion } from './draftPromotion';
@@ -15,6 +32,7 @@ import { sideChatDrafts } from './sideChatDrafts';
 import { submitWithNetworkRetry } from './submitRetry';
 import type { ChatGateVerdict } from '../lib/chatGate';
 import { track } from '../contracts';
+import { useNewSessionEnvironment } from '../composables/useNewSessionEnvironment';
 import { modeStore } from '../stores/mode';
 import { modelsStore } from '../stores/models';
 import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
@@ -42,6 +60,7 @@ const MAX_QUEUE_FLUSH_FAILURES = 3;
 const COMPACT_RETRY_DELAY_MS = 1000;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
+const VALIDATION_FAILED_CODE = 40001;
 
 export interface PromptPipelineDeps {
   sideChat: UseSideChat;
@@ -95,6 +114,165 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     mapSendAuthFailure,
   });
   const pendingSubmitBySession = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+  const importedHeldFailures = new Set<string>();
+  const sentToWorktreeHold = new Map<string, { promptId: string; prompt: PromptEnvelope }>();
+  const worktreeWaitersBySession = new Map<string, Array<(ready: boolean) => void>>();
+
+  function sessionOf(sid: string): AppSession | undefined {
+    return sessionsStore().sessions.find((session) => session.id === sid);
+  }
+
+  function worktreeHoldsPrompts(sid: string): boolean {
+    return sessionWorktreeHoldsPrompts(sessionOf(sid));
+  }
+
+  function worktreeBlocksSend(sid: string): boolean {
+    return sessionWorktreeBlocksSend(sessionOf(sid));
+  }
+
+  function pendingHeldPrompt(sid: string): AppWorktreeHeldPrompt | undefined {
+    const held = sessionOf(sid)?.worktree?.heldPrompt;
+    return held?.failure === undefined ? held : undefined;
+  }
+
+  function worktreeGated(sid: string): boolean {
+    return worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid) || pendingHeldPrompt(sid) !== undefined;
+  }
+
+  function takeOptimisticMessage(sid: string, promptId: string): AppMessage | undefined {
+    const message = (promptStore().optimisticMessagesBySession[sid] ?? []).find(
+      (candidate) => candidate.metadata?.['kimiWeb.promptId'] === promptId,
+    );
+    if (message !== undefined) promptStore().removeOptimisticMessage(sid, message.id);
+    return message;
+  }
+
+  function heldPromptSnapshot(held: AppWorktreeHeldPrompt): PromptEnvelope['snapshot'] {
+    return held.metadata?.['kimi_code_composer'] as PromptEnvelope['snapshot'];
+  }
+
+  function heldPromptMessage(sid: string, held: AppWorktreeHeldPrompt): AppMessage {
+    const snapshot = heldPromptSnapshot(held);
+    const metadata = {
+      'kimiWeb.promptId': held.promptId,
+      ...(snapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': snapshot }),
+    };
+    if (held.kind === 'prompt') return buildOptimisticUserMessage(sid, nextOptimisticMsgId(), held.content, held.skills ?? [], metadata);
+    const skill = held.skill ?? { name: '' };
+    return buildOptimisticUserMessage(
+      sid,
+      nextOptimisticMsgId(),
+      [{ type: 'text', text: `/${skill.name}${skill.args ? ` ${skill.args}` : ''}` }, ...held.content],
+      [],
+      {
+        ...metadata,
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: skill.name, skillPath: skill.path, skillArgs: skill.args },
+      },
+    );
+  }
+
+  function showHeldPrompt(sid: string, held: AppWorktreeHeldPrompt): void {
+    const shown = promptStore().heldFirstPromptBySession[sid];
+    if (shown?.metadata?.['kimiWeb.promptId'] === held.promptId) return;
+    promptStore().holdFirstPrompt(sid, takeOptimisticMessage(sid, held.promptId) ?? heldPromptMessage(sid, held));
+  }
+
+  function heldPromptEnvelope(sid: string, held: AppWorktreeHeldPrompt): PromptEnvelope {
+    const sent = sentToWorktreeHold.get(sid);
+    if (sent?.promptId === held.promptId) return sent.prompt;
+    const snapshot = heldPromptSnapshot(held);
+    const restored = promptFromSentContent(held.content, sid, snapshot);
+    const attachments = restored.attachments;
+    if (held.kind === 'skill' && held.skill !== undefined) {
+      const { name, path, args } = held.skill;
+      return {
+        text: `/${name}${args ? ` ${args}` : ''}`,
+        snapshot,
+        attachments,
+        skills: [{ name, ...(path === undefined ? {} : { path }), ...(args === undefined ? {} : { args }) }],
+      };
+    }
+    return { text: restored.text, snapshot, attachments, skills: held.skills ?? [] };
+  }
+
+  function importFailedHeldPrompt(sid: string, held: AppWorktreeHeldPrompt): void {
+    const key = `${sid}\n${held.promptId}`;
+    if (importedHeldFailures.has(key)) return;
+    importedHeldFailures.add(key);
+    takeOptimisticMessage(sid, held.promptId);
+    const failure = new Error(held.failure?.msg ?? '');
+    if (!(promptStore().queuedBySession[sid] ?? []).some((entry) => entry.id === held.promptId)) {
+      promptStore().restoreQueueEntry(sid, { ...heldPromptEnvelope(sid, held), enqueuedAt: Date.now(), id: held.promptId });
+      promptStore().noteQueueFlushFailure(sid, held.promptId, MAX_QUEUE_FLUSH_FAILURES);
+    }
+    pushSendFailure('sendPrompt', failure, sid);
+  }
+
+  function settleWorktreeWaiters(sid: string, ready: boolean): void {
+    const waiters = worktreeWaitersBySession.get(sid);
+    worktreeWaitersBySession.delete(sid);
+    for (const resolve of waiters ?? []) resolve(ready);
+  }
+
+  function whenWorktreeSettles(sid: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      worktreeWaitersBySession.set(sid, [...(worktreeWaitersBySession.get(sid) ?? []), resolve]);
+    });
+  }
+
+  function syncWorktreeHold(sid: string): void {
+    const session = sessionOf(sid);
+    if (session === undefined) {
+      sentToWorktreeHold.delete(sid);
+      promptStore().releaseHeldFirstPrompt(sid);
+      settleWorktreeWaiters(sid, false);
+      return;
+    }
+    const held = session.worktree?.heldPrompt;
+    if (held !== undefined && held.failure === undefined) {
+      showHeldPrompt(sid, held);
+      return;
+    }
+    const shown = promptStore().releaseHeldFirstPrompt(sid);
+    if (held !== undefined) importFailedHeldPrompt(sid, held);
+    else if (shown !== undefined && !worktreeHoldsPrompts(sid)) promptStore().addOptimisticMessage(sid, shown);
+    sentToWorktreeHold.delete(sid);
+    if (worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid)) return;
+    if (held === undefined) resumeQueueIfIdle(sid);
+    settleWorktreeWaiters(sid, true);
+  }
+
+  async function activateSkill(
+    ...[skillName, args, attachments, sessionId, opts]: Parameters<UseModelProviderState['activateSkill']>
+  ): Promise<boolean> {
+    const sid = sessionId ?? sessionsStore().activeSessionId;
+    if (sid !== undefined && worktreeBlocksSend(sid)) return false;
+    if (sid !== undefined && worktreeGated(sid) && !(await whenWorktreeSettles(sid))) return false;
+    return modelProvider.activateSkill(skillName, args, attachments, sid, opts);
+  }
+
+  function applyWorktreeSession(session: AppSession): void {
+    sessionsStore().updateSession(session.id, (current) => ({
+      ...current,
+      cwd: session.cwd,
+      worktree: session.worktree,
+    }));
+    syncWorktreeHold(session.id);
+  }
+
+  async function runSessionWorktreeAction(
+    sid: string,
+    action: SessionWorktreeAction,
+    input?: SessionWorktreeRetryInput,
+  ): Promise<boolean> {
+    try {
+      applyWorktreeSession(await getKimiWebApi().sessionWorktreeAction(sid, action, input));
+      return true;
+    } catch (err) {
+      warningsStore().pushOperationFailure('sessionWorktree', err, { sessionId: sid });
+      return false;
+    }
+  }
 
   function createPromptEnvelope(input: PromptEnvelopeContent): PromptEnvelope {
     return {
@@ -122,23 +300,36 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   async function createSessionInWorkspace(
     ws: AppWorkspace,
     model: string | undefined,
+    opts?: { local?: boolean },
   ): Promise<{ session: AppSession; workspaceId: string | undefined }> {
     const api = getKimiWebApi();
-    const request = { cwd: ws.root, model };
+    const worktree = opts?.local === true ? undefined : useNewSessionEnvironment().worktreeRequest(ws.id);
+    const request = worktree === undefined ? { cwd: ws.root, model } : { cwd: ws.root, model, worktree };
     const workspaceId = ws.id === ws.root ? undefined : ws.id;
     const rootIsListed = workspacesStore().workspaces.some((w) => w.id === ws.id);
     const cwd = workspaceId === undefined || rootIsListed ? ws.root : undefined;
     let session: AppSession;
     try {
-      session = await api.createSession({ ...request, cwd, workspaceId });
+      try {
+        session = await api.createSession({ ...request, cwd, workspaceId });
+      } catch (err) {
+        if (!isDaemonApiError(err) || err.code !== WORKSPACE_NOT_FOUND_CODE) throw err;
+        session = await api.createSession({ ...request, workspaceId: undefined });
+      }
     } catch (err) {
-      if (!isDaemonApiError(err) || err.code !== WORKSPACE_NOT_FOUND_CODE) throw err;
-      session = await api.createSession({ ...request, workspaceId: undefined });
+      if (
+        worktree !== undefined &&
+        isDaemonApiError(err) &&
+        (err.code === VALIDATION_FAILED_CODE || err.code === WORKTREE_UNSUPPORTED_CODE)
+      ) {
+        void useNewSessionEnvironment().refreshBranches(ws.id);
+      }
+      throw err;
     }
     return { session, workspaceId: session.workspaceId };
   }
 
-  async function createDraftSession(workspaceId: string): Promise<string | null> {
+  async function createDraftSession(workspaceId: string, opts?: { local?: boolean }): Promise<string | null> {
     const ws = workspacesStore().mergedWorkspaces.find((w) => w.id === workspaceId);
     if (!ws) return null;
     const sessionSource = consumeSessionIntent('sidebar');
@@ -146,8 +337,15 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const draftThinkingExplicit = modeStore().draftThinkingExplicit;
     const draftPermission = permissionsStore().forDraftPrompt();
     const draftPick = modelsStore().resolveSendModel(null, { includeDraft: true }) ?? undefined;
-    const { session, workspaceId: workspaceIdForCreate } =
-      await createSessionInWorkspace(ws, draftPick);
+    const { session: createdSession, workspaceId: workspaceIdForCreate } =
+      await createSessionInWorkspace(ws, draftPick, opts);
+    const known = sessionOf(createdSession.id);
+    const session =
+      known?.worktree !== undefined &&
+      !sessionWorktreeHoldsPrompts(known) &&
+      sessionWorktreeHoldsPrompts(createdSession)
+        ? { ...createdSession, cwd: known.cwd, worktree: known.worktree }
+        : createdSession;
     modelsStore().setDraftModel(null);
     const sid = session.id;
     sessionListStore().notePoolInsert(sid);
@@ -219,7 +417,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       const sid = await createDraftSession(workspaceId);
       if (!sid) return { sessionId: null, promptRejected: false };
       createdId = sid;
-      const outcome = await submitPromptInternal(sid, prompt);
+      const outcome = await submitPromptInternal(sid, prompt, { throughWorktreeHold: true });
       return { sessionId: sid, promptRejected: outcome === 'rejected' };
     } catch (err) {
       warningsStore().pushOperationFailure('startSessionAndSendPrompt', err);
@@ -262,7 +460,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     if (!promptStore().tryBeginStartingFirstPrompt(workspaceId)) return null;
     let createdId: string | null = null;
     try {
-      const sid = await createDraftSession(workspaceId);
+      const sid = await createDraftSession(workspaceId, { local: true });
       if (!sid) return null;
       createdId = sid;
       const result = await sideChat.openSideChatOn(sid, prompt);
@@ -375,8 +573,9 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   async function submitPromptInternal(
     sid: string,
     prompt: PromptEnvelope,
-    opts?: { recoverConflicts?: boolean },
+    opts?: { recoverConflicts?: boolean; throughWorktreeHold?: boolean },
   ): Promise<'ok' | 'rejected'> {
+    if (opts?.throughWorktreeHold === true ? worktreeBlocksSend(sid) : worktreeGated(sid)) return 'rejected';
     const { sessionGenAtEntry, endFlight } = beginSubmitFlight(sid);
     const { text, skills } = prompt;
     const tempId = nextOptimisticMsgId();
@@ -418,6 +617,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
         : await attempt();
       if (result === null) return rollBackSubmit(sid, tempId);
       if (result.status === 'failed') throw new PromptFailedError(promptId);
+      if (opts?.throughWorktreeHold === true) sentToWorktreeHold.set(sid, { promptId, prompt });
 
       outcome = 'ok';
       return outcome;
@@ -436,7 +636,8 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     if (
       activity.value !== 'idle' ||
       promptStore().inFlightBySession[sid] ||
-      promptStore().isContinueTurnStarting(sid)
+      promptStore().isContinueTurnStarting(sid) ||
+      worktreeGated(sid)
     ) {
       return 'busy';
     }
@@ -466,7 +667,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
 
   function wouldSteerPrompt(sid?: string): boolean {
     const target = sid ?? sessionsStore().activeSessionId;
-    if (target === undefined) return false;
+    if (target === undefined || worktreeGated(target)) return false;
     return promptBacklog(target) !== 'clear' && steersIntoRunningTurn(target);
   }
 
@@ -477,6 +678,12 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   ): Promise<'ok' | 'rejected' | 'queued'> {
     const sid = sessionsStore().activeSessionId;
     if (!sid) return 'rejected';
+
+    if (worktreeBlocksSend(sid)) return 'rejected';
+    if (worktreeGated(sid)) {
+      enqueue(prompt, editText);
+      return 'queued';
+    }
 
     const backlog = promptBacklog(sid);
     if (backlog !== 'clear') {
@@ -737,6 +944,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   }
 
   function flushQueueHead(sid: string): void {
+    if (worktreeGated(sid)) return;
     if (promptStore().isSteerInFlight(sid)) return;
     if (promptStore().isCompactFlushHeld(sid)) return;
     const next = (promptStore().queuedBySession[sid] ?? [])[0];
@@ -823,6 +1031,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   async function abortCurrentPrompt(): Promise<boolean> {
     const sid = sessionsStore().activeSessionId;
     if (!sid) return false;
+    if (isSessionWorktreeSettingUp(sessionOf(sid))) return runSessionWorktreeAction(sid, 'cancel');
     const promptId = promptIdToAbort?.(sid);
     const api = getKimiWebApi();
 
@@ -924,6 +1133,9 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     continueSession,
     unqueue,
     reorderQueue,
+    syncWorktreeHold,
+    runSessionWorktreeAction,
+    activateSkill,
   };
 }
 

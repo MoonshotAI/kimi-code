@@ -190,7 +190,11 @@ const sessionId = client.activeSessionId;
 const scopeId = computed(() => props.draftScopeKey ?? sessionId.value);
 const running = computed(() => client.activity.value !== 'idle');
 const working = client.working;
-const stopButtonVisible = computed(() => (isSideChat.value ? Boolean(props.workingOverride) : working.value));
+const stopButtonVisible = computed(() =>
+  isSideChat.value
+    ? Boolean(props.workingOverride)
+    : working.value || client.activeSessionEnvironment.value === 'settingUp',
+);
 const starting = client.isStartingFirstPrompt;
 const queued = client.queued;
 const compacting = computed(() => client.compaction?.value?.status === 'running');
@@ -2983,7 +2987,7 @@ watch(
     towerOn,
     thinkingSuffix,
     () => status.value?.model,
-    () => working.value,
+    () => stopButtonVisible.value,
     gateVerdict,
     hostSetupId,
     () => models.value?.length,

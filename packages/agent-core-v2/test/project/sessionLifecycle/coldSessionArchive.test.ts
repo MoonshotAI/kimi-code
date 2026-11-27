@@ -8,6 +8,7 @@ import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IProjectService } from '#/app/project/project';
 import type { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
@@ -99,6 +100,7 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
     ],
     [IEventService, { publish: () => {} }],
     [ISessionLockService, new InMemorySessionLockService()],
+    [IProjectService, { get: async () => ({ root: '/workspace' }) }],
   ]);
 }
 
@@ -155,6 +157,28 @@ describe('setSessionArchivedBatch', () => {
       archived: true,
     });
     expect(typeof recorded[0]?.archivedAt).toBe('number');
+  });
+
+  it('indexes the directory the session works in, not the repository it was created from', async () => {
+    const recorded: SessionSummary[] = [];
+    await setSessionArchivedBatch(
+      coldPathAccessor({
+        indexSummary: { ...summary, cwd: '/wt/a' },
+        storeGet: async () => ({
+          id: 's1',
+          cwd: '/workspace',
+          environmentCwd: '/wt/a',
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+        }),
+        onMirrorRecord: (r) => recorded.push(r),
+      }),
+      ['s1'],
+      true,
+    );
+
+    expect(recorded).toMatchObject([{ cwd: '/wt/a', archived: true }]);
   });
 
   it('normalizes legacy v1 metadata before persisting and mirroring', async () => {

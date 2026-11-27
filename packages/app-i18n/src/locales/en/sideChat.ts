@@ -4,6 +4,7 @@ export default {
   placeholder: 'Ask a question about the current session…',
   send: 'Send',
   requiresSession: 'Open a session to use side chat',
+  waitsForWorktree: 'Side chat is available once the worktree is ready',
   closeConfirmTitle: 'Close side chat?',
   closeConfirmMessage: 'Closing will clear this side chat conversation and it cannot be recovered.',
   closeConfirmMultipleMessage: 'Closing {count} side chat tabs will clear their conversations and they cannot be recovered.',

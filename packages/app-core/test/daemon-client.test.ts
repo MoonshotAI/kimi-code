@@ -1412,7 +1412,7 @@ const BACKGROUND_READS: Array<{
   { name: 'git POST', call: (api, options) => api.getGitStatus('sess/1', { root: '/repo', paths: ['a.ts'] }, options), data: { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0 }, path: '/sessions/sess%2F1/fs:git_status', method: 'POST', body: { root: '/repo', paths: ['a.ts'] } },
   { name: 'diff POST', call: (api, options) => api.getFileDiff('sess/1', 'a.ts', { root: '/repo' }, options), data: { path: 'a.ts', diff: '', truncated: false }, path: '/sessions/sess%2F1/fs:diff', method: 'POST', body: { path: 'a.ts', root: '/repo' } },
   { name: 'PR POST', call: (api, options) => api.getPullRequest('sess/1', { root: '/repo' }, options), data: null, path: '/sessions/sess%2F1/fs:pull_request', method: 'POST', body: { root: '/repo' } },
-  { name: 'git batch POST', call: (api, options) => api.getGitStatusBatch('sess/1', { roots: ['/repo'], includePullRequest: false }, options), data: { results: {}, errors: {} }, path: '/sessions/sess%2F1/fs:git_status:batch', method: 'POST', body: { roots: ['/repo'], include_pull_request: false } },
+  { name: 'git batch POST', call: (api, options) => api.getGitStatusBatch('sess/1', { roots: ['/repo'], includePullRequest: false, includeUntracked: true }, options), data: { results: {}, errors: {} }, path: '/sessions/sess%2F1/fs:git_status:batch', method: 'POST', body: { roots: ['/repo'], include_pull_request: false, include_untracked: true } },
   { name: 'PR batch POST', call: (api, options) => api.getPullRequestBatch('sess/1', { roots: ['/repo'] }, options), data: { results: {}, errors: {} }, path: '/sessions/sess%2F1/fs:pull_request:batch', method: 'POST', body: { roots: ['/repo'] } },
 ];
 
@@ -1425,6 +1425,9 @@ const MIXED_READS: Array<{
   { name: 'session', call: (api, options) => api.getSession('sess/1', options), data: WIRE_SESSION, url: 'http://daemon.test/api/v1/sessions/sess%2F1' },
   { name: 'sessions', call: (api, options) => api.listSessions({ include: 'git', pageSize: 2 }, options), data: EMPTY_SESSIONS_PAGE, url: 'http://daemon.test/api/v1/sessions?page_size=2&include=git' },
   { name: 'session groups', call: (api, options) => api.listSessionGroups({ groupPageSize: 2 }, options), data: EMPTY_SESSIONS_PAGE, url: 'http://daemon.test/api/v1/sessions?view=by_workspace&group_page_size=2' },
+  { name: 'workspace branches', call: (api, options) => api.getWorkspaceGitBranches('ws/1', options), data: { is_repo: true, dirty: false, remotes: [], branches: [] }, url: 'http://daemon.test/api/v1/workspaces/ws%2F1/git/branches' },
+  { name: 'worktrees', call: (api, options) => api.listWorktrees(undefined, options), data: { items: [] }, url: 'http://daemon.test/api/v1/worktrees' },
+  { name: 'worktree sizes', call: (api, options) => api.listWorktrees({ refreshSizes: true }, options), data: { items: [] }, url: 'http://daemon.test/api/v1/worktrees?refresh=sizes' },
 ];
 
 describe('DaemonKimiWebApi background admission', () => {

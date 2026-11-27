@@ -83,11 +83,209 @@ export interface AppSession {
   parentSessionId?: string;
   pullRequest?: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
   hostId?: string;
+  worktree?: AppSessionWorktree;
+}
+
+export interface AppWorktreeBase {
+  ref: string;
+  remote: boolean;
+  commit?: string;
+}
+
+export interface AppWorktreeSetupRequest {
+  sourceBranch: string;
+  includeLocalChanges?: boolean;
+  useRemote?: boolean;
+}
+
+export type AppWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes' | 'include';
+
+export type AppWorktreeSetupStepState = 'pending' | 'running' | 'done' | 'failed' | 'stopped' | 'skipped';
+
+export interface AppWorktreeSetupStep {
+  kind: AppWorktreeSetupStepKind;
+  state: AppWorktreeSetupStepState;
+  ref?: string;
+  command?: string;
+  output?: string;
+  timedOut?: boolean;
+}
+
+export type AppWorktreeSetupFailureKind =
+  | 'fetch_failed'
+  | 'fetch_timeout'
+  | 'conflict'
+  | 'disk_full'
+  | 'create_failed';
+
+export interface AppWorktreeSetupFailure {
+  kind: AppWorktreeSetupFailureKind;
+  remoteRef?: string;
+  conflictFiles?: string[];
+  timeoutSeconds?: number;
+}
+
+export type AppWorktreeSetupStatus =
+  | 'running'
+  | 'ready'
+  | 'failed'
+  | 'stopped'
+  | 'local';
+
+export interface AppWorktreeSetup {
+  status: AppWorktreeSetupStatus;
+  purpose: 'create' | 'recreate';
+  request: AppWorktreeSetupRequest;
+  steps: AppWorktreeSetupStep[];
+  commandsRan: number;
+  startedAt: string;
+  endedAt?: string;
+  stoppedStep?: AppWorktreeSetupStepKind;
+  failure?: AppWorktreeSetupFailure;
+}
+
+export interface AppSessionWorktree {
+  path?: string;
+  branch?: string;
+  base?: AppWorktreeBase;
+  includedLocalChanges?: boolean;
+  missing?: boolean;
+  branchMissing?: boolean;
+  setup: AppWorktreeSetup;
+  heldPrompt?: AppWorktreeHeldPrompt;
+}
+
+export interface AppWorktreeHeldPrompt {
+  promptId: string;
+  kind: 'prompt' | 'skill';
+  createdAt: string;
+  content: AppMessageContent[];
+  skill?: AppSkillRef;
+  skills?: AppSkillRef[];
+  metadata?: Record<string, unknown>;
+  failure?: { code: number; msg: string };
+}
+
+export interface AppSkillRef {
+  name: string;
+  path?: string;
+  args?: string;
+}
+
+export interface AppWorktreeSessionRef {
+  id: string;
+  title: string;
+  archived: boolean;
+  busy: boolean;
+}
+
+export interface AppWorktree {
+  path: string;
+  name: string;
+  repoRoot: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  branch?: string;
+  origin: 'product' | 'external';
+  sizeBytes?: number;
+  sessions: AppWorktreeSessionRef[];
+}
+
+export interface AppWorktreeRisk {
+  path: string;
+  branch?: string;
+  uncommittedFiles: number;
+  unpushedCommits: number;
+  sessions: AppWorktreeSessionRef[];
+}
+
+export type AppGitBranchRemoteSource = 'upstream' | 'same_name';
+
+export interface AppGitBranch {
+  name: string;
+  committedAt: string;
+  remoteRef?: string;
+  remote?: string;
+  remoteSource?: AppGitBranchRemoteSource;
+}
+
+export interface WorkspaceGitBranches {
+  isRepo: boolean;
+  headBranch?: string;
+  dirty: boolean;
+  remotes: string[];
+  branches: AppGitBranch[];
+}
+
+export interface WorktreeList {
+  items: AppWorktree[];
+  totalSizeBytes?: number;
+}
+
+export interface WorktreeInspection {
+  items: AppWorktreeRisk[];
+  errors: Record<string, GitBatchError>;
+}
+
+export interface RemoveWorktreeInput {
+  path: string;
+  deleteBranch?: boolean;
+}
+
+export interface RemoveWorktreeResult {
+  removed: true;
+  branchDeleted: boolean;
+}
+
+export type WorktreeRemoveFailureReason = 'in_use' | 'session_busy' | 'unknown';
+
+export interface WorktreeRemoveFailure {
+  reason: WorktreeRemoveFailureReason;
+  output: string;
+}
+
+export interface WorktreeLookup {
+  repoRoot: string;
+  branch?: string;
+  workspace?: AppWorkspace;
+  sessionCount: number;
+}
+
+export type SessionWorktreeAction =
+  | 'retry'
+  | 'cancel'
+  | 'useLocal'
+  | 'recreate';
+
+export interface SessionWorktreeRetryInput {
+  includeLocalChanges?: boolean;
+  useRemote?: boolean;
+}
+
+export interface DeleteSessionInput {
+  removeWorktree?: boolean;
+  deleteBranch?: boolean;
+}
+
+export type DeleteSessionWorktreeOutcomeKind = 'removed' | 'kept_in_use' | 'missing' | 'failed';
+
+export interface DeleteSessionWorktreeOutcome {
+  outcome: DeleteSessionWorktreeOutcomeKind;
+  branchDeleted?: boolean;
+  otherSessions?: number;
+  output?: string;
+}
+
+export interface DeleteSessionResult {
+  deleted: true;
+  worktree?: DeleteSessionWorktreeOutcome;
 }
 
 export type SessionActivity = 'idle' | 'turn' | 'background';
 
 export type SessionsSort = 'updated_at_desc' | 'updated_at_asc' | 'created_at_desc';
+
+export type PullRequestStatus = 'found' | 'none' | 'unavailable' | 'failed';
 
 export interface GitStatusEntry {
   branch: string;
@@ -97,12 +295,25 @@ export interface GitStatusEntry {
   additions: number;
   deletions: number;
   pullRequest: { number: number; state: string; url: string } | null;
+  upstream?: string;
+  head?: string;
+  detached?: boolean;
+  statsError?: string;
+  pullRequestStatus?: PullRequestStatus;
+  pullRequestError?: string;
+}
+
+export interface PullRequestResult {
+  pullRequest: GitStatusEntry['pullRequest'];
+  status?: PullRequestStatus;
+  error?: string;
 }
 
 export interface GitStatusQuery {
   root?: string;
   paths?: string[];
   includePullRequest?: boolean;
+  includeUntracked?: boolean;
 }
 
 export interface GitBatchError {
@@ -117,6 +328,7 @@ export interface GitStatusBatchResult {
 
 export interface PullRequestBatchResult {
   results: Record<string, GitStatusEntry['pullRequest']>;
+  statuses: Record<string, { status?: PullRequestStatus; error?: string }>;
   errors: Record<string, GitBatchError>;
 }
 
@@ -310,7 +522,7 @@ export interface PromptSubmission {
   swarmMode?: boolean;
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel' | 'edit';
-  skills?: { name: string; path?: string; args?: string }[];
+  skills?: AppSkillRef[];
 }
 
 export interface PromptSubmitResult {
@@ -1062,7 +1274,7 @@ export interface KimiWebApi {
   listSessions(input?: ListSessionsInput, options?: ReadRequestOptions): Promise<SessionsPage>;
   listSessionIds(input?: ListSessionIdsInput): Promise<SessionIdsPage>;
   listSessionGroups(input?: ListSessionGroupsInput, options?: ReadRequestOptions): Promise<SessionGroupsPage>;
-  createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string; planMode?: boolean }): Promise<AppSession>;
+  createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string; planMode?: boolean; worktree?: AppWorktreeSetupRequest }): Promise<AppSession>;
   getSession(sessionId: string, options?: ReadRequestOptions): Promise<AppSession>;
   updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; towerMode?: boolean; towerBase?: string; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel' | 'edit'; thinking?: string }): Promise<AppSession>;
   evaluateSessionRating(sessionId: string, turnId: string): Promise<AppSessionRatingOffer | null>;
@@ -1087,7 +1299,8 @@ export interface KimiWebApi {
   restoreSession(sessionId: string): Promise<AppSession>;
   reloadSession(sessionId: string): Promise<AppSession>;
   takeoverSessionLock(sessionId: string): Promise<void>;
-  deleteSession(sessionId: string): Promise<{ deleted: true }>;
+  deleteSession(sessionId: string, input?: DeleteSessionInput): Promise<DeleteSessionResult>;
+  sessionWorktreeAction(sessionId: string, action: SessionWorktreeAction, input?: SessionWorktreeRetryInput): Promise<AppSession>;
   archiveSessions(ids: string[]): Promise<BatchSessionResponse>;
   restoreSessions(ids: string[]): Promise<BatchSessionResponse>;
   getAgentTurns(
@@ -1148,8 +1361,8 @@ export interface KimiWebApi {
   suggestFilesAtRoots(roots: readonly string[], input: { query: string; limit?: number; showHidden?: boolean }, opts?: { signal?: AbortSignal }): Promise<{ items: Array<{ path: string; name: string; kind: FsKind; score: number; matchPositions: number[] }>; truncated: boolean }>;
   grepFiles(sessionId: string, input: { pattern: string; regex?: boolean; caseSensitive?: boolean }): Promise<{ files: Array<{ path: string; matches: Array<{ line: number; col: number; text: string; before: string[]; after: string[] }> }>; filesScanned: number; truncated: boolean; elapsedMs: number }>;
   getGitStatus(sessionId: string, input?: GitStatusQuery, options?: ReadRequestOptions): Promise<GitStatusEntry>;
-  getPullRequest(sessionId: string, input?: { root?: string }, options?: ReadRequestOptions): Promise<GitStatusEntry['pullRequest']>;
-  getGitStatusBatch(sessionId: string, input: { roots: string[]; includePullRequest?: boolean }, options?: ReadRequestOptions): Promise<GitStatusBatchResult>;
+  getPullRequest(sessionId: string, input?: { root?: string }, options?: ReadRequestOptions): Promise<PullRequestResult>;
+  getGitStatusBatch(sessionId: string, input: { roots: string[]; includePullRequest?: boolean; includeUntracked?: boolean }, options?: ReadRequestOptions): Promise<GitStatusBatchResult>;
   getPullRequestBatch(sessionId: string, input: { roots: string[] }, options?: ReadRequestOptions): Promise<PullRequestBatchResult>;
   getFileDiff(sessionId: string, path: string, input?: { root?: string }, options?: ReadRequestOptions): Promise<{ path: string; diff: string; truncated: boolean }>;
   getFileDownloadUrl(sessionId: string, path: string, opts?: { allowExternalSymlinks?: boolean }): string;
@@ -1167,6 +1380,12 @@ export interface KimiWebApi {
   deleteWorkspace(id: string): Promise<void>;
   getWorkspaceTrust(workspaceId: string, options?: ReadRequestOptions): Promise<{ trusted: boolean }>;
   trustWorkspace(workspaceId: string): Promise<{ trusted: boolean }>;
+  getWorkspaceGitBranches(workspaceId: string, options?: ReadRequestOptions): Promise<WorkspaceGitBranches>;
+  listWorktrees(input?: { refreshSizes?: boolean }, options?: ReadRequestOptions): Promise<WorktreeList>;
+  inspectWorktrees(paths: string[]): Promise<WorktreeInspection>;
+  removeWorktree(input: RemoveWorktreeInput): Promise<RemoveWorktreeResult>;
+  lookupWorktree(path: string): Promise<WorktreeLookup | null>;
+  enclosingRepoRoot(path: string): Promise<string | null>;
   browseFs(path: string | undefined, signal?: AbortSignal): Promise<FsBrowseResult>;
   listHosts(): Promise<AppHost[]>;
   putHost(id: string, definition: AppHostDefinition): Promise<void>;

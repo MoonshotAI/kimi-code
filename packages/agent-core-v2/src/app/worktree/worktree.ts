@@ -61,11 +61,18 @@ export interface CreatedWorktree {
   readonly sourceDirty: boolean;
 }
 
+export interface CopyIncludedFilesInput {
+  readonly sourceRoot: string;
+  readonly worktreePath: string;
+}
+
 export interface InspectWorktreeRemovalInput {
   readonly repoRoot: string;
   readonly path: string;
   readonly deleteBranch: boolean;
   readonly excludeSessionId?: string;
+  readonly excludeSessionIds?: readonly string[];
+  readonly removedTogether?: readonly string[];
 }
 
 export interface WorktreeRemovalCheck {
@@ -104,6 +111,7 @@ export interface IWorktreeService {
   worktreesDir(repoRoot: string): string;
   list(cwd: string): Promise<WorktreeListing>;
   create(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree>;
+  copyIncludedFiles(input: CopyIncludedFilesInput, options?: { readonly signal?: AbortSignal }): Promise<readonly string[]>;
   inspectRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck>;
   remove(input: RemoveWorktreeInput): Promise<void>;
 }

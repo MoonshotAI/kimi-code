@@ -42,6 +42,7 @@ interface MountOptions {
   hosts?: AppHost[];
   manageHosts?: () => void;
   importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
+  enclosingRepoRoot?: (dir: string) => Promise<string | null>;
   busy?: boolean;
   primaryImmutable?: boolean;
 }
@@ -61,6 +62,7 @@ function mountDialog(opts: MountOptions = {}) {
         hosts: opts.hosts,
         manageHosts: opts.manageHosts,
         importProjectConfig: opts.importProjectConfig,
+        enclosingRepoRoot: opts.enclosingRepoRoot,
         busy: opts.busy,
         primaryImmutable: opts.primaryImmutable,
         onSubmit: submit,
@@ -260,6 +262,22 @@ describe('WorkspaceEditDialog create mode', () => {
     expect(dirRows()).toHaveLength(1);
     expect(primaryRow()?.textContent).toContain('second');
     expect(nameInput().value).toBe('second');
+  });
+
+  it('warns when the primary directory is a subfolder of a git repository', async () => {
+    const enclosingRepoRoot = vi.fn(async (dir: string) => (dir === '/code/repo/app' ? '/code/repo' : null));
+    mountDialog({ initialDirs: ['/code/repo/app', '/code/other'], enclosingRepoRoot });
+    await vi.waitFor(() => expect(primaryRow()?.querySelector('[data-dir-warning="subfolder"]')).not.toBeNull());
+
+    expect(primaryRow()?.querySelector('[data-dir-warning="subfolder"]')?.textContent).toContain(
+      'Subfolder of the Git repository repo',
+    );
+    expect(dirRows()[1]?.querySelector('[data-dir-warning]')).toBeNull();
+
+    dirRows()[1]!.querySelector<HTMLButtonElement>('.we-dir-primary')!.click();
+    await vi.waitFor(() => expect(enclosingRepoRoot).toHaveBeenCalledWith('/code/other'));
+    await nextTick();
+    expect(document.querySelector('[data-dir-warning]')).toBeNull();
   });
 
   it('disables submit while the name is blank', async () => {
