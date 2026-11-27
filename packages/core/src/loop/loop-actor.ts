@@ -436,7 +436,7 @@ class LoopActor implements Loop {
   }
 
   get state(): LoopState {
-    const { profile, messages, nextTurnId, unfinished } = this.durable;
+    const { profile, messages, nextTurnId, unfinished, danglingToolCallIds } = this.durable;
     const live = this.turn;
     const current = live !== undefined
       ? {
@@ -459,6 +459,7 @@ class LoopActor implements Loop {
       profile,
       messages,
       nextTurnId,
+      danglingToolCallIds,
       completionPending: this.hasPendingCompletions,
       calls: Array.from(this.tools.values(), (slot) => ({
         toolCall: slot.toolCall,

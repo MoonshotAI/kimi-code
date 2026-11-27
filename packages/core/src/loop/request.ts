@@ -47,6 +47,34 @@ export function requestProfileOf(profile: LoopProfile): LlmRequestProfile {
   };
 }
 
+export function pairedRequestMessages(
+  messages: readonly Message[],
+  danglingToolCallIds?: ReadonlySet<string>,
+): readonly Message[] {
+  if (danglingToolCallIds !== undefined && danglingToolCallIds.size === 0) return messages;
+  let edits: Map<number, Message> | undefined;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    if (message.role !== 'assistant' || message.toolCalls.length === 0) continue;
+    const answered = new Set<string>();
+    for (let cursor = index + 1; cursor < messages.length; cursor += 1) {
+      const next = messages[cursor]!;
+      if (next.role === 'assistant') break;
+      if (next.role === 'tool') answered.add(next.toolCallId);
+    }
+    const dangling = (id: string): boolean =>
+      !answered.has(id) && (danglingToolCallIds === undefined || danglingToolCallIds.has(id));
+    if (!message.toolCalls.some((call) => dangling(call.id))) continue;
+    edits ??= new Map();
+    edits.set(index, {
+      ...message,
+      toolCalls: message.toolCalls.filter((call) => !dangling(call.id)),
+    });
+  }
+  if (edits === undefined) return messages;
+  return messages.map((message, index) => edits.get(index) ?? message);
+}
+
 export function normalizeLlmOutcome(value: unknown): LlmOutcome {
   return isLlmOutcome(value) ? value : failedOutcome(new Error('invalid llm outcome'));
 }
@@ -90,7 +118,7 @@ export function runLoopRequest(
     let outcome: LlmOutcome;
     try {
       const prepared = requester.with({
-        content: { messages: input.messages },
+        content: { messages: pairedRequestMessages(input.messages) },
         profile: requestProfileOf(input.profile),
         policy: input.policy,
         attributes: { kind: 'loop', turnId: input.turnId, step: input.step },

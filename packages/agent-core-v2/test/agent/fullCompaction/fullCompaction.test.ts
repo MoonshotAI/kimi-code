@@ -1599,7 +1599,7 @@ describe('FullCompaction', () => {
   const testkitTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures(permissionModeServices('yolo')));
 
   testkitTest(
-    'sends turn and compaction requests the same raw history for a failed turn with unanswered tool calls',
+    'sends turn and compaction requests the same paired history for a failed turn with unanswered tool calls',
     async ({ agent: ctx, model }) => {
       const lookupTool: ExecutableTool<{ query: string }> = {
         name: 'Lookup',
@@ -1638,6 +1638,8 @@ describe('FullCompaction', () => {
       ]);
       const projectedAssistant = loop.history().find((message) => message.role === 'assistant');
       expect(projectedAssistant?.role === 'assistant' ? projectedAssistant.toolCalls : []).toEqual([]);
+      const previewAssistant = loop.previewRequestContent().messages.find((message) => message.role === 'assistant');
+      expect(previewAssistant?.role === 'assistant' ? previewAssistant.toolCalls : []).toEqual([]);
 
       model.script(say('turn two ok'));
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
@@ -1655,10 +1657,13 @@ describe('FullCompaction', () => {
       for (const request of [turnRequest, compactionRequest]) {
         const messages = request.view.messages;
         const assistantIndex = messages.findIndex((message) => message.role === 'assistant');
-        expect(messages[assistantIndex]?.calls.map((entry) => entry.id)).toEqual(['call_dangling']);
-        const placeholder = messages[assistantIndex + 1];
-        expect(placeholder).toMatchObject({ role: 'tool', callId: 'call_dangling' });
-        expect(placeholder?.text).toContain('Tool result is not available in the current context');
+        expect(messages[assistantIndex]).toMatchObject({
+          role: 'assistant',
+          text: 'I will call Lookup.',
+          calls: [],
+        });
+        expect(messages[assistantIndex + 1]).toMatchObject({ role: 'user', text: 'continue' });
+        expect(messages.some((message) => message.role === 'tool' && message.callId === 'call_dangling')).toBe(false);
       }
       expect(compactionRequest.view.messages.slice(0, turnRequest.view.messages.length)).toEqual(
         turnRequest.view.messages,

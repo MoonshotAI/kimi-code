@@ -24,6 +24,7 @@ import type { AgentLoopService, LoopInterruptReason } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
 import {
   MAX_STEPS_REASON,
+  pairedRequestMessages,
   type Loop,
   type LoopEmitted,
   type StepStartingDecision,
@@ -162,12 +163,14 @@ export class AgentTurnProjection {
   private readonly promptOnlyTurnIds = new Set<number>();
   private readonly publishedPromptTurns = new Set<number>();
   private readonly turnTriggers = new Map<number, TurnTrigger>();
-  private readonly entryTurnIds = new WeakMap<Message, number>();
-  private readonly failedTurnIds = new Set<number>();
   private readonly toolDurations = new Map<string, number>();
   private readonly toolNotes = new Map<string, string>();
   private readonly ending = new Set<Promise<void>>();
-  private historyView: { readonly source: readonly Message[]; readonly messages: readonly ContextMessage[] } | undefined;
+  private historyView: {
+    readonly source: readonly Message[];
+    readonly danglingToolCallIds: ReadonlySet<string> | undefined;
+    readonly messages: readonly ContextMessage[];
+  } | undefined;
 
   constructor(private readonly options: TurnProjectionOptions) {}
 
@@ -205,29 +208,20 @@ export class AgentTurnProjection {
     return completed ? this.lastRequestId : (this.activeRequestId ?? this.lastRequestId);
   }
 
-  history(source: readonly Message[]): readonly ContextMessage[] {
+  history(source: readonly Message[], danglingToolCallIds?: ReadonlySet<string>): readonly ContextMessage[] {
     const previous = this.historyView;
-    if (previous?.source === source) return previous.messages;
-    const answered = new Map<number, Set<string>>();
-    for (const entry of source) {
-      const turnId = this.entryTurnIds.get(entry);
-      if (turnId === undefined || !this.failedTurnIds.has(turnId) || entry.role !== 'tool') continue;
-      const calls = answered.get(turnId) ?? new Set<string>();
-      calls.add(entry.toolCallId);
-      answered.set(turnId, calls);
-    }
-    const messages = source.map((entry, index) => {
-      const turnId = this.entryTurnIds.get(entry);
-      const failed = turnId !== undefined && this.failedTurnIds.has(turnId);
-      if (!failed && previous?.source[index] === entry) return previous.messages[index]!;
-      return this.contextForHistory(entry, failed, turnId === undefined ? undefined : answered.get(turnId));
+    if (previous?.source === source && previous.danglingToolCallIds === danglingToolCallIds) return previous.messages;
+    const paired = pairedRequestMessages(source, danglingToolCallIds);
+    const messages = paired.map((entry, index) => {
+      if (previous?.source[index] === entry) return previous.messages[index]!;
+      return this.contextForHistory(entry);
     });
-    this.historyView = { source, messages };
+    this.historyView = { source, danglingToolCallIds, messages };
     return messages;
   }
 
-  private contextForHistory(entry: Message, failed = false, answered?: ReadonlySet<string>): ContextMessage {
-    const message = liveContextFromHistoryEntry(entry, failed, answered);
+  private contextForHistory(entry: Message): ContextMessage {
+    const message = contextFromHistoryEntry(entry);
     if (message.role !== 'tool') return message;
     let projected = message;
     const note = this.toolNotes.get(message.toolCallId);
@@ -448,11 +442,6 @@ export class AgentTurnProjection {
   project(event: LoopEmitted, loop: Loop): void {
     if (event.type === 'turn.started') this.turnTriggers.set(event.turnId, event.trigger);
     if (event.type === 'turn.started' && event.promptOnly === true) this.promptOnlyTurnIds.add(event.turnId);
-    if (event.type === 'message.appended') this.entryTurnIds.set(event.message, event.turnId);
-    if (event.type === 'turn.ended' && event.outcome.type === 'failed') {
-      this.failedTurnIds.add(event.turnId);
-      this.historyView = undefined;
-    }
     const ending = this.projectNow(event, loop);
     if (ending !== undefined) {
       this.ending.add(ending);
@@ -1057,12 +1046,6 @@ function normalizeFinishReason(reason: FinishReason): string {
   if (reason === 'completed') return 'end_turn';
   if (reason === 'truncated') return 'max_tokens';
   return reason;
-}
-
-function liveContextFromHistoryEntry(entry: Message, failed = false, answered?: ReadonlySet<string>): ContextMessage {
-  const message = contextFromHistoryEntry(entry);
-  if (!failed || message.role !== 'assistant' || message.toolCalls.length === 0) return message;
-  return { ...message, toolCalls: message.toolCalls.filter((call) => answered?.has(call.id) === true) };
 }
 
 function interruptReasonFor(result: Extract<TurnResult, { readonly type: 'cancelled' | 'failed' }>): TurnInterruptReason {

@@ -125,6 +125,7 @@ import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
   createMaxStepsHook,
+  pairedRequestMessages,
   type Loop,
   type LoopEmitted,
   type FullLoopLlmRequester,
@@ -531,7 +532,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   history(): readonly ContextMessage[] {
-    return this.turns.history(this.rawHistory());
+    return this.turns.history(this.rawHistory(), this.loop?.state.danglingToolCallIds);
   }
 
   rawHistory(): readonly Message[] {
@@ -542,7 +543,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
       tools: this.baselineTools(),
-      messages: this.rawHistory(),
+      messages: pairedRequestMessages(this.rawHistory(), this.loop?.state.danglingToolCallIds),
     };
   }
 

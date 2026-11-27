@@ -3,6 +3,7 @@ import type { UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
 import type { LoopProfile } from './contract/profile';
 import { type TurnOutcome } from './contract/outcome';
+import { trailingCalls } from './state';
 
 interface Event {
   readonly type: string;
@@ -80,7 +81,10 @@ export interface LoopRecordState {
   readonly turns: readonly TurnPosition[];
   readonly unfinished?: UnfinishedTurn;
   readonly notify: readonly UserMessage[];
+  readonly danglingToolCallIds: ReadonlySet<string>;
 }
+
+const NO_DANGLING_TOOL_CALLS: ReadonlySet<string> = new Set<string>();
 
 function withUnfinished(state: LoopRecordState, unfinished: UnfinishedTurn | undefined): LoopRecordState {
   const { unfinished: _, ...rest } = state;
@@ -107,13 +111,13 @@ function appended(state: LoopRecordState, event: Extract<LoopRecord, { type: 'me
 
 export function loopProjection(): Projection<LoopRecordState, LoopRecord> {
   return {
-    initial: () => ({ profile: {}, messages: [], nextTurnId: 0, turns: [], notify: [] }),
+    initial: () => ({ profile: {}, messages: [], nextTurnId: 0, turns: [], notify: [], danglingToolCallIds: NO_DANGLING_TOOL_CALLS }),
     reduce: (state, { seq, event }) => {
       switch (event.type) {
         case 'message.appended':
           return appended(state, event);
         case 'context.settled':
-          return { ...state, messages: event.messages };
+          return { ...state, messages: event.messages, danglingToolCallIds: NO_DANGLING_TOOL_CALLS };
         case 'system_prompt.settled':
           return { ...state, profile: { ...state.profile, systemPrompt: event.systemPrompt } };
         case 'tools.settled':
@@ -137,7 +141,7 @@ export function loopProjection(): Projection<LoopRecordState, LoopRecord> {
           return state.unfinished?.turnId === event.turnId ? { ...state, unfinished: { ...state.unfinished, stepUnfinished: false } } : state;
         case 'turn.ended': {
           const index = state.turns.findLastIndex((turn) => turn.turnId === event.turnId);
-          return withUnfinished(
+          const next = withUnfinished(
             {
               ...state,
               nextTurnId: Math.max(state.nextTurnId, event.turnId + 1),
@@ -145,6 +149,12 @@ export function loopProjection(): Projection<LoopRecordState, LoopRecord> {
             },
             state.unfinished?.turnId === event.turnId ? undefined : state.unfinished,
           );
+          if (event.outcome.type !== 'failed' && event.outcome.type !== 'aborted') return next;
+          const { unresolved } = trailingCalls(next.messages);
+          if (unresolved.length === 0) return next;
+          const danglingToolCallIds = new Set(next.danglingToolCallIds);
+          for (const call of unresolved) danglingToolCallIds.add(call.id);
+          return { ...next, danglingToolCallIds };
         }
         default:
           return state;
