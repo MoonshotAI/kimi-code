@@ -1,4 +1,4 @@
-# Tower multi-agent collaboration
+# Tower multi-agent collaboration (Experimental)
 
 Tower is an experimental multi-agent collaboration mode. It splits larger development tasks into missions (subtasks) that workers execute asynchronously in parallel within a Git repository, reducing the time spent waiting on sequential work.
 
@@ -124,7 +124,7 @@ You can explicitly choose the model for an individual new spawn in a normal mess
 - "Spawn the worker agent-docs with smart/slow."
 - "Use smart/slow for the reviewer of feat/build-gemm."
 
-When a pool is configured, the only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); without a pool, any explicit `model` is rejected, and aliases that exist only in `[models]` are rejected as well. The `model` parameter is always present, including with single-entry pools, so a reviewer can explicitly use the pool model.
+When a pool is configured, the only allowed choices are aliases from `[secondary_model.models]` or a lone `default_model`. Without a pool, any explicit `model` is rejected, including aliases that exist only in `[models]`. The `model` parameter is always present, even for single-entry pools, so a reviewer can explicitly use the pool model.
 
 To control token costs, set the pool default to a cheaper model: workers use it by default, and either workers or reviewers can override their own default for a single spawn by passing an explicit pool alias.
 

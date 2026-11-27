@@ -192,7 +192,7 @@ This subcommand has no flags. Press `Ctrl-C` at any time during polling to cance
 
 ### `kimi acp`
 
-Switch Kimi Code CLI to ACP (Agent Client Protocol) mode, communicating with an IDE via JSON-RPC over stdin/stdout so the editor can directly drive kimi's sessions and tool calls. You typically do not need to run this manually — the IDE starts it as a subprocess entry point. For configuration, see [Using in IDEs](../guides/ides.md); for technical details, see the [kimi acp reference](./kimi-acp.md).
+Switch Kimi Code CLI to ACP (Agent Client Protocol) mode, communicating with an IDE via JSON-RPC over stdin/stdout so the editor can directly drive kimi's sessions and tool calls. You typically do not need to run this manually — the IDE starts it as a subprocess entry point. For configuration, see [Using in IDEs](../customization/ides.md); for technical details, see the [kimi acp reference](./kimi-acp.md).
 
 ```sh
 kimi acp
@@ -202,7 +202,7 @@ kimi acp
 
 Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down on `SIGINT` or `SIGTERM`, for example when you press `Ctrl-C`. A successful shutdown exits with code `0`. On a cleanup failure, the command reports the error on `stderr` even with server logging off and exits with code `1`.
 
-When the server is running, `GET /api/v1/kap.md` returns the version-matched KAP runtime guide, `GET /openapi.json` returns the REST OpenAPI document, and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For interacting with or handing off sessions from other agents, see [Using in Other Agents (Agent to Agent)](../guides/other-agents.md).
+When the server is running, `GET /api/v1/kap.md` returns the version-matched KAP runtime guide, `GET /openapi.json` returns the REST OpenAPI document, and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For interacting with or handing off sessions from other agents, see [Using in Other Agents (Agent to Agent)](../customization/other-agents.md).
 
 ```sh
 kimi web                 # run the server in the foreground and open the browser
@@ -222,7 +222,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
 | `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
-| `--json` | Machine-readable startup mode: skips opening the browser, mints an in-memory bearer token for this process, prints a single JSON line (`{ origin, ws_url, token, kimi_agent_protocol_version }`) on `stdout` once ready, and routes logs to `stderr` |
+| `--json` | Machine-readable startup mode: skips opening the browser, mints an in-memory bearer token for this process, prints a single JSON line containing `origin`, `ws_url`, `token`, and `kimi_agent_protocol_version` on `stdout` once ready, and routes logs to `stderr` |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 

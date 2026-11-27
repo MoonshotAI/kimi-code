@@ -95,9 +95,46 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 | `NotifyUser` | Auto-allow | Show the user a short progress update mid-turn |
 | `Skill` | Auto-allow | Invoke a registered inline Skill |
 
-**`Agent`** delegates a subtask to a sub-Agent. Required parameters: `prompt` (complete task description) and `description` (a 3–5 word short summary). Optional parameters: `subagent_type` (defaults to `coder`), `resume` (ID of an existing Agent to resume; mutually exclusive with `subagent_type`), `run_in_background` (defaults to false), and `model` (a [subagent model pool](../configuration/config-files.md#subagent-model-pool) alias announced via system reminder; rejected without a configured pool or when resuming). Without it, the subagent binds the pool's `default_model`; without a configured pool, subagents always inherit the caller's model. Agent tasks time out after 2 hours by default; the limit is configurable via `[subagent] timeout_ms` in `config.toml` (`0` = no timeout, or the `KIMI_SUBAGENT_TIMEOUT_MS` env var), and defaults to no timeout in print mode (`kimi -p`). In foreground mode the parent Agent waits for the sub-Agent to complete before continuing; in background mode a task ID is returned immediately and the result is automatically delivered back to the main Agent via a synthetic User message when done. If a subagent is stopped, times out, or fails before it finishes, the parent Agent still receives the text the subagent wrote during that run, marked as incomplete. When several foreground `Agent` calls run in the same step, the TUI groups them and shows each subagent's running, waiting, completed, or failed status with elapsed time. See [Agent & Sub-Agents](../customization/agents.md) for details.
+**`Agent`** delegates a subtask to a sub-Agent.
 
-**`AgentSwarm`** launches subagents from a shared `prompt_template` and an `items` array, resumes existing subagents through `resume_agent_ids`, or combines both in one call. It runs only while swarm mode is on, and only you can turn swarm mode on (for example with `/swarm`); when swarm mode is off, the call is rejected and no subagents start. The template must contain the `{{item}}` placeholder; each item replaces that placeholder and launches one new subagent. Pass `subagent_type` to choose the profile used by every spawned subagent in the swarm, or omit it to use `coder`. Pass `model` to run item-spawned subagents on a [subagent model pool](../configuration/config-files.md#subagent-model-pool) alias (rejected without a configured pool). Without it, item-spawned subagents bind the pool's `default_model`; without a configured pool, they inherit the caller's model. Resumed subagents keep their own model, and passing `model` without `items` is rejected. Without `resume_agent_ids`, the tool requires at least 2 items; with `resume_agent_ids`, it can resume one or more existing subagents. The tool supports up to 128 total subagents, waits for all subagents to finish, and returns an aggregated report. Each subagent times out after 2 hours by default; the limit is configurable via [`[swarm] timeout_ms`](../configuration/config-files.md#swarm) in `config.toml` (`0` = no timeout, or the `KIMI_CODE_SWARM_TIMEOUT_MS` env var), and defaults to no timeout in print mode (`kimi -p`). A timed-out subagent is aborted and marked as failed in the aggregated report. In the TUI, foreground swarms show a live `Agent swarm` progress panel above the input box. If a model response calls `AgentSwarm`, that call must be the only tool call in the response; to run multiple swarms, call one `AgentSwarm`, wait for its result, then call the next, or combine the work into one swarm when a single template can cover it. While swarm mode is on, `AgentSwarm` is auto-approved. Permission rules match `AgentSwarm` by tool name only — argument patterns such as `AgentSwarm(swarm)` are not supported. By default the tool ramps up concurrency without an upper limit (5 subagents start immediately, then 1 more every 700 ms); set `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` to a positive integer to cap how many subagents run at the same time during that ramp, or leave it unset for no cap. If it is set to a value that is not a positive integer, the AgentSwarm call fails fast.
+| Parameter | Requirement | Description |
+| --- | --- | --- |
+| `prompt` | Required | Complete task description |
+| `description` | Required | A 3–5 word short summary |
+| `subagent_type` | Optional | Agent profile; defaults to `coder` |
+| `resume` | Optional | ID of an existing Agent to resume; mutually exclusive with `subagent_type` |
+| `run_in_background` | Optional | Defaults to false |
+| `model` | Optional | A [subagent model pool](../configuration/config-files.md#subagent-model-pool) alias announced via system reminder; rejected without a configured pool or when resuming |
+
+Without `model`, the subagent binds the pool's `default_model`. Without a configured pool, subagents always inherit the caller's model.
+
+Agent tasks time out after 2 hours by default. Configure the limit with `[subagent] timeout_ms` in `config.toml` or the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable. A value of `0` means no timeout. Print mode started with `kimi -p` defaults to no timeout.
+
+In foreground mode, the parent Agent waits for the sub-Agent to complete before continuing. In background mode, a task ID is returned immediately and the result is automatically delivered back to the main Agent via a synthetic User message when done. If a subagent is stopped, times out, or fails before it finishes, the parent Agent still receives the text the subagent wrote during that run, marked as incomplete.
+
+When several foreground `Agent` calls run in the same step, the TUI groups them and shows each subagent's running, waiting, completed, or failed status with elapsed time. See [Agent & Sub-Agents](../customization/agents.md) for details.
+
+**`AgentSwarm`** launches subagents from a shared `prompt_template` and an `items` array, resumes existing subagents through `resume_agent_ids`, or combines both in one call. It runs only after you enable swarm mode manually, for example with `/swarm`. Calls made while swarm mode is off are rejected and no subagents start.
+
+| Parameter | Requirement | Description |
+| --- | --- | --- |
+| `prompt_template` | Required for new items | Template that must contain the <code v-pre>{{item}}</code> placeholder |
+| `items` | Required for new items | Each item replaces the placeholder and launches one new subagent |
+| `resume_agent_ids` | Optional | Existing subagents to resume; can be combined with `items` |
+| `subagent_type` | Optional | Profile used by every spawned subagent; defaults to `coder` |
+| `model` | Optional | A [subagent model pool](../configuration/config-files.md#subagent-model-pool) alias for item-spawned subagents; rejected without a configured pool |
+
+Without `model`, item-spawned subagents bind the pool's `default_model`. Without a configured pool, they inherit the caller's model. Resumed subagents keep their own model. Passing `model` without `items` is rejected.
+
+Without `resume_agent_ids`, the tool requires at least 2 items. With `resume_agent_ids`, it can resume one or more existing subagents. The tool supports up to 128 total subagents, waits for all of them to finish, and returns an aggregated report.
+
+Each subagent times out after 2 hours by default. Configure the limit with [`[swarm] timeout_ms`](../configuration/config-files.md#swarm) in `config.toml` or the `KIMI_CODE_SWARM_TIMEOUT_MS` environment variable. A value of `0` means no timeout. Print mode started with `kimi -p` defaults to no timeout. A timed-out subagent is aborted and marked as failed in the aggregated report.
+
+In the TUI, foreground swarms show a live `Agent swarm` progress panel above the input box. If a model response calls `AgentSwarm`, that call must be the only tool call in the response. To run multiple swarms, call one, wait for its result, then call the next, or combine the work into one swarm when a single template can cover it.
+
+While swarm mode is on, `AgentSwarm` is auto-approved. Permission rules match it by tool name only; argument patterns such as `AgentSwarm(swarm)` are not supported.
+
+By default, the tool ramps up concurrency without an upper limit: 5 subagents start immediately, then 1 more starts every 700 ms. Set `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` to a positive integer to cap how many subagents run at the same time during that ramp, or leave it unset for no cap. A value that is not a positive integer makes the AgentSwarm call fail fast.
 
 **`AskUserQuestion`** asks the user a structured multiple-choice question — useful for disambiguation or option selection. The `questions` parameter accepts 1–4 questions; each question requires `question` (ending with `?`), `options` (2–4 choices, each with a `label` and `description`), and optional `header` (max 12 characters) and `multi_select` (defaults to false). An "Other" option is appended automatically. In Kimi Code for VS Code, multi-question prompts provide Back navigation and preserve previously selected or custom answers while moving between questions. Setting `background` to true starts a background question task and returns a task ID immediately; the question stays open after the turn ends, and the answer is delivered to the Agent as a notification once the user responds. When the host does not support interactive questioning, a failure message is returned and the Agent should ask the user directly in a text reply instead.
 

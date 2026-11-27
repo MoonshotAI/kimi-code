@@ -192,7 +192,7 @@ kimi login
 
 ### `kimi acp`
 
-把 Kimi Code CLI 切换到 ACP（Agent Client Protocol）模式，在标准输入/输出上以 JSON-RPC 形式与 IDE 对话，让编辑器直接驱动 kimi 的会话和工具调用。通常不需要手动运行——IDE 会把它作为子进程入口启动。配置方式见[在 IDE 中使用](../guides/ides.md)，技术细节见 [kimi acp 参考](./kimi-acp.md)。
+把 Kimi Code CLI 切换到 ACP（Agent Client Protocol）模式，在标准输入/输出上以 JSON-RPC 形式与 IDE 对话，让编辑器直接驱动 kimi 的会话和工具调用。通常不需要手动运行——IDE 会把它作为子进程入口启动。配置方式见[在 IDE 中使用](../customization/ides.md)，技术细节见 [kimi acp 参考](./kimi-acp.md)。
 
 ```sh
 kimi acp
@@ -202,7 +202,7 @@ kimi acp
 
 在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令收到 `SIGINT` 或 `SIGTERM`（例如按 `Ctrl-C`）时开始关闭。成功关闭时退出码为 `0`。清理失败时，即使关闭了服务日志，命令也会将错误写入 `stderr` 并以退出码 `1` 退出。
 
-服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[在其他 Agent 中使用（Agent to Agent）](../guides/other-agents.md)。
+服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[在其他 Agent 中使用（Agent to Agent）](../customization/other-agents.md)。
 
 ```sh
 kimi web                 # 前台运行服务并打开浏览器
@@ -222,7 +222,7 @@ kimi web --port 58628    # 指定绑定端口
 | `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
 | `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
 | `--no-open` | 就绪后不自动打开浏览器 |
-| `--json` | 以机器可读模式启动：不自动打开浏览器，为当前进程生成一次性内存 token，就绪后向 `stdout` 输出单行 JSON（含 `origin`、`ws_url`、`token`、`kimi_agent_protocol_version`），日志输出到 `stderr` |
+| `--json` | 以机器可读模式启动：不自动打开浏览器，为当前进程生成一次性内存 token，就绪后向 `stdout` 输出单行 JSON，其中包含 `origin`、`ws_url`、`token`、`kimi_agent_protocol_version`；日志输出到 `stderr` |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
 
