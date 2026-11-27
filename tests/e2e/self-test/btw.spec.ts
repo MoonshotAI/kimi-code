@@ -23,6 +23,19 @@ selfTest('btw', {
         expect(next?.texts('assistant')).not.toContain(SIDE_REPLY);
       },
     },
+    'waits for a side answer that streams in several parts before closing the side view': {
+      run: async ({ product, model }) => {
+        model.script(say('The build uses pnpm.'), say('Run pnpm install first.'));
+        model.lane('subagent').script(say(['A build takes ', 'about ten minutes.'], { intervalMs: 300 }));
+        await product.send('Which package manager does the build use?');
+        await product.waitIdle();
+        await product.btw(SIDE_QUESTION, SIDE_REPLY);
+        await product.send('What should I run first?');
+        await product.waitIdle();
+        await product.expectReply('Run pnpm install first.');
+        expect(model.requests('subagent')).toHaveLength(1);
+      },
+    },
     'asks a second side question after the first one is closed': {
       run: async ({ product, model }) => {
         model.script(say('The build uses pnpm.'), say('That is all for now.'));

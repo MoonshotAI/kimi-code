@@ -204,6 +204,8 @@ const BTW_BORDER = '│';
 const BTW_QUESTION = 'Q: ';
 const BTW_WAITING = 'Waiting for answer…';
 const BTW_START_FAILED = 'Error: Failed to start /btw';
+const BTW_FAILURE =
+  /^(?:\[[\w.:-]+\] |Interrupted by user$|Provider safety policy blocked the response\.$|Prompt hook blocked the request\.$|BTW turn ended with reason: |Failed to send \/btw prompt: )/;
 
 interface Screen {
   readonly text: string;
@@ -672,6 +674,11 @@ function sideAnswer(body: readonly string[], question: string): string | undefin
   if (at < 0) return undefined;
   const answer = shown.slice(at + asked.length);
   return answer === '' || answer.startsWith(squash(BTW_WAITING)) ? undefined : answer;
+}
+
+function sideFailure(body: readonly string[]): string | undefined {
+  const asked = body.findLastIndex((row) => row.startsWith(BTW_QUESTION));
+  return asked < 0 ? undefined : body.slice(asked + 1).find((row) => BTW_FAILURE.test(row));
 }
 
 function rejectionNote(screen: Screen): string {
@@ -1419,25 +1426,22 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const failedStarts = statusLines(screen, BTW_START_FAILED);
     this.write(paste(`${BTW_COMMAND} ${question}`));
     this.write(KEYS.enter);
-    let previous: string | undefined;
-    const outcome = await this.wait<SideOutcome>(`the side panel to finish answering ${JSON.stringify(question)}`, (current) => {
-      if (statusLines(current, BTW_START_FAILED) > failedStarts) return { opened: false };
-      const body = sidePanel(current);
-      const answer = body === undefined ? undefined : sideAnswer(body, question);
-      if (body === undefined || answer === undefined) {
-        previous = undefined;
-        return undefined;
-      }
-      const shown = body.join('\n').trimEnd();
-      const settled = shown === previous;
-      previous = shown;
-      return settled ? { opened: true, shown, answered: answer.includes(squash(reply)) } : undefined;
-    });
+    let outcome: SideOutcome;
+    try {
+      outcome = await this.wait<SideOutcome>(`the side panel to show ${JSON.stringify(reply)} or a failure after ${JSON.stringify(question)}`, (current) => {
+        if (statusLines(current, BTW_START_FAILED) > failedStarts) return { opened: false };
+        const body = sidePanel(current);
+        const answer = body === undefined ? undefined : sideAnswer(body, question);
+        if (body === undefined || answer === undefined) return undefined;
+        const answered = answer.includes(squash(reply));
+        return answered || sideFailure(body) !== undefined ? { opened: true, shown: body.join('\n').trimEnd(), answered } : undefined;
+      });
+    } catch (error) {
+      if (sidePanel(await this.read()) !== undefined) await this.closeSidePanel();
+      throw error;
+    }
     if (!outcome.opened) throw this.failure('btw() typed /btw, but the terminal UI could not start the side question.', await this.read());
-    this.write(KEYS.escape);
-    await this.wait('the side panel to close and the input box to come back', (current) =>
-      sidePanel(current) === undefined && current.input === 'editor' ? true : undefined,
-    );
+    await this.closeSidePanel();
     if (!outcome.answered) {
       throw this.failure(
         `btw() asked ${JSON.stringify(question)}, but the side answer ended without ${JSON.stringify(reply)}. The side panel showed:\n${outcome.shown}`,
@@ -1689,6 +1693,13 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const screen = await this.read();
     if (!this.turnOver(screen)) throw this.failure(`${verb} needs an idle product, but a turn is running, a message is queued or an approval is pending.`, screen);
     return screen;
+  }
+
+  private async closeSidePanel(): Promise<void> {
+    this.write(KEYS.escape);
+    await this.wait('the side panel to close and the input box to come back', (current) =>
+      sidePanel(current) === undefined && current.input === 'editor' ? true : undefined,
+    );
   }
 
   private switchNotice(label: string, before: number): Promise<string> {

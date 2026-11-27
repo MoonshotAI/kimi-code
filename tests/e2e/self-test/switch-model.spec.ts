@@ -35,6 +35,24 @@ selfTest('switchModel', {
         expect(model.requests('main').map((request) => request.view.model)).toEqual(['testkit-model', 'testkit-model']);
       },
     },
+    'switches back to the first model in an earlier session that the user left on the second one': {
+      ...TWO_MODELS,
+      run: async ({ product, model }) => {
+        model.script(say('The first session answers.'), say('The second session answers.'), say('Back on the first model.'));
+        await product.send('Start the first session.');
+        await product.waitIdle();
+        await product.switchModel(SECOND);
+        await product.newSession();
+        await product.send('Start the second session.');
+        await product.waitIdle();
+        await product.openSession('Start the first session.');
+        await product.switchModel(FIRST);
+        await product.send('Which model answers in the first session now?');
+        await product.waitIdle();
+        await product.expectReply('Back on the first model.');
+        expect(model.requests('main').at(-1)?.view.model).toBe('testkit-model');
+      },
+    },
   },
   negative: {
     'fails when the session already uses that model': {

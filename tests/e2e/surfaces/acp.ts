@@ -621,6 +621,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       this.connection.agent.request(methods.agent.session.load, { sessionId: target.sessionId, cwd: this.home.workspace, mcpServers: this.mcpServers }),
     );
     this.openedMode = loaded.modes?.currentModeId;
+    this.openedConfig = loaded.configOptions ?? [];
     await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
     if (!userTextsOf(this.sessionUpdates()).some((text) => text.trim() === title)) {
       throw new Error(`openSession() loaded session ${target.sessionId}, but its replay shows no user message ${JSON.stringify(title)}:\n${this.conversation().join('\n')}\n${this.describe()}`);
