@@ -34,7 +34,8 @@ import {
   type StartupStage,
 } from '../app/screens';
 import { trackDesktopEvent } from '../diagnostics/track';
-import { setTerminalMenuFocus, getTerminalMenuFocus } from '../shell/menu';
+import { setTerminalMenuFocus, getTerminalMenuFocus, canHandleZoomShortcut } from '../shell/menu';
+import { attachMainWindowZoom, restoreMainWindowZoom } from './zoom';
 import { bumpTerminalGeneration, killAllTerminals, killStaleTerminals } from '../terminal/manager';
 import { isVibrancyEnabled, isLinuxNativeTitleBar } from '../app/ui-state';
 import { recordWindowLifecycle } from './window-lifecycle';
@@ -600,6 +601,7 @@ export function createWindow(): void {
   installEmbeddedServerAuthInjection(win.webContents.session);
   registerAppWebContents(win.webContents);
   attachWindowDiagnostics(win.webContents);
+  attachMainWindowZoom(win.webContents, canHandleZoomShortcut);
   attachWhiteScreenWatchdog(win.webContents, { isAppUrl: isAppRendererUrl, isQuitting: isMarkedQuitting });
   installExternalLinkGuard(win.webContents, (url) => shell.openExternal(url), serverRequestTarget);
   installPermissionHandler(win.webContents.session);
@@ -783,6 +785,7 @@ export function createWindow(): void {
     settleRendererReady(true);
     if (win.isDestroyed()) return;
     killStaleTerminals();
+    restoreMainWindowZoom(win.webContents);
     const factor = win.webContents.getZoomFactor();
     const level = win.webContents.getZoomLevel();
     void win.webContents

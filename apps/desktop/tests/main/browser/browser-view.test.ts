@@ -401,6 +401,7 @@ import {
   browserStopFind,
   browserUserAgent,
   browserZoom,
+  zoomBrowserContents,
   captureBrowserScreenshot,
   updateBrowserFocusEmulation,
   browserIdsForSite,
@@ -3771,7 +3772,13 @@ describe('browser-view lifecycle', () => {
 
     expect(browserZoom(browserId, 'in').zoomFactor).toBe(1.1);
     expect(view.webContents.zoomFactor).toBe(1.1);
-    expect(browserZoom(browserId, 'reset').zoomFactor).toBe(1);
+    expect(zoomBrowserContents(view.webContents as never, 'in')).toBe(true);
+    expect(view.webContents.zoomFactor).toBe(1.25);
+    expect(zoomBrowserContents(null, 'reset')).toBe(false);
+    expect(zoomBrowserContents({ isDestroyed: () => true } as never, 'reset')).toBe(false);
+    expect(zoomBrowserContents({ isDestroyed: () => false } as never, 'reset')).toBe(false);
+    expect(zoomBrowserContents(view.webContents as never, 'reset')).toBe(true);
+    expect(view.webContents.zoomFactor).toBe(1);
     await expect(browserPrint(browserId)).resolves.toBe(true);
     expect(view.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(1002, [{ code: 'window.print()' }], true);
 

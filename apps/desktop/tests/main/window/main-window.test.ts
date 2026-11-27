@@ -88,6 +88,9 @@ const mocks = vi.hoisted(() => ({
   registerAppWebContents: vi.fn(),
   isVibrancyEnabled: vi.fn(() => true),
   isLinuxNativeTitleBar: vi.fn(() => false),
+  getMainWindowZoomLevel: vi.fn(() => 0),
+  setMainWindowZoomLevel: vi.fn(),
+  canHandleZoomShortcut: vi.fn(() => true),
   attachBrowserWindow: vi.fn(),
   attachBrowserOverlayWindow: vi.fn(),
   logInfo: vi.fn(),
@@ -112,6 +115,9 @@ vi.mock('electron', () => {
     loadingMainFrame = false;
     on(event: string, cb: (...args: unknown[]) => void): void {
       this.handlers.set(event, [...(this.handlers.get(event) ?? []), cb]);
+    }
+    once(event: string, cb: (...args: unknown[]) => void): void {
+      this.on(event, cb);
     }
     removeListener(event: string, cb: (...args: unknown[]) => void): void {
       this.handlers.set(event, (this.handlers.get(event) ?? []).filter((handler) => handler !== cb));
@@ -144,8 +150,12 @@ vi.mock('electron', () => {
     getZoomFactor(): number {
       return 1;
     }
+    zoomLevel = 0;
+    setZoomLevel = vi.fn((level: number) => {
+      this.zoomLevel = level;
+    });
     getZoomLevel(): number {
-      return 0;
+      return this.zoomLevel;
     }
     loadURL = vi.fn(async (_url: string) => undefined);
     navigationHistory = { clear: vi.fn() };
@@ -274,10 +284,17 @@ vi.mock('../../../src/main/app/launch-state', () => ({ markCleanExit: mocks.mark
 vi.mock('../../../src/main/app/ui-state', () => ({
   isVibrancyEnabled: mocks.isVibrancyEnabled,
   isLinuxNativeTitleBar: mocks.isLinuxNativeTitleBar,
+  clampMainWindowZoomLevel: (level: number) => Math.min(6, Math.max(-6, level)),
+  getMainWindowZoomLevel: mocks.getMainWindowZoomLevel,
+  setMainWindowZoomLevel: mocks.setMainWindowZoomLevel,
 }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent, trySendDesktopEvent: vi.fn() }));
 vi.mock('../../../src/main/browser/browser-view', () => ({ attachBrowserWindow: mocks.attachBrowserWindow, isBrowserOccluded: () => mocks.browserOccluded }));
-vi.mock('../../../src/main/shell/menu', () => ({ setTerminalMenuFocus: vi.fn(), getTerminalMenuFocus: vi.fn(() => false) }));
+vi.mock('../../../src/main/shell/menu', () => ({
+  setTerminalMenuFocus: vi.fn(),
+  getTerminalMenuFocus: vi.fn(() => false),
+  canHandleZoomShortcut: mocks.canHandleZoomShortcut,
+}));
 vi.mock('../../../src/main/browser/browser-overlay', () => ({
   attachBrowserOverlayWindow: mocks.attachBrowserOverlayWindow,
 }));
@@ -1363,5 +1380,72 @@ describe('main window host view', () => {
     visible = false;
     win.emit('focus');
     expect(win.hostView.webContents.focus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('main window zoom persistence', () => {
+  const realPlatform = process.platform;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    mocks.windows.length = 0;
+    mocks.getMainWindowZoomLevel.mockReturnValue(0);
+    mocks.canHandleZoomShortcut.mockReturnValue(true);
+    Object.defineProperty(process, 'platform', { value: 'darwin', enumerable: true, configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, enumerable: true, configurable: true });
+  });
+
+  interface ZoomHost {
+    webContents: {
+      zoomLevel: number;
+      setZoomLevel: ReturnType<typeof vi.fn>;
+      emit: (event: string, ...args: unknown[]) => void;
+    };
+  }
+
+  async function created(): Promise<ZoomHost> {
+    const { createWindow } = await import('../../../src/main/window/main-window');
+    createWindow();
+    return mocks.windows.at(-1) as ZoomHost;
+  }
+
+  it('restores the saved zoom level on startup dom-ready and recovers it after reload resets zoom', async () => {
+    mocks.getMainWindowZoomLevel.mockReturnValue(1.5);
+    const win = await created();
+    expect(win.webContents.setZoomLevel).not.toHaveBeenCalled();
+    win.webContents.emit('dom-ready');
+    expect(win.webContents.setZoomLevel).toHaveBeenLastCalledWith(1.5);
+    expect(win.webContents.zoomLevel).toBe(1.5);
+
+    win.webContents.zoomLevel = 0;
+    win.webContents.emit('did-finish-load');
+    expect(win.webContents.setZoomLevel).toHaveBeenLastCalledWith(1.5);
+    expect(win.webContents.zoomLevel).toBe(1.5);
+  });
+
+  it('persists zoom shortcuts on the host view and respects menu suspension', async () => {
+    const win = await created();
+    const preventDefault = vi.fn();
+    const input = { type: 'keyDown', key: '+', code: 'Equal', shift: true, control: false, alt: false, meta: true };
+
+    win.webContents.emit('before-input-event', { preventDefault }, input);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(win.webContents.zoomLevel).toBe(0.5);
+    expect(mocks.setMainWindowZoomLevel).toHaveBeenLastCalledWith(0.5);
+
+    mocks.canHandleZoomShortcut.mockReturnValue(false);
+    preventDefault.mockClear();
+    win.webContents.emit('before-input-event', { preventDefault }, input);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(win.webContents.zoomLevel).toBe(0.5);
+
+    mocks.canHandleZoomShortcut.mockReturnValue(true);
+    win.webContents.emit('before-input-event', { preventDefault }, { ...input, key: '0', code: 'Digit0', shift: false });
+    expect(win.webContents.zoomLevel).toBe(0);
+    expect(mocks.setMainWindowZoomLevel).toHaveBeenLastCalledWith(0);
   });
 });

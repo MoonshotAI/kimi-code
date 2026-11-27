@@ -1,4 +1,4 @@
-import { getWindowsLidBackups, saveWindowsLidBackups, getWindowsLidActionDcOriginal, setWindowsLidActionDcOriginal, savePreventLidSleep } from '../../../src/main/app/ui-state';
+import { getWindowsLidBackups, saveWindowsLidBackups, getWindowsLidActionDcOriginal, setWindowsLidActionDcOriginal, savePreventLidSleep, clampMainWindowZoomLevel, getMainWindowZoomLevel, setMainWindowZoomLevel } from '../../../src/main/app/ui-state';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -443,5 +443,49 @@ describe('ui-state persistence', () => {
     expect(loadUiState(file)).toEqual({ onboarded: true, dockIconChoice: 'dark' });
     saveDockIconChoice('light', file);
     expect(getDockIconChoice(file)).toBe('light');
+  });
+
+  it('defaults mainWindowZoomLevel to 0 when missing, corrupt, or non-finite', () => {
+    expect(getMainWindowZoomLevel(file)).toBe(0);
+    for (const content of ['not json', 'null', '[]', '{"mainWindowZoomLevel":"1.5"}', '{"mainWindowZoomLevel":null}', '{"mainWindowZoomLevel":true}', '{"mainWindowZoomLevel":{}}', '{"mainWindowZoomLevel":1e999}']) {
+      writeFileSync(file, content, 'utf-8');
+      expect(getMainWindowZoomLevel(file)).toBe(0);
+    }
+  });
+
+  it('round-trips mainWindowZoomLevel and preserves other keys', () => {
+    writeFileSync(file, '{"onboarded":true}', 'utf-8');
+    setMainWindowZoomLevel(1.5, file);
+    expect(getMainWindowZoomLevel(file)).toBe(1.5);
+    expect(loadUiState(file)).toEqual({ onboarded: true, mainWindowZoomLevel: 1.5 });
+    setMainWindowZoomLevel(0, file);
+    expect(getMainWindowZoomLevel(file)).toBe(0);
+    expect(loadUiState(file)).toEqual({ onboarded: true, mainWindowZoomLevel: 0 });
+  });
+
+  it('clamps mainWindowZoomLevel on both read and write and ignores non-finite writes', () => {
+    expect(clampMainWindowZoomLevel(-12)).toBe(-6);
+    expect(clampMainWindowZoomLevel(12)).toBe(6);
+    writeFileSync(file, '{"mainWindowZoomLevel":42}', 'utf-8');
+    expect(getMainWindowZoomLevel(file)).toBe(6);
+    writeFileSync(file, '{"mainWindowZoomLevel":-42}', 'utf-8');
+    expect(getMainWindowZoomLevel(file)).toBe(-6);
+    setMainWindowZoomLevel(2, file);
+    setMainWindowZoomLevel(Number.NaN, file);
+    setMainWindowZoomLevel(Number.POSITIVE_INFINITY, file);
+    expect(getMainWindowZoomLevel(file)).toBe(2);
+    setMainWindowZoomLevel(99, file);
+    expect(getMainWindowZoomLevel(file)).toBe(6);
+    expect(JSON.parse(readFileSync(file, 'utf-8')).mainWindowZoomLevel).toBe(6);
+    setMainWindowZoomLevel(-99, file);
+    expect(getMainWindowZoomLevel(file)).toBe(-6);
+    expect(JSON.parse(readFileSync(file, 'utf-8')).mainWindowZoomLevel).toBe(-6);
+  });
+
+  it('skips rewriting ui-state when the clamped mainWindowZoomLevel is unchanged', () => {
+    writeFileSync(file, '{"onboarded":true,"mainWindowZoomLevel":0}', 'utf-8');
+    const before = readFileSync(file, 'utf-8');
+    setMainWindowZoomLevel(0, file);
+    expect(readFileSync(file, 'utf-8')).toBe(before);
   });
 });

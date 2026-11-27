@@ -2249,6 +2249,14 @@ export function browserZoom(browserId: BrowserId, action: BrowserZoomAction): Br
   return copyState(entry);
 }
 
+export function zoomBrowserContents(contents: WebContents | null, action: BrowserZoomAction): boolean {
+  if (contents === null || contents.isDestroyed()) return false;
+  const browserId = browserIdForContents(contents);
+  if (browserId === undefined) return false;
+  browserZoom(browserId, action);
+  return true;
+}
+
 export function applyDefaultBrowserZoom(factor: number): void {
   pagePersistence?.setDefaultZoom(factor);
   for (const entry of browserEntries.values()) {
