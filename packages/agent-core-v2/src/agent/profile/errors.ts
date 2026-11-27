@@ -16,10 +16,14 @@ export const ProfileErrors = {
 registerErrorDomain(ProfileErrors);
 
 export function isMissingConfiguredModelError(error: unknown, model: string): boolean {
+  if (!isError2(error) || error.details?.['model'] !== model) return false;
+  if (error.code !== ConfigErrors.codes.CONFIG_INVALID && error.code !== ProfileErrors.codes.MODEL_CONFIG_INVALID) {
+    return false;
+  }
+  const provider = error.details['provider'];
   return (
-    isError2(error) &&
-    (error.code === ConfigErrors.codes.CONFIG_INVALID || error.code === ProfileErrors.codes.MODEL_CONFIG_INVALID) &&
-    error.details?.['model'] === model &&
-    error.message === `Model "${model}" is not configured in config.toml.`
+    error.message === `Model "${model}" is not configured in config.toml.` ||
+    (typeof provider === 'string' &&
+      error.message === `Provider "${provider}" referenced by model "${model}" is not configured.`)
   );
 }

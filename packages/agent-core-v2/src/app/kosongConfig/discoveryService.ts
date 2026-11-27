@@ -10,6 +10,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { Error2 } from '#/_base/errors/errors';
+import { ILogService } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
@@ -24,6 +25,7 @@ import {
   type ProviderConfig,
 } from '#/provider-catalog/provider/provider';
 import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import {
   DEFAULT_MODEL_SECTION,
@@ -48,6 +50,8 @@ interface StaticExclusion {
 }
 
 const EMPTY_EXCLUSION: StaticExclusion = { providers: {}, models: {} };
+const RETIRED_MODELS_SCOPE = 'model-redirects';
+const RETIRED_MODELS_KEY = 'retired';
 
 export class ProviderDiscoveryService extends Disposable implements IProviderDiscoveryService {
   declare readonly _serviceBrand: undefined;
@@ -57,6 +61,7 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
 
   private refreshChain: Promise<unknown> = Promise.resolve();
   private readonly retiredModels = new Map<string, string>();
+  readonly ready: Promise<void>;
 
   constructor(
     @IProviderCatalogService private readonly providerService: IProviderCatalogService,
@@ -64,8 +69,11 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
+    this.ready = this.loadRetiredModels();
   }
 
   refreshProviderModels(
@@ -84,6 +92,37 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
     if (alias in models) return undefined;
     const replacement = this.retiredModels.get(alias);
     return replacement !== undefined && replacement in models ? replacement : undefined;
+  }
+
+  async retireModels(retired: readonly RetiredModel[]): Promise<void> {
+    if (retired.length === 0) return;
+    await this.ready;
+    for (const { from, to } of retired) {
+      for (const [alias, replacement] of this.retiredModels) {
+        if (replacement !== from) continue;
+        if (alias === to) this.retiredModels.delete(alias);
+        else this.retiredModels.set(alias, to);
+      }
+      this.retiredModels.delete(to);
+      this.retiredModels.set(from, to);
+    }
+    try {
+      await this.docs.set(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY, Object.fromEntries(this.retiredModels));
+    } catch (error) {
+      this.log.warn('failed to persist retired model redirects', { error: String(error) });
+    }
+    for (const event of retired) this._onDidRetireModel.fire(event);
+  }
+
+  private async loadRetiredModels(): Promise<void> {
+    try {
+      const stored = await this.docs.get<Readonly<Record<string, unknown>>>(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY);
+      for (const [from, to] of Object.entries(stored ?? {})) {
+        if (typeof to === 'string' && !this.retiredModels.has(from)) this.retiredModels.set(from, to);
+      }
+    } catch (error) {
+      this.log.warn('failed to read retired model redirects', { error: String(error) });
+    }
   }
 
   private async doRefreshProviderModels(
@@ -110,13 +149,7 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
       providerId: options.providerId,
     });
     const retired = result.retiredDefault;
-    if (retired !== undefined) {
-      for (const [alias, replacement] of this.retiredModels) {
-        if (replacement === retired.from) this.retiredModels.set(alias, retired.to);
-      }
-      this.retiredModels.set(retired.from, retired.to);
-      this._onDidRetireModel.fire({ from: retired.from, to: retired.to });
-    }
+    if (retired !== undefined) await this.retireModels([{ from: retired.from, to: retired.to }]);
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
       this.events.publish(new ModelCatalogChanged({ payload: response }));

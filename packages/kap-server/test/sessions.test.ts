@@ -4816,6 +4816,32 @@ kapTest('pushes missing_model to a connected client when the saved model is remo
   await socket.close();
 });
 
+kapTest('reports missing_model instead of failing when the saved model points at a provider that is gone', { timeout: 30_000 }, async ({ kap, model }) => {
+  const baseConfig = fakeModelConfig(model);
+  const orphan = { provider: 'gone', model: 'old-model', maxContextSize: 100000 };
+  await kap.writeConfig({
+    ...baseConfig,
+    providers: { ...baseConfig.providers, gone: { type: 'openai', baseUrl: model.baseUrl, apiKey: 'gone-key' } },
+    models: { ...baseConfig.models, old: orphan },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  const isMainAgentFrame = (frame: Record<string, unknown>): boolean =>
+    frame['type'] === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
+  const socket = await kap.connect();
+  await socket.subscribe(session.id);
+  await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['model'] === 'old');
+
+  await kap.writeConfig({ ...baseConfig, models: { ...baseConfig.models, old: orphan } });
+  await kap.server.core.accessor.get(IConfigService).reload();
+
+  const orphaned = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['missing_model'] === 'old');
+  expect(orphaned['model']).toBeUndefined();
+  const main = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, session.id))!);
+  expect(readAgentState(main, false).missing_model).toBe('old');
+  await socket.close();
+});
+
 kapTest('a session with no default model opens with no displayed model and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
   model.script(say('history without a default model'));
   const baseConfig = fakeModelConfig(model);

@@ -27,6 +27,7 @@ import { StubConfigService, stubOAuthService, stubTokenProvider } from '../../st
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubAgentIdentity } from '../agentIdentity/stubs';
 import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 function stubEvents(): IEventService & { published: Array<{ type: string; payload: unknown }> } {
   const published: Array<{ type: string; payload: unknown }> = [];
@@ -57,9 +58,26 @@ function stubLogService(): ILogService {
   } satisfies ILogService;
 }
 
+function memoryDocuments(): IAtomicDocumentStore {
+  const documents = new Map<string, unknown>();
+  return {
+    _serviceBrand: undefined,
+    get: async <T>(scope: string, key: string) => structuredClone(documents.get(`${scope}/${key}`)) as T | undefined,
+    set: async <T>(scope: string, key: string, value: T) => {
+      documents.set(`${scope}/${key}`, structuredClone(value));
+    },
+    delete: async (scope: string, key: string) => {
+      documents.delete(`${scope}/${key}`);
+    },
+    list: async () => [],
+    acquire: () => ({ dispose: () => {} }),
+  };
+}
+
 async function createHost(
   sections: Record<string, unknown> = {},
   oauth: IOAuthService = stubOAuthService(),
+  documents: IAtomicDocumentStore = memoryDocuments(),
 ): Promise<{
   host: ReturnType<typeof createScopedTestHost>;
   config: StubConfigService;
@@ -75,6 +93,7 @@ async function createHost(
     [IOAuthService, oauth],
     [IEventService, events],
     [ILogService, stubLogService()],
+    [IAtomicDocumentStore, documents],
     [
       IBootstrapService,
       stubBootstrap('/tmp/kimi-home', {}, { requestHeaders: { 'User-Agent': 'kimi-test/1.0' } }),
@@ -360,6 +379,28 @@ describe('refreshProviderModels modelSource short-circuit', () => {
         expect(discovery.retiredModelReplacement('acme/next')).toBeUndefined();
       } finally {
         host.dispose();
+      }
+    });
+
+    it('keeps the retired default redirect for sessions resumed after a restart', async () => {
+      stubRegistryModels({ next: { id: 'next', default_effort: 'high' } });
+      const documents = memoryDocuments();
+      const first = await createHost(retiringSections, stubOAuthService(), documents);
+      try {
+        await first.discovery.refreshProviderModels({ scope: 'all' });
+      } finally {
+        first.host.dispose();
+      }
+      const restarted = await createHost(
+        { ...retiringSections, models: first.config.get('models'), defaultModel: 'acme/next' },
+        stubOAuthService(),
+        documents,
+      );
+      try {
+        await restarted.discovery.ready;
+        expect(restarted.discovery.retiredModelReplacement('acme/current')).toBe('acme/next');
+      } finally {
+        restarted.host.dispose();
       }
     });
 
@@ -1045,5 +1086,58 @@ describe('modelCatalog config section', () => {
       }),
     ).toEqual({ refreshIntervalMs: 1000, refreshOnStart: false });
     expect(() => registry.validate(MODEL_CATALOG_SECTION, { refreshIntervalMs: -1 })).toThrow();
+  });
+});
+
+describe('retireModels', () => {
+  const configured = (...aliases: string[]): Record<string, ModelRecord> =>
+    Object.fromEntries(
+      aliases.map((alias) => [alias, { provider: alias.split('/')[0]!, model: alias.split('/')[1]!, maxContextSize: 1000 }]),
+    );
+
+  it('reports every redirect and resolves earlier ones to the latest name', async () => {
+    const { host, discovery } = await createHost({ models: configured('third/model') });
+    const retirements: RetiredModel[] = [];
+    discovery.onDidRetireModel((event) => retirements.push(event));
+    try {
+      await discovery.retireModels([{ from: 'first/model', to: 'second/model' }]);
+      await discovery.retireModels([{ from: 'second/model', to: 'third/model' }]);
+      expect(retirements).toEqual([
+        { from: 'first/model', to: 'second/model' },
+        { from: 'second/model', to: 'third/model' },
+      ]);
+      expect(discovery.retiredModelReplacement('first/model')).toBe('third/model');
+      expect(discovery.retiredModelReplacement('second/model')).toBe('third/model');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('drops the redirect away from a name that is used again', async () => {
+    const documents = memoryDocuments();
+    const { host, discovery } = await createHost({ models: configured('first/model') }, stubOAuthService(), documents);
+    try {
+      await discovery.retireModels([{ from: 'first/model', to: 'second/model' }]);
+      await discovery.retireModels([{ from: 'second/model', to: 'first/model' }]);
+      expect(discovery.retiredModelReplacement('second/model')).toBe('first/model');
+      expect(await documents.get('model-redirects', 'retired')).toEqual({ 'second/model': 'first/model' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('still reports the redirect when it cannot be saved', async () => {
+    const documents = memoryDocuments();
+    const failing: IAtomicDocumentStore = { ...documents, set: () => Promise.reject(new Error('disk full')) };
+    const { host, discovery } = await createHost({ models: configured('second/model') }, stubOAuthService(), failing);
+    const retirements: RetiredModel[] = [];
+    discovery.onDidRetireModel((event) => retirements.push(event));
+    try {
+      await discovery.retireModels([{ from: 'first/model', to: 'second/model' }]);
+      expect(retirements).toEqual([{ from: 'first/model', to: 'second/model' }]);
+      expect(discovery.retiredModelReplacement('first/model')).toBe('second/model');
+    } finally {
+      host.dispose();
+    }
   });
 });

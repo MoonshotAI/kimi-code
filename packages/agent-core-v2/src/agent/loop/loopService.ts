@@ -79,7 +79,7 @@ import { createLlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy
 import { resolveMaxOutputTokens } from '#/provider-catalog/model/completion-budget';
 import type { ModelOverrides } from '#/provider-catalog/model/model.types';
 import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
-import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { MODELS_SECTION, THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentInterruptionReminderService } from '#/agent/interruptionReminder/interruptionReminder';
@@ -176,6 +176,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
   private taskReconciliation: Promise<void> | undefined;
+  private followingRetiredModel: string | undefined;
   private loop: Loop | undefined;
   private initialized = false;
   private startPromise: Promise<void> | undefined;
@@ -291,8 +292,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this._register(this.catalog.onDidChange(() => {
       void this.profileAdapter.refreshBoundSubagentAllowlist().catch(() => {});
     }));
-    this._register(this.discovery.onDidRetireModel(({ from, to }) => {
-      if (this.profileAdapter.snapshot().modelAlias === from) void this.profileAdapter.setModel(to).catch(() => {});
+    this._register(this.discovery.onDidRetireModel(() => this.followRetiredModel()));
+    this._register(this.config.onDidSectionChange(({ domain }) => {
+      if (domain === MODELS_SECTION) this.followRetiredModel();
     }));
     this._register(toDisposable(() => this.turns.close(abortError('Agent loop disposed'))));
   }
@@ -438,6 +440,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const providerType = request.attributes?.providerType;
     if (providerType === undefined) return false;
     return getProviderDefinition(providerType, requestModelOf(request).protocol)?.requestMetadata === true;
+  }
+
+  private followRetiredModel(): void {
+    const alias = this.profileAdapter.snapshot().modelAlias;
+    const replacement = alias === undefined ? undefined : this.discovery.retiredModelReplacement(alias);
+    if (replacement === undefined || replacement === this.followingRetiredModel) return;
+    this.followingRetiredModel = replacement;
+    void this.profileAdapter
+      .setModel(replacement)
+      .catch(() => {})
+      .finally(() => {
+        if (this.followingRetiredModel === replacement) this.followingRetiredModel = undefined;
+      });
   }
 
   private syncRequester(): void {

@@ -402,8 +402,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           return;
         }
 
-        await config.replace(PROVIDERS_SECTION, nextProviders);
-
         const previousAliasIds = new Set(
           Object.entries(models)
             .filter(([, record]) => record.provider === provider_id)
@@ -446,22 +444,27 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
             entry.adaptive_thinking !== undefined ? entry.adaptive_thinking : undefined;
           nextModels[`${newId}/${entry.model}`] = alias;
         }
-        await config.replace(MODELS_SECTION, nextModels);
 
+        const renamedAliases = [...previousAliasIds].flatMap((from) => {
+          const model = models[from]?.model;
+          const to = model === undefined ? undefined : `${newId}/${model}`;
+          return to !== undefined && to !== from && nextModels[to] !== undefined ? [{ from, to }] : [];
+        });
+        const renamedTo = new Map(renamedAliases.map(({ from, to }) => [from, to]));
+        const sections: Record<string, unknown> = {
+          [PROVIDERS_SECTION]: nextProviders,
+          [MODELS_SECTION]: nextModels,
+        };
         if (newId !== provider_id) {
-          const defaultProvider = config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
-          if (defaultProvider === provider_id) {
-            await config.replace(DEFAULT_PROVIDER_SECTION, newId);
+          if (config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue === provider_id) {
+            sections[DEFAULT_PROVIDER_SECTION] = newId;
           }
           const defaultModel = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
-          if (defaultModel !== undefined && previousAliasIds.has(defaultModel)) {
-            const renamedModel = models[defaultModel]?.model;
-            const renamedAlias = renamedModel !== undefined ? `${newId}/${renamedModel}` : undefined;
-            if (renamedAlias !== undefined && nextModels[renamedAlias] !== undefined) {
-              await config.replace(DEFAULT_MODEL_SECTION, renamedAlias);
-            }
-          }
+          const renamedDefaultModel = defaultModel === undefined ? undefined : renamedTo.get(defaultModel);
+          if (renamedDefaultModel !== undefined) sections[DEFAULT_MODEL_SECTION] = renamedDefaultModel;
         }
+        await (await loadDiscovery(core)).retireModels(renamedAliases);
+        await config.replaceSections(sections);
 
         const saved = await core.accessor.get(IProviderCatalogService).getProvider(newId);
         reply.send(okEnvelope({ provider: saved }, req.id));
