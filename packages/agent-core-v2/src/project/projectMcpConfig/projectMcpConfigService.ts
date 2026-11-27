@@ -431,6 +431,7 @@ function retainedDisabledOAuthServers(
 function toMcpTunables(section: McpSection | undefined): McpTunables {
   return {
     startupTimeoutMs: section?.startupTimeoutMs,
+    startupWaitMs: section?.startupWaitMs,
     toolTimeoutMs: section?.toolTimeoutMs,
     defaultDeferred: section?.defaultDeferred,
     reconnectInitialDelayMs: section?.reconnectInitialDelayMs,
