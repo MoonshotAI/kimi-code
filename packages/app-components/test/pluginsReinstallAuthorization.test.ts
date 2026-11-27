@@ -146,6 +146,7 @@ describe('PluginsPanel reinstall authorization wiring', () => {
     inspectCalls = 0;
     toasts = [];
     reinstallInspection = deferred<AppMcpAuthStatus[]>();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     stopToastListener = onToast((event) => {
       if (event.type === 'show') toasts.push(event);
     });
@@ -251,11 +252,14 @@ describe('PluginsPanel reinstall authorization wiring', () => {
     await settle();
 
     expect(toasts).toHaveLength(1);
-    expect(toasts[0]?.options).toMatchObject({
+    expect(toasts[0]?.options).toEqual({
+      layout: 'bar',
+      mode: 'replace',
       variant: 'danger',
       title: '授权失败，请稍后重试',
-      message: 'OAuth service unavailable',
+      duration: 5_000,
     });
+    expect(toasts[0]?.options?.message).toBeUndefined();
     expect(details().querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
     expect(actionButton().textContent).toBe('授权');
 
@@ -285,11 +289,14 @@ describe('PluginsPanel reinstall authorization wiring', () => {
     await settle();
 
     expect(toasts).toHaveLength(1);
-    expect(toasts[0]?.options).toMatchObject({
+    expect(toasts[0]?.options).toEqual({
+      layout: 'bar',
+      mode: 'replace',
       variant: 'danger',
       title: '取消授权失败，请稍后重试',
-      message: 'reset failed',
+      duration: 5_000,
     });
+    expect(toasts[0]?.options?.message).toBeUndefined();
     expect(details().querySelector('.plugin-capabilities__identity .ui-badge')?.textContent).toBe('已授权');
     expect(details().querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
 

@@ -46,6 +46,7 @@ function authorizationRequired(flowId = 'flow-1'): AppMcpAuthBeginResult {
 
 describe('useMcpAuthorization', () => {
   let open: ReturnType<typeof vi.fn>;
+  let consoleError: ReturnType<typeof vi.spyOn>;
   let popup: {
     closed: boolean;
     opener: unknown;
@@ -63,6 +64,7 @@ describe('useMcpAuthorization', () => {
     apiMock.completeMcpAuth.mockImplementation(() => new Promise(() => {}));
     apiMock.cancelMcpAuth.mockResolvedValue(null);
     apiMock.resetMcpAuth.mockResolvedValue(null);
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     popup = { closed: false, opener: {}, location: { href: '' }, close: vi.fn() };
     open = vi.fn(() => popup);
     vi.stubGlobal('window', { open });
@@ -70,6 +72,7 @@ describe('useMcpAuthorization', () => {
 
   afterEach(() => {
     __resetMcpAuthorizationForTests();
+    consoleError.mockRestore();
     vi.unstubAllGlobals();
   });
 
@@ -197,11 +200,12 @@ describe('useMcpAuthorization', () => {
 
     await auth.cancel(target.runtimeName);
 
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: cancelPluginMcpAuth', expect.any(Error));
     expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
       mode: 'replace',
       variant: 'danger',
       title: 'settings.plugins.resetAuthorizationFailed',
-      message: 'network unavailable',
       duration: 5_000,
     });
     expect(auth.states[target.runtimeName]).toMatchObject({
@@ -229,11 +233,12 @@ describe('useMcpAuthorization', () => {
 
     await auth.authorize(target);
 
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: beginPluginMcpAuth', expect.any(Error));
     expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
       mode: 'replace',
       variant: 'danger',
       title: 'settings.plugins.authorizationFailed',
-      message: 'software statement is invalid',
       duration: 5_000,
     });
     expect(auth.states[target.runtimeName]).toMatchObject({
@@ -252,11 +257,12 @@ describe('useMcpAuthorization', () => {
     await vi.waitFor(() => {
       expect(auth.states[target.runtimeName]?.phase).toBe('idle');
     });
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: completePluginMcpAuth', expect.any(Error));
     expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
       mode: 'replace',
       variant: 'danger',
       title: 'settings.plugins.authorizationFailed',
-      message: 'authorization expired',
       duration: 5_000,
     });
 
@@ -699,11 +705,12 @@ describe('useMcpAuthorization', () => {
 
     await auth.reset(target);
 
+    expect(consoleError).toHaveBeenCalledWith('[kimi-code] operation failed: resetPluginMcpAuth', expect.any(Error));
     expect(toast).toHaveBeenCalledWith({
+      layout: 'bar',
       mode: 'replace',
       variant: 'danger',
       title: 'settings.plugins.resetAuthorizationFailed',
-      message: 'reset failed',
       duration: 5_000,
     });
     expect(auth.states[target.runtimeName]).toMatchObject({

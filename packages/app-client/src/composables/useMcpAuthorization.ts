@@ -6,6 +6,7 @@ import type {
 } from '@moonshot-ai/app-core/api';
 import { getKimiWebApi, t } from '../client/deps';
 import { toast } from '../client/toast';
+import { logError } from '@moonshot-ai/app-core/lib';
 
 export interface McpAuthorizationTarget {
   pluginId: string;
@@ -70,12 +71,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function showAuthorizationError(titleKey: string, error: unknown): void {
+function showAuthorizationError(operation: string, titleKey: string, error: unknown): void {
+  logError(`[kimi-code] operation failed: ${operation}`, error);
   toast({
+    layout: 'bar',
     mode: 'replace',
     variant: 'danger',
     title: t(titleKey),
-    message: errorMessage(error),
     duration: 5_000,
   });
 }
@@ -249,7 +251,7 @@ async function watchCompletion(flow: ActiveFlow, completion: Promise<null>): Pro
         cancelled: cancelled ? true : undefined,
       };
     }
-    if (!cancelled) showAuthorizationError('settings.plugins.authorizationFailed', error);
+    if (!cancelled) showAuthorizationError('completePluginMcpAuth', 'settings.plugins.authorizationFailed', error);
   }
 }
 
@@ -341,7 +343,7 @@ async function performAuthorization(
       authorizationUrl: undefined,
       openBlocked: undefined,
     };
-    if (!controller.signal.aborted) showAuthorizationError('settings.plugins.authorizationFailed', error);
+    if (!controller.signal.aborted) showAuthorizationError('beginPluginMcpAuth', 'settings.plugins.authorizationFailed', error);
   }
 }
 
@@ -403,7 +405,7 @@ export function useMcpAuthorization() {
           flowId: flow.flowId,
           authorizationUrl: flow.authorizationUrl,
         };
-        showAuthorizationError('settings.plugins.resetAuthorizationFailed', error);
+        showAuthorizationError('cancelPluginMcpAuth', 'settings.plugins.resetAuthorizationFailed', error);
       }
       return;
     }
@@ -454,7 +456,7 @@ export function useMcpAuthorization() {
           ...states[target.runtimeName],
           phase: 'idle',
         };
-        showAuthorizationError('settings.plugins.resetAuthorizationFailed', error);
+        showAuthorizationError('resetPluginMcpAuth', 'settings.plugins.resetAuthorizationFailed', error);
       }
     })();
     operations.set(target.runtimeName, operation);
