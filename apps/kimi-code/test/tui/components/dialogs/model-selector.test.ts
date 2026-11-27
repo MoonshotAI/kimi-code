@@ -571,7 +571,7 @@ describe('ModelSelectorComponent overrides', () => {
     expect(out).not.toContain('Max');
   });
 
-  it('supports fullscreen wheel scrolling, footer thinking segment clicks, and Alt+click session-only model selection', async () => {
+  it('previews hovered model thinking on mouse move, contains wheel across footer and body, and supports Alt+click session-only model selection', async () => {
     let now = 40_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const onSelect = vi.fn();
@@ -579,7 +579,7 @@ describe('ModelSelectorComponent overrides', () => {
     const picker = new ModelSelectorComponent({
       models: {
         m1: effortModel('Model One', ['low', 'high'], 'low'),
-        m2: effortModel('Model Two', ['low', 'high'], 'low'),
+        m2: effortModel('Model Two', ['low', 'high'], 'high'),
         m3: effortModel('Model Three', ['low', 'high'], 'low'),
         m4: effortModel('Model Four', ['low', 'high'], 'low'),
         m5: effortModel('Model Five', ['low', 'high'], 'low'),
@@ -611,6 +611,22 @@ describe('ModelSelectorComponent overrides', () => {
       let screen = vt.getViewport().map(strip);
       const segRow = screen.findIndex((line) => line.includes('[ Low ]') && line.includes('High'));
       expect(segRow).toBeGreaterThan(0);
+
+      const m2Row = screen.findIndex((line) => line.includes('Model Two'));
+      expect(m2Row).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<35;10;${String(m2Row + 1)}M`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen[m2Row]).toContain('❯ Model Two');
+      expect(screen[segRow]).toContain('[ High ]');
+      expect(onSelect).not.toHaveBeenCalled();
+
+      const m1Row = screen.findIndex((line) => line.includes('Model One'));
+      vt.sendInput(`\u001B[<35;10;${String(m1Row + 1)}M`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen[segRow]).toContain('[ Low ]');
+
       const highCol = screen[segRow]!.indexOf('High') + 1;
 
       vt.sendInput(`\u001B[<0;${String(highCol)};${String(segRow + 1)}M`);
@@ -619,7 +635,6 @@ describe('ModelSelectorComponent overrides', () => {
       screen = vt.getViewport().map(strip);
       expect(screen[segRow]).toContain('[ High ]');
 
-      const m1Row = screen.findIndex((line) => line.includes('Model One'));
       vt.sendInput(`\u001B[<0;10;${String(m1Row + 1)}M`);
       vt.sendInput(`\u001B[<0;10;${String(m1Row + 1)}m`);
       await vt.waitForRender();
@@ -627,7 +642,7 @@ describe('ModelSelectorComponent overrides', () => {
 
       const initialTop = transcript.scrollTop;
       for (let i = 0; i < 8; i++) {
-        vt.sendInput(`\u001B[<65;10;${String(m1Row + 1)}M`);
+        vt.sendInput(`\u001B[<65;10;${String(segRow + 1)}M`);
       }
       await vt.waitForRender();
       expect(transcript.scrollTop).toBe(initialTop);

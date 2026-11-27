@@ -269,7 +269,6 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
       focused,
       shownAt,
       regions: this.choiceRegions,
-      selectOnHover: false,
       activate: (choice, clickEvent) => {
         this.commitChoice(choice, clickEvent.alt);
       },

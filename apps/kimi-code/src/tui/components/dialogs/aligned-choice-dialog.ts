@@ -65,7 +65,6 @@ export abstract class AlignedChoiceDialogComponent<TValue extends string>
       focused: this.focused,
       shownAt: this.shownAt,
       regions: this.choiceRegions,
-      selectOnHover: false,
       activate: (chosen) => {
         this.onSelect(chosen.value);
       },

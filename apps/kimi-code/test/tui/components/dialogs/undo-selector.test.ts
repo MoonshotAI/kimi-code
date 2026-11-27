@@ -35,7 +35,7 @@ describe('UndoSelectorComponent', () => {
     expect(out).not.toContain('Message 3');
   });
 
-  it('supports fullscreen wheel scrolling without hover jitter or transcript leak, and commits clicked turn once', async () => {
+  it('supports fullscreen wheel scrolling across header and body without transcript leak, previews hovered turn on move, and commits clicked turn once', async () => {
     let now = 30_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const onSelect = vi.fn();
@@ -66,9 +66,10 @@ describe('UndoSelectorComponent', () => {
       expect(screen.join('\n')).toContain('❯ Message 8');
       const initialTranscriptTop = transcript.scrollTop;
 
-      const bodyRow = screen.findIndex((line) => line.includes('Message 8'));
+      const headerRow = screen.findIndex((line) => line.includes('Select messages to undo'));
+      expect(headerRow).toBeGreaterThan(0);
       for (let i = 0; i < 15; i++) {
-        vt.sendInput(`\u001B[<64;10;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<64;10;${String(headerRow + 1)}M`);
       }
       await vt.waitForRender();
       expect(transcript.scrollTop).toBe(initialTranscriptTop);
@@ -79,7 +80,8 @@ describe('UndoSelectorComponent', () => {
 
       vt.sendInput(`\u001B[<35;10;${String(msg2Row + 1)}M`);
       await vt.waitForRender();
-      expect(vt.getViewport().map(strip)[msg2Row]).not.toContain('❯ Message 2');
+      expect(vt.getViewport().map(strip)[msg2Row]).toContain('❯ Message 2');
+      expect(onSelect).not.toHaveBeenCalled();
 
       now += 500;
       vt.sendInput(`\u001B[<0;10;${String(msg2Row + 1)}M`);

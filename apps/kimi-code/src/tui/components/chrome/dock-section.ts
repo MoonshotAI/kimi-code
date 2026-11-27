@@ -84,8 +84,16 @@ export abstract class DockSection extends VStack {
         invalidate: () => {},
         handleMouse: (event) => {
           const result = this.handlePartMouse(part, event);
-          if (result?.focus !== true) return result;
-          return { ...result, handled: true, focusTarget: this, target: mouseTarget(component, event) };
+          if (result !== undefined) {
+            if (result.focus !== true) return result;
+            return { ...result, handled: true, focusTarget: this, target: mouseTarget(component, event) };
+          }
+          if (part !== 'body' && this.bodyScroll !== undefined && event.type === 'wheel') {
+            const delta = event.wheelDelta ?? 0;
+            const moved = delta !== 0 && this.scrollBody(delta);
+            return { handled: true, render: moved };
+          }
+          return undefined;
         },
       };
       return component;

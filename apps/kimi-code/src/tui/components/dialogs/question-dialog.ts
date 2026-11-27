@@ -246,11 +246,9 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
         focused: this.focused,
         shownAt: this.shownAt,
         regions: this.submitActionRegions,
-        selectOnHover: false,
         select: (index) => {
           const changed = this.submitActionIdx !== index;
           this.submitActionIdx = index;
-          this.reviewMessage = undefined;
           return changed;
         },
         activate: (index) => {
@@ -280,7 +278,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       focused: this.focused,
       shownAt: this.shownAt,
       regions: this.optionRegions,
-      selectOnHover: false,
+      selectOnHover: !this.isEditingOther(),
       select: (index) => {
         const questionIdx = this.currentQuestionIndex();
         if (questionIdx === undefined) return false;

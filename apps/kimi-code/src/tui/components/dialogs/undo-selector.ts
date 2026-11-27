@@ -105,7 +105,6 @@ export class UndoSelectorComponent extends DockSection implements Focusable {
       focused: this.focused,
       shownAt: this.shownAt,
       regions: this.choiceRegions,
-      selectOnHover: false,
       activate: (selected) => {
         this.submitted = true;
         this.opts.onSelect(selected);

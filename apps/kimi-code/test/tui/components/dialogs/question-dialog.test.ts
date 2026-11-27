@@ -629,6 +629,10 @@ describe('QuestionDialogComponent', () => {
       const thoroughDescRow = screen.findIndex((line) => line.includes('Deep check'));
       expect(thoroughDescRow).toBeGreaterThan(0);
 
+      vt.sendInput(`\u001B[<35;12;${String(thoroughDescRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('→ [2] Thorough');
+
       vt.sendInput(`\u001B[<0;12;${String(thoroughDescRow + 1)}M`);
       vt.sendInput(`\u001B[<0;12;${String(thoroughDescRow + 1)}m`);
       await vt.waitForRender();
@@ -647,6 +651,7 @@ describe('QuestionDialogComponent', () => {
       await vt.waitForRender();
 
       vt.sendInput('a');
+      vt.sendInput(`\u001B[<35;10;${String(logsRow + 1)}M`);
       vt.sendInput('c');
       await vt.waitForRender();
       screen = vt.getViewport().map(strip);
