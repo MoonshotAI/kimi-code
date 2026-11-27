@@ -95,7 +95,9 @@ entries:
   - id: B3
     operation: Switch to another model with /model, then switch back
     promise: keeps
-    gap: Needs a second model in the scenario config and a model switch action. Each model keeps its own cache, so switching back continues the first model's prefix.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/switching-to-another-model-and-back-keeps-the-prefix.spec.ts
 
   - id: B4
     operation: Change the thinking effort with /effort
@@ -103,7 +105,9 @@ entries:
     break:
       at: header
       reason: the user changed the thinking effort, which is part of the model settings
-    gap: Needs the thinking capability in the scenario config and an effort action. Only the model settings may change; the history must stay as it was.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/thinking-effort-change-breaks-only-the-model-settings.spec.ts
 
   - id: B5
     operation: Hold a whole conversation with every experimental feature on

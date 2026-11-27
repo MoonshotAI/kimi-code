@@ -88,6 +88,8 @@ export const VERBS = {
   reload: { on: ['tui', 'desktop', 'web'], absentBecause: NO_RELOAD_OVER_ACP, checksInterface: false },
   init: { on: ['tui'], absentBecause: ONLY_THE_TERMINAL_UI_INITS, checksInterface: false },
   useSkill: { on: SURFACES, checksInterface: false },
+  switchModel: { on: SURFACES, checksInterface: false },
+  setThinkingEffort: { on: SURFACES, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -239,6 +241,8 @@ interface VerbSignatures {
   reload(): Promise<void>;
   init(): Promise<void>;
   useSkill(name: string): Promise<void>;
+  switchModel(name: string): Promise<void>;
+  setThinkingEffort(effort: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

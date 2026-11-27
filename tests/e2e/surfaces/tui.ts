@@ -61,7 +61,12 @@ const MODIFY_OTHER_KEYS = /\x1b\[>4(?:;(\d*))?m/g;
 const KITTY_DISAMBIGUATE = 1;
 const KITTY_EVENT_TYPES = 2;
 const KITTY_EMULATED_FLAGS = 7;
-const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = { '\x1b[A': '\x1b[1;1:3A', '\x1b[B': '\x1b[1;1:3B' };
+const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = {
+  '\x1b[A': '\x1b[1;1:3A',
+  '\x1b[B': '\x1b[1;1:3B',
+  '\x1b[C': '\x1b[1;1:3C',
+  '\x1b[D': '\x1b[1;1:3D',
+};
 const KITTY_SEQUENCE_LONGEST = 16;
 const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modifiers: number }>> = {
   '\x1b': { code: 27, modifiers: 1 },
@@ -83,6 +88,8 @@ const KEYS = {
   quit: '\x04',
   up: '\x1b[A',
   down: '\x1b[B',
+  right: '\x1b[C',
+  left: '\x1b[D',
   approveOnce: '1',
   approveForSession: '2',
   reject: '3',
@@ -169,6 +176,17 @@ const INIT_COMMAND = '/init';
 const INIT_RUN = 'Initialize AGENTS.md';
 const SKILL_COMMAND = '/skill:';
 const COMMAND_FAILED = 'Error: ';
+const MODEL_COMMAND = '/model';
+const MODEL_PICKER = 'Select a model';
+const MODEL_PICKER_ROW = /^(?:❯ )?(.+?) {2,}(.+?)( ← current)?$/;
+const PICKER_CURSOR = '❯ ';
+const MODEL_SWITCHED = 'Switched to ';
+const EFFORT_COMMAND = '/effort';
+const EFFORT_PICKER = 'Select thinking effort';
+const EFFORT_ACTIVE = /\[ [^\]]+ \]/;
+const EFFORT_SEGMENT = /\[ ([^\]]+?) \]|(\S+)/g;
+const EFFORT_SET = 'Thinking set to ';
+const SWITCH_NOTICES = [MODEL_SWITCHED, EFFORT_SET, 'Already using ', 'Saved ', 'Error: '] as const;
 
 interface Screen {
   readonly text: string;
@@ -219,6 +237,17 @@ interface PermissionPicker {
   readonly names: readonly string[];
   readonly cursor: string | undefined;
   readonly current: string | undefined;
+}
+
+interface ModelPicker {
+  readonly names: readonly string[];
+  readonly cursor: string | undefined;
+  readonly current: string | undefined;
+}
+
+interface EffortPicker {
+  readonly efforts: readonly string[];
+  readonly active: string;
 }
 
 interface Block {
@@ -530,6 +559,48 @@ function permissionNotices(screen: Screen): number {
 
 function permissionSet(screen: Screen, name: string): number {
   return screen.transcript.filter((row) => row.trim() === `${PERMISSION_SET}${name}`).length;
+}
+
+function pickerRegion(screen: Screen, title: (line: string) => boolean): string[] | undefined {
+  const lines = screen.viewport.map((row) => row.trim());
+  const start = lines.findLastIndex(title);
+  const end = lines.findIndex((line, index) => index > start && APPROVAL_RULE.test(line));
+  return start < 0 || end < 0 ? undefined : lines.slice(start + 1, end);
+}
+
+function groupsOf(lines: readonly string[]): string[][] {
+  const groups: string[][] = [[]];
+  for (const line of lines) {
+    if (line === '') groups.push([]);
+    else groups.at(-1)?.push(line);
+  }
+  return groups.filter((group) => group.length > 0);
+}
+
+function modelPicker(screen: Screen): ModelPicker | undefined {
+  const region = pickerRegion(screen, (line) => line.startsWith(MODEL_PICKER));
+  const rows = groupsOf(region ?? []).find((group) => group.some((line) => line.startsWith(PICKER_CURSOR)));
+  if (rows === undefined) return undefined;
+  const items = rows.map((line) => ({ cursor: line.startsWith(PICKER_CURSOR), match: MODEL_PICKER_ROW.exec(line) }));
+  const names = items.flatMap(({ match }) => (match?.[1] === undefined ? [] : [match[1]]));
+  if (names.length !== rows.length) return undefined;
+  return {
+    names,
+    cursor: names[items.findIndex((item) => item.cursor)],
+    current: names[items.findIndex((item) => item.match?.[3] !== undefined)],
+  };
+}
+
+function effortPicker(screen: Screen): EffortPicker | undefined {
+  const row = pickerRegion(screen, (line) => line === EFFORT_PICKER)?.find((line) => EFFORT_ACTIVE.test(line));
+  if (row === undefined) return undefined;
+  const segments = [...row.matchAll(EFFORT_SEGMENT)].map((match) => ({ effort: (match[1] ?? match[2] ?? '').toLowerCase(), active: match[1] !== undefined }));
+  const active = segments.find((segment) => segment.active)?.effort;
+  return active === undefined ? undefined : { efforts: segments.map((segment) => segment.effort), active };
+}
+
+function switchNotices(screen: Screen): string[] {
+  return [...screen.transcript, ...screen.status].map((row) => row.trim()).filter((row) => SWITCH_NOTICES.some((prefix) => row.startsWith(prefix)));
 }
 
 function rejectionNote(screen: Screen): string {
@@ -1170,6 +1241,60 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
+  async switchModel(name: string): Promise<void> {
+    const screen = await this.idleScreen('switchModel()');
+    const notices = switchNotices(screen).length;
+    this.write(paste(MODEL_COMMAND));
+    this.write(KEYS.enter);
+    let picker = await this.wait('the model picker to open', (current) => modelPicker(current));
+    if (picker.current === name || !picker.names.includes(name)) {
+      this.write(KEYS.escape);
+      await this.wait('the model picker to close', (current) => (current.input === 'editor' && modelPicker(current) === undefined ? true : undefined));
+      const problem = picker.current === name ? 'that is already the model' : `the picker offers only ${picker.names.map((offered) => JSON.stringify(offered)).join(', ')}`;
+      throw this.failure(`switchModel() asked for ${JSON.stringify(name)}, but ${problem}.`, await this.read());
+    }
+    while (picker.cursor !== name) {
+      const from = picker.cursor;
+      this.write(picker.names.indexOf(name) > picker.names.indexOf(from ?? '') ? KEYS.down : KEYS.up);
+      picker = await this.wait('the model picker to move its cursor', (current) => {
+        const moved = modelPicker(current);
+        return moved !== undefined && moved.cursor !== from ? moved : undefined;
+      });
+    }
+    this.write(KEYS.enter);
+    const notice = await this.switchNotice('the transcript to record the model switch', notices);
+    if (!notice.startsWith(`${MODEL_SWITCHED}${name} with thinking `)) {
+      throw this.failure(`switchModel() chose ${JSON.stringify(name)}, but the transcript recorded ${JSON.stringify(notice)}.`, await this.read());
+    }
+  }
+
+  async setThinkingEffort(effort: string): Promise<void> {
+    const screen = await this.idleScreen('setThinkingEffort()');
+    const notices = switchNotices(screen).length;
+    this.write(paste(EFFORT_COMMAND));
+    this.write(KEYS.enter);
+    let picker = await this.wait('the thinking effort picker to open', (current) => effortPicker(current));
+    if (picker.active === effort || !picker.efforts.includes(effort)) {
+      this.write(KEYS.escape);
+      await this.wait('the thinking effort picker to close', (current) => (current.input === 'editor' && effortPicker(current) === undefined ? true : undefined));
+      const problem = picker.active === effort ? 'that is already the thinking effort' : `the model offers only ${picker.efforts.map((offered) => JSON.stringify(offered)).join(', ')}`;
+      throw this.failure(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but ${problem}.`, await this.read());
+    }
+    while (picker.active !== effort) {
+      const from = picker.active;
+      this.write(picker.efforts.indexOf(effort) > picker.efforts.indexOf(from) ? KEYS.right : KEYS.left);
+      picker = await this.wait('the thinking effort picker to move its selection', (current) => {
+        const moved = effortPicker(current);
+        return moved !== undefined && moved.active !== from ? moved : undefined;
+      });
+    }
+    this.write(KEYS.enter);
+    const notice = await this.switchNotice('the transcript to record the thinking effort', notices);
+    if (!notice.startsWith(`${EFFORT_SET}${effort}.`)) {
+      throw this.failure(`setThinkingEffort() chose ${JSON.stringify(effort)}, but the transcript recorded ${JSON.stringify(notice)}.`, await this.read());
+    }
+  }
+
   async stop(): Promise<void> {
     const screen = await this.read();
     if (showsQuestion(screen)) {
@@ -1407,6 +1532,19 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const recorded = collectedAnswers(screen, answer);
     this.write(KEYS.enter);
     await this.wait(`the transcript to record the answer ${JSON.stringify(answer)}`, (current) => (collectedAnswers(current, answer) > recorded ? true : undefined));
+  }
+
+  private async idleScreen(verb: string): Promise<Screen> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) throw this.failure(`${verb} needs an idle product, but a turn is running, a message is queued or an approval is pending.`, screen);
+    return screen;
+  }
+
+  private switchNotice(label: string, before: number): Promise<string> {
+    return this.wait(label, (current) => {
+      const notices = switchNotices(current);
+      return current.input === 'editor' && notices.length > before ? notices.at(-1) : undefined;
+    });
   }
 
   private assertTurnRunning(verb: string, screen: Screen): void {

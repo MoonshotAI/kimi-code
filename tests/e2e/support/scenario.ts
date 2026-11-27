@@ -240,7 +240,7 @@ function assertToolExpectation(expectation: ToolExpectation): void {
   }
 }
 
-function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther'): (text: string) => void {
+function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther' | 'switchModel'): (text: string) => void {
   return (text) => {
     if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
@@ -251,6 +251,12 @@ function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' |
 function assertSkillName(name: string): void {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
     throw new Error(`useSkill() takes the name of a skill in lowercase letters, digits and dashes, like "release-notes", got ${JSON.stringify(name)}`);
+  }
+}
+
+function assertEffort(effort: string): void {
+  if (!/^[a-z]+$/.test(effort)) {
+    throw new Error(`setThinkingEffort() takes the effort as the configuration names it, one lowercase word like "high", got ${JSON.stringify(effort)}`);
   }
 }
 
@@ -276,6 +282,8 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   expectAbsent: lineCheck('expectAbsent'),
   openSession: promptCheck('openSession'),
   useSkill: assertSkillName,
+  switchModel: lineCheck('switchModel'),
+  setThinkingEffort: assertEffort,
 };
 
 

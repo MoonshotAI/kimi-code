@@ -16,6 +16,8 @@ import {
   type ReadTextFileRequest,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
+  type SessionConfigOption,
+  type SessionConfigSelectOption,
   type SessionUpdate,
   type StopReason,
   type TerminalExitStatus,
@@ -77,6 +79,9 @@ const COMPACT_COMMAND = '/compact';
 const COMPACTION_DONE = 'Compaction completed.';
 const COMPACTION_FAILURES = ['Compaction cancelled.', 'Compaction is blocked'];
 const SKILL_COMMAND = 'skill:';
+
+const MODEL_OPTION = 'model';
+const THINKING_OPTION = 'thought_level';
 
 const SESSION_METHODS = [methods.client.session.update, methods.client.session.requestPermission];
 
@@ -254,6 +259,11 @@ function approvalShows(toolCall: ToolCallUpdate, { name, target }: ApprovalExpec
   return property(toolCall.rawInput, 'command') === target || texts.some((text) => text === target || text.endsWith(`: ${target}`));
 }
 
+function choicesOf(option: SessionConfigOption): SessionConfigSelectOption[] {
+  if (option.type !== 'select') return [];
+  return option.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
+}
+
 function clipLine(line: string): string {
   return line.length > LONGEST_FRAME_LINE ? `${line.slice(0, LONGEST_FRAME_LINE)}…` : line;
 }
@@ -292,6 +302,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private sessionStart = 0;
   private sessionId = '';
   private openedMode: string | undefined;
+  private openedConfig: readonly SessionConfigOption[] = [];
   private restored = false;
   private reopens: { readonly list: boolean; readonly load: boolean } = { list: false, load: false };
   private readonly leftSessions = new Set<string>();
@@ -357,6 +368,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       );
       this.sessionId = session.sessionId;
       this.openedMode = session.modes?.currentModeId;
+      this.openedConfig = session.configOptions ?? [];
       return;
     }
     if (initialized.agentCapabilities?.loadSession !== true) {
@@ -369,6 +381,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.sessionId = resume;
     this.restored = true;
     this.openedMode = loaded.modes?.currentModeId;
+    this.openedConfig = loaded.configOptions ?? [];
   }
 
   idle(): Promise<boolean> {
@@ -479,6 +492,31 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
   }
 
+  async switchModel(name: string): Promise<void> {
+    const option = await this.configOption('switchModel()', MODEL_OPTION);
+    const offered = choicesOf(option);
+    const choice = offered.find((candidate) => candidate.name === name);
+    if (choice === undefined) {
+      throw new Error(`switchModel() asked for ${JSON.stringify(name)}, but the agent offers only ${offered.map((candidate) => JSON.stringify(candidate.name)).join(', ')}.\n${this.describe()}`);
+    }
+    if (option.currentValue === choice.value) {
+      throw new Error(`switchModel() asked for ${JSON.stringify(name)}, but that is already the model: the session uses ${choice.value}.\n${this.describe()}`);
+    }
+    await this.setConfigOption('switchModel()', option, choice.value);
+  }
+
+  async setThinkingEffort(effort: string): Promise<void> {
+    const option = await this.configOption('setThinkingEffort()', THINKING_OPTION);
+    const offered = choicesOf(option);
+    if (!offered.some((candidate) => candidate.value === effort)) {
+      throw new Error(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but the agent offers only ${offered.map((candidate) => JSON.stringify(candidate.value)).join(', ')}.\n${this.describe()}`);
+    }
+    if (option.currentValue === effort) {
+      throw new Error(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but that is already the thinking effort.\n${this.describe()}`);
+    }
+    await this.setConfigOption('setThinkingEffort()', option, effort);
+  }
+
   async compact(): Promise<void> {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`compact() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
@@ -523,6 +561,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.leftSessions.add(this.sessionId);
     this.sessionId = session.sessionId;
     this.openedMode = session.modes?.currentModeId;
+    this.openedConfig = session.configOptions ?? [];
     this.sessionStart = this.updates.length;
     this.restored = false;
     this.prompts = [];
@@ -1031,6 +1070,40 @@ class AcpDriver implements SurfaceDriver<'acp'> {
 
   private workspacePath(path: string): string {
     return relative(this.home.workspace, normalize(path)).split(sep).join('/');
+  }
+
+  private async configOption(verb: string, category: string): Promise<SessionConfigOption> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`${verb} needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
+    const option = this.configOptions().find((candidate) => candidate.category === category);
+    if (option === undefined) {
+      throw new Error(`${verb} found no session config option of category ${category}: the agent offers ${JSON.stringify(this.configOptions().map((candidate) => candidate.id))}.\n${this.describe()}`);
+    }
+    return option;
+  }
+
+  private async setConfigOption(verb: string, option: SessionConfigOption, value: string): Promise<void> {
+    const mark = this.updates.length;
+    const answered = await this.response(
+      `the agent to set ${option.id} to ${value}`,
+      this.connection.agent.request(methods.agent.session.setConfigOption, { sessionId: this.sessionId, configId: option.id, value }),
+    );
+    const set = (options: readonly SessionConfigOption[]): boolean => options.some((candidate) => candidate.id === option.id && candidate.currentValue === value);
+    if (!set(answered.configOptions)) {
+      throw new Error(`${verb} set ${option.id} to ${value}, but the agent answered with ${JSON.stringify(answered.configOptions)}.\n${this.describe()}`);
+    }
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
+    const reported = this.updates.slice(mark).some((update) => update.sessionUpdate === 'config_option_update' && set(update.configOptions));
+    if (!reported) {
+      throw new Error(`${verb} set ${option.id} to ${value}, but the agent never reported it with config_option_update.\n${this.describe()}`);
+    }
+  }
+
+  private configOptions(): readonly SessionConfigOption[] {
+    const reported = this.sessionUpdates().findLast((update) => update.sessionUpdate === 'config_option_update');
+    return reported?.sessionUpdate === 'config_option_update' ? reported.configOptions : this.openedConfig;
   }
 
   private sessionMode(): string | undefined {

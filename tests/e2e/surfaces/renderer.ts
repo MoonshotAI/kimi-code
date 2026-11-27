@@ -61,6 +61,10 @@ const DISMISS = 'Dismiss';
 const OTHER_ANSWER = 'Other';
 const ASKED = 'Collected your answers';
 const UNANSWERED = ' —— No answer';
+const MENU_BUTTON = 'button[aria-haspopup="menu"]';
+const THINKING_ROW = 'Thinking';
+const THINKING_ON = 'Thinking';
+const MODEL_SUFFIX = ' · ';
 
 export type MenuPage = () => Promise<Page>;
 
@@ -82,6 +86,14 @@ function quoted(value: string): string {
 
 function startingWith(text: string): RegExp {
   return new RegExp(`^${containing(text).source}`);
+}
+
+function effortLabel(effort: string): string {
+  return `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`;
+}
+
+function squashed(text: string | null): string {
+  return (text ?? '').replaceAll(/\s+/g, ' ').trim();
 }
 
 function cardShows(lines: readonly string[], { name, target }: ApprovalExpectation, workspace: string): boolean {
@@ -319,6 +331,58 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const choice = (await this.menus()).getByRole('menuitemradio', { name: startingWith(name) });
     await this.press('setPermissionMode()', name, choice);
     await this.wait(`the permission mode button to show ${name}`, async () => ((await this.modeButton(name).isVisible()) && !(await choice.isVisible()) ? true : undefined));
+  }
+
+  async switchModel(name: string): Promise<void> {
+    const shown = await this.shownModel('switchModel()');
+    if (shown === name || shown.startsWith(`${name}${MODEL_SUFFIX}`)) {
+      throw new Error(`switchModel() asked for ${JSON.stringify(name)}, but that is already the model.\n${await this.describe()}`);
+    }
+    const menu = await this.openModelMenu('switchModel()');
+    const choice = menu.getByRole('menuitemradio', { name, exact: true });
+    if ((await choice.count()) === 0) {
+      const offered = (await menu.getByRole('menuitemradio').allTextContents()).map(squashed);
+      await this.closeModelMenu('switchModel()', this.thinkingRow(menu));
+      throw new Error(`switchModel() asked for ${JSON.stringify(name)}, but the model menu offers only ${JSON.stringify(offered)}.\n${await this.describe()}`);
+    }
+    await this.press('switchModel()', name, choice);
+    await this.wait(`the model menu to mark ${name} as chosen`, async () => ((await choice.getAttribute('aria-checked')) === 'true' ? true : undefined));
+    await this.closeModelMenu('switchModel()', choice);
+    await this.wait(`the model button to show ${name}`, async () => {
+      const now = await this.modelName();
+      return now === name || now?.startsWith(`${name}${MODEL_SUFFIX}`) === true ? true : undefined;
+    });
+  }
+
+  async setThinkingEffort(effort: string): Promise<void> {
+    const before = await this.shownModel('setThinkingEffort()');
+    const wanted = effortLabel(effort);
+    const menu = await this.openModelMenu('setThinkingEffort()');
+    const row = this.thinkingRow(menu);
+    const current = await this.thinkingShown(row);
+    if ((await row.getAttribute('aria-disabled')) === 'true' || current === wanted) {
+      await this.closeModelMenu('setThinkingEffort()', row);
+      const problem = current === wanted ? 'that is already the thinking effort' : `the model offers no thinking effort to choose (${current})`;
+      throw new Error(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but ${problem}.\n${await this.describe()}`);
+    }
+    try {
+      await row.hover({ timeout: TIMEOUTS.wait });
+    } catch (cause) {
+      throw new Error(`setThinkingEffort() could not point at the ${THINKING_ROW} row: ${reasonOf(cause)}\n${await this.describe()}`, { cause });
+    }
+    await this.wait('the thinking efforts to open beside the model menu', async () => ((await row.getAttribute('aria-expanded')) === 'true' ? true : undefined));
+    const choice = menu.getByRole('menuitemradio', { name: wanted, exact: true });
+    if ((await choice.count()) === 0) {
+      const offered = (await menu.getByRole('menuitemradio').allTextContents()).map(squashed);
+      await this.closeModelMenu('setThinkingEffort()', row);
+      throw new Error(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but the model menu offers only ${JSON.stringify(offered)}.\n${await this.describe()}`);
+    }
+    await this.press('setThinkingEffort()', wanted, choice);
+    await this.wait(`the model menu to show thinking ${wanted}`, async () => ((await this.thinkingShown(row)) === wanted ? true : undefined));
+    await this.closeModelMenu('setThinkingEffort()', row);
+    const model = current === effortLabel('off') ? before : before.slice(0, before.lastIndexOf(MODEL_SUFFIX));
+    const expected = effort === 'off' ? model : `${model}${MODEL_SUFFIX}${effort === 'on' ? THINKING_ON : wanted}`;
+    await this.wait(`the model button to show ${expected}`, async () => ((await this.modelName()) === expected ? true : undefined));
   }
 
   async stop(): Promise<void> {
@@ -626,6 +690,49 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   private modeButton(name: string): Locator {
     return this.page.getByRole('button', { name, exact: true });
+  }
+
+  private modelPill(): Locator {
+    return this.page
+      .getByRole('button', { name: SEND, exact: true })
+      .locator('xpath=ancestor::*')
+      .filter({ has: this.page.locator(MENU_BUTTON) })
+      .last()
+      .locator(MENU_BUTTON);
+  }
+
+  private async modelName(): Promise<string | undefined> {
+    const pill = this.modelPill();
+    if (!(await pill.isVisible())) return undefined;
+    const name = squashed((await pill.getAttribute('aria-label')) ?? (await pill.textContent()));
+    return name === '' ? undefined : name;
+  }
+
+  private async shownModel(verb: string): Promise<string> {
+    if (!(await this.idle())) {
+      throw new Error(`${verb} needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    return this.wait('the model button to show the current model', () => this.modelName());
+  }
+
+  private thinkingRow(menu: Page): Locator {
+    return menu.getByRole('menuitem', { name: startingWith(THINKING_ROW) });
+  }
+
+  private async thinkingShown(row: Locator): Promise<string> {
+    return squashed(await row.textContent()).slice(THINKING_ROW.length).trim();
+  }
+
+  private async openModelMenu(verb: string): Promise<Page> {
+    await this.press(verb, 'the model button', this.modelPill());
+    const menu = await this.menus();
+    await this.wait('the model menu to open', async () => ((await this.thinkingRow(menu).isVisible()) ? true : undefined));
+    return menu;
+  }
+
+  private async closeModelMenu(verb: string, shownInMenu: Locator): Promise<void> {
+    await this.press(verb, 'the model button', this.modelPill());
+    await this.wait('the model menu to close', async () => ((await shownInMenu.isVisible()) ? undefined : true));
   }
 
   private async shownMode(): Promise<string | undefined> {

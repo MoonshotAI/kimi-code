@@ -55,6 +55,8 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   reload: () => '用户重新加载会话（/reload）',
   init: () => '用户用 /init 生成 AGENTS.md',
   useSkill: (name) => `用户使用技能${quote(name)}`,
+  switchModel: (name) => `用户把模型换成${quote(name)}`,
+  setThinkingEffort: (effort) => `用户把思考强度调成${quote(effort)}`,
 };
 
 export const DISK_TITLES = {

@@ -113,6 +113,14 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().setPermissionMode(mode);
   }
 
+  switchModel(name: string): Promise<void> {
+    return this.window().switchModel(name);
+  }
+
+  setThinkingEffort(effort: string): Promise<void> {
+    return this.window().setThinkingEffort(effort);
+  }
+
   stop(): Promise<void> {
     return this.window().stop();
   }
