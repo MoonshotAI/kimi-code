@@ -14,6 +14,7 @@ import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
 import {
   adaptSdkEvent,
   createEventAdapterState,
+  turnOutcomeEvent,
   type EventAdapterState,
   type TurnTerminalMetadata,
 } from "./event-adapter";
@@ -476,41 +477,18 @@ export class SessionRuntime {
   private emitTerminal(terminal: TurnTerminalMetadata): void {
     if (this.terminalKeys.has(terminal.key)) return;
     this.terminalKeys.add(terminal.key);
+    const outcome = turnOutcomeEvent(terminal, terminal.sessionId);
 
-    if (terminal.reason === "completed") {
-      this.emitStreamEvent({
-        type: "stream_complete",
-        result: { status: "finished" },
-        _sessionId: terminal.sessionId,
-      });
-      this.settlePrompt({ status: "finished" });
+    if (outcome.type === "stream_complete") {
+      if (terminal.reason === "cancelled") this.reverseRpc.cancelAll("Turn cancelled");
+      this.emitStreamEvent(outcome);
+      this.settlePrompt({ status: terminal.reason === "cancelled" ? "cancelled" : "finished" });
       return;
     }
 
-    if (terminal.reason === "cancelled") {
-      this.reverseRpc.cancelAll("Turn cancelled");
-      this.emitStreamEvent({
-        type: "stream_complete",
-        result: { status: "cancelled" },
-        _sessionId: terminal.sessionId,
-      });
-      this.settlePrompt({ status: "cancelled" });
-      return;
-    }
-
-    const code = terminal.error?.code ?? `turn.${terminal.reason}`;
     this.reverseRpc.cancelAll("Turn ended");
-    const detail = terminal.error?.message ?? `Turn ended with reason: ${terminal.reason}`;
-    const message = getUserMessage(code, detail);
-    this.log("Session turn failed", new Error(`${code}: ${detail}`));
-    this.emitStreamEvent({
-      type: "error",
-      code,
-      message,
-      detail,
-      phase: "runtime",
-      _sessionId: terminal.sessionId,
-    });
+    this.log("Session turn failed", new Error(`${outcome.code}: ${outcome.detail}`));
+    this.emitStreamEvent(outcome);
     if (terminal.error !== undefined) {
       this.suppressedError = { code: terminal.error.code, message: terminal.error.message };
     }
