@@ -20,7 +20,7 @@ import {
   type SidebarViewMode,
   type WorkspaceSortMode,
 } from '@moonshot-ai/app-core/lib';
-import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core';
+import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core/composables';
 import { SESSIONS_EXPAND_BATCH, useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { hostsStore, sessionViewsStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';

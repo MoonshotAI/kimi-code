@@ -4,7 +4,7 @@ import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, TaskItem, TurnAttachment, UIQuestion } from '../../types';
 import type { QuestionResponse } from '../../api/types';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { ChatPane, JumpToBottomPill } from '@moonshot-ai/app-components';
 import { HostNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
 import { hostsStore } from '@moonshot-ai/app-client/stores';

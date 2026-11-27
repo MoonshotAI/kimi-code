@@ -16,7 +16,8 @@ import {
 } from '../../shared/quit-confirm';
 import { setRemoteControlPreviousEnabled } from './ui-state';
 import type { TrayLocale } from '../shell/tray';
-import { addMainWindowCloseInterceptor, isQuitConfirmSkipped, isRendererReady, onMainWindowGone, sendToRenderer, showMainWindow } from '../window/main-window';
+import { addMainWindowCloseInterceptor, isQuitConfirmSkipped, onMainWindowGone, sendToRenderer } from '../window/window-registry';
+import { isRendererReady, showMainWindow } from '../window/main-window';
 
 const BUSY_SESSIONS_QUERY_TIMEOUT_MS = 1_500;
 

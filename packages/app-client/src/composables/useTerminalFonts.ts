@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted } from 'vue';
-import { useFontPrefs } from '@moonshot-ai/app-core';
+import { useFontPrefs } from '@moonshot-ai/app-core/composables';
 
 export interface TerminalFontOptions {
   fontFamily: string;

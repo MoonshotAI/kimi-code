@@ -55,7 +55,7 @@ export {
   type OverlayScrollbarThumb,
   type UseOverlayScrollbar,
 } from './composables/useOverlayScrollbar';
-export { IconResolverKey, SIZE_PX, type IconSize } from './icons';
+export { IconResolverKey, SIZE_PX, type IconSize } from './iconResolver';
 
 export { default as MetricBadge } from './components/ui/MetricBadge.vue';
 export { menuNavigationIndex } from './composables/menuNavigation';

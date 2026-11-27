@@ -1,20 +1,5 @@
 {
   "runtime-cycle": {
-    "apps/desktop/src/main/browser/browser-annotations.ts": 3,
-    "apps/desktop/src/main/browser/browser-overlay.ts": 3,
-    "apps/desktop/src/main/browser/browser-view.ts": 3,
-    "apps/desktop/src/main/diagnostics/collector.ts": 12,
-    "apps/desktop/src/main/diagnostics/diagnostics-export.ts": 12,
-    "apps/desktop/src/main/diagnostics/incidents.ts": 12,
-    "apps/desktop/src/main/diagnostics/system-metrics.ts": 12,
-    "apps/desktop/src/main/diagnostics/telemetry.ts": 12,
-    "apps/desktop/src/main/diagnostics/trace.ts": 12,
-    "apps/desktop/src/main/release/updater.ts": 12,
-    "apps/desktop/src/main/server/connect.ts": 12,
-    "apps/desktop/src/main/server/embedded-server.ts": 12,
-    "apps/desktop/src/main/shell/menu.ts": 12,
-    "apps/desktop/src/main/window/main-window.ts": 12,
-    "apps/desktop/src/main/window/white-screen-watchdog.ts": 12,
     "packages/app-client/src/stores/files.ts": 6,
     "packages/app-client/src/stores/pinnedOrder.ts": 6,
     "packages/app-client/src/stores/prompt.ts": 6,
@@ -43,12 +28,6 @@
     "packages/app-client/src/stores/tasks.ts": 2,
     "packages/app-client/src/stores/warnings.ts": 2,
     "packages/app-client/src/stores/workspaces.ts": 6
-  },
-  "upward-package-import": {
-    "packages/app-markdown/src/lib/codeWrap.ts": 1,
-    "packages/app-markdown/src/lib/linkTooltip.ts": 1,
-    "packages/app-markdown/src/lib/tableWide.ts": 1,
-    "packages/app-ui/src/components/ui/toastTypes.ts": 1
   },
   "view-direct-api": {
     "apps/desktop/src/renderer/App.vue": 4,

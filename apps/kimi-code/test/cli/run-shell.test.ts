@@ -1394,4 +1394,24 @@ describe('runShell', () => {
       }),
     );
   });
+
+  it('forwards programResumeToken to KimiTUI only when provided', async () => {
+    stubTuiStartup();
+    await runShell(minimalCliOptions, '1.2.3-test');
+    const [, , defaultStartupInput] = mocks.kimiTuiConstructor.mock.calls[0]! as [
+      unknown,
+      unknown,
+      Record<string, unknown>,
+    ];
+    expect('programResumeToken' in defaultStartupInput).toBe(false);
+
+    mocks.kimiTuiConstructor.mockClear();
+    await runShell(minimalCliOptions, '1.2.3-test', { programResumeToken: 'shell-token' });
+    const [, , tokenStartupInput] = mocks.kimiTuiConstructor.mock.calls[0]! as [
+      unknown,
+      unknown,
+      Record<string, unknown>,
+    ];
+    expect(tokenStartupInput['programResumeToken']).toBe('shell-token');
+  });
 });

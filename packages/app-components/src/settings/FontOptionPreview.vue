@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useFontMetadata } from '@moonshot-ai/app-client/composables';
-import { loadBundledFont, quoteFontFamily } from '@moonshot-ai/app-core';
+import { loadBundledFont, quoteFontFamily } from '@moonshot-ai/app-core/composables';
 import { fontMetadataText, getBundledFont } from '@moonshot-ai/app-core/lib';
 
 const props = defineProps<{ family: string; label?: string }>();

@@ -112,6 +112,8 @@ const FRAME_PLACES: Readonly<Record<Surface, string>> = {
   web: '每一步之后的截图在「Screenshots」里',
 };
 
+const ARTIFACT_PLATFORMS: Readonly<Partial<Record<NodeJS.Platform, string>>> = { win32: 'windows-', darwin: 'macos-' };
+
 const TRACE_ATTACHMENTS: Readonly<Record<Surface, string | undefined>> = {
   tui: undefined,
   acp: undefined,
@@ -164,7 +166,7 @@ function failed(outcome: Outcome): boolean {
 }
 
 function viewingHints(name: string, surface: Surface | undefined, shard: Shard | null): string[] {
-  const platform = process.platform === 'win32' ? 'windows-' : '';
+  const platform = ARTIFACT_PLATFORMS[process.platform] ?? '';
   const report = `e2e-${platform}${surface ?? name}-report${shard === null ? '' : `-${shard.current}`}`;
   const hints = [
     `看画面：下载本次运行的 artifact \`${report}\`，解压后双击 \`index.html\`，点进场景。${surface === undefined ? '每一步之后的画面在用例的附件里' : FRAME_PLACES[surface]}，按步骤编号排列。`,

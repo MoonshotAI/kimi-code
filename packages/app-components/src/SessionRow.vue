@@ -14,7 +14,7 @@ import { useOpenPullRequest } from './worktree/sessionPullRequest';
 import { useSessionHoverCard } from './sidebar/useSessionHoverCard';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { configStore, sessionViewsStore } from '@moonshot-ai/app-client/stores';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();

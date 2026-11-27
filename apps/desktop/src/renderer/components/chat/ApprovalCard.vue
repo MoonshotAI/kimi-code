@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onActivated, onDeactivated, onMounted, onUn
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
-import { useAppearance } from '@moonshot-ai/app-core';
+import { useAppearance } from '@moonshot-ai/app-core/composables';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { Badge, Button, Icon, IconButton, Spinner, Textarea, Tooltip, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';

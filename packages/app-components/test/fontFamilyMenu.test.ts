@@ -3,11 +3,11 @@ import { createApp, defineComponent, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { useFontPrefs, type LocalFontsState } from '@moonshot-ai/app-core';
+import { useFontPrefs, type LocalFontsState } from '@moonshot-ai/app-core/composables';
 
 const local = vi.hoisted(() => ({ state: null as unknown as { value: string }, families: null as unknown as { value: string[] } }));
-vi.mock('@moonshot-ai/app-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@moonshot-ai/app-core')>();
+vi.mock('@moonshot-ai/app-core/composables', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/app-core/composables')>();
   const { ref: vueRef } = await import('vue');
   local.state = vueRef<string>('unavailable');
   local.families = vueRef<string[]>([]);

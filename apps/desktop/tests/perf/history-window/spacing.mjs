@@ -2,7 +2,7 @@ import { createApp, h, nextTick } from 'vue';
 import { createPinia } from 'pinia';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { getIcon } from '@moonshot-ai/app-client/icons';
+import { getIcon } from '@moonshot-ai/app-ui/icons';
 import { useActivityRunFolding, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { ChatPane } from '@moonshot-ai/app-components';
 

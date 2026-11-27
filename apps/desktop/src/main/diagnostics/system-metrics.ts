@@ -7,7 +7,7 @@ import type { ProcessMetric } from 'electron';
 import { log } from './log';
 import type { SystemMetricsEvent } from './telemetry-events';
 import { trackDesktopEvent } from './track';
-import { getMainWindow } from '../window/main-window';
+import { getMainWindow } from '../window/window-registry';
 
 const INTERVAL_MS = 300_000;
 const WARMUP_SAMPLE_MS = 1_500;
