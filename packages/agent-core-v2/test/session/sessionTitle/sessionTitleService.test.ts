@@ -12,12 +12,11 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
+import { IHostRequestHeaders } from '#/provider-catalog/model/host-request-headers';
 import {
-  IProviderService,
   type OAuthRef,
   type ProviderConfig,
-} from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/provider/provider';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
   IAgentLifecycleService,
@@ -42,6 +41,7 @@ import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents'
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const SESSION_ID = 'sess-1';
 const GENERATED_TITLE = '生成的标题';
@@ -189,7 +189,7 @@ describe('SessionTitleService', () => {
           handleOf: () => mainAgent,
         });
         reg.defineInstance(IEventService, events);
-        reg.defineInstance(IProviderService, stubProviderService(providers));
+        reg.defineInstance(IProviderCatalogService, stubProviderService(providers));
         reg.definePartialInstance(IOAuthService, {
           resolveTokenProvider: (_provider, oauthRef) => {
             resolvedOAuthRefs.push(oauthRef);

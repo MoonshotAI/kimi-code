@@ -29,7 +29,7 @@ import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes } from '#/errors';
-import { APIRequestTooLargeError, APIStatusError } from '#/llm-adapter/contract/errors';
+import { APIRequestTooLargeError, APIStatusError } from '#/provider-catalog/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import type { TodoItem } from '#/features/todo/todoItem';

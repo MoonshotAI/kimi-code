@@ -15,7 +15,7 @@ import {
   type StepStartingRun,
   type ToolBatchStartingRun,
 } from '#/hook/loop/run';
-import { runLoopRequest, type LoopLlmRequester, type LoopRequestProgress } from '../request';
+import { runLoopRequest, type FullLoopLlmRequester, type LoopRequestProgress } from '../request';
 import type {
   Turn,
   TurnEmitted,
@@ -62,9 +62,8 @@ class ActorTurn implements Turn {
   private readonly scope: AbortScope;
   private readonly actor: Actor<TurnState>;
   private currentStep: TurnStep | undefined;
-  private requester: LoopLlmRequester | undefined;
+  private requester: FullLoopLlmRequester | undefined;
   private profile: LoopProfile | undefined;
-  private requesterError: unknown;
   private requestId: string | undefined;
   private toolsSettled = false;
   private started = false;
@@ -203,13 +202,7 @@ class ActorTurn implements Turn {
         ...profile,
         tools: profile.tools === undefined ? undefined : [...profile.tools],
       };
-      try {
-        const template = this.runtime.requester();
-        this.requester = template?.snapshot?.() ?? template;
-      } catch (error) {
-        this.requester = undefined;
-        this.requesterError = error;
-      }
+      this.requester = this.runtime.requester();
 
       // 2. Let the owner run starting hooks and produce the initial message batch.
       this.setPhase(proc, 'starting');
@@ -405,8 +398,7 @@ class ActorTurn implements Turn {
       return;
     }
     if (requester === undefined || profile === undefined) {
-      const error = this.requesterError ?? new Error('loop has no requester');
-      step.outcome = { type: 'failed', error };
+      step.outcome = { type: 'failed', error: new Error('loop has no requester') };
       this.setOutcome(proc, step.outcome);
       this.finalizeStep(proc, step);
       return;
@@ -544,7 +536,7 @@ class ActorTurn implements Turn {
   private executeRequest(
     proc: TurnProcess,
     step: TurnStep,
-    requester: LoopLlmRequester,
+    requester: FullLoopLlmRequester,
     profile: LoopProfile,
   ): Promise<LlmOutcome> {
     this.setPhase(proc, 'requesting');
@@ -556,10 +548,13 @@ class ActorTurn implements Turn {
       return runLoopRequest(
         requester,
         {
+          turnId: step.batch.turnId,
+          step: step.batch.step,
           messages: [...this.runtime.read().messages],
           profile,
           policy: this.runtime.policy.asPolicy(),
           signal: step.scope.signal,
+          observer: this.runtime.llmObserver,
         },
         onProgress,
       );

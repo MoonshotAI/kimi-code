@@ -8,7 +8,7 @@ kimi acp
 
 Once started, the command prints no banner and immediately waits for the ACP client to send an `initialize` request on stdin. Logs are written to stderr (as well as the diagnostic log under `~/.kimi-code/logs/`), so the ACP channel itself stays clean.
 
-When Kimi starts a turn to report a completed background task, `kimi acp` sends the reply and tool calls to the IDE through `session/update`, even after the previous `session/prompt` has ended. A new prompt sent while that turn is running receives `turn.agent_busy` and can be retried when the turn is complete.
+When Kimi starts a turn on its own — to report a completed background task, to continue after a `Stop` hook blocks, or to run a scheduled task — `kimi acp` sends the reply and tool calls to the IDE through `session/update`, even after the previous `session/prompt` has ended. A new prompt sent while that turn is running receives `turn.agent_busy` and can be retried when the turn is complete.
 
 ::: tip Who calls this?
 You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md).

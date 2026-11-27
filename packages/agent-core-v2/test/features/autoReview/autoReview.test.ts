@@ -40,10 +40,9 @@ import {
 } from '#/features/autoReview/review';
 import { ancestrySnapshotOf, AutoReviewService } from '#/features/autoReview/reviewService';
 import { SessionAutoReviewService } from '#/features/autoReview/sessionReviewService';
-import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
-import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
-import type { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import type { Model } from '#/provider-catalog/model/catalog';
+import type { ThinkingConfig } from '#/provider-catalog/model/thinking';
+import { type IProviderCatalogService, ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -354,7 +353,7 @@ describe('SessionAutoReviewService', () => {
     readonly catalogModel?: Model;
     readonly thinking?: ThinkingConfig;
   } = {}): SessionAutoReviewService {
-    const registry = new ProtocolAdapterRegistry();
+    const registry = new ProviderCatalogService();
     const respond = options.respond ?? allowStep;
     fakeModel.lane('side').unscripted({ reply: (_request, { signal: requestSignal }) => respond(requestSignal) });
     return disposables.add(new SessionAutoReviewService(
@@ -370,14 +369,13 @@ describe('SessionAutoReviewService', () => {
           selectedModels.push(alias);
           return options.catalogModel ?? baseModel;
         },
-      } as unknown as IModelCatalog,
-      {
-        resolveAdapterIdentity: (protocol, providerType) => registry.resolveAdapterIdentity(protocol, providerType),
-        request: (target, params) => {
+        resolveAdapterIdentity: (...args: Parameters<IProviderCatalogService['resolveAdapterIdentity']>) =>
+          registry.resolveAdapterIdentity(...args),
+        createRequester: (...[target, params, execution]: Parameters<IProviderCatalogService['createRequester']>) => {
           requestedEfforts.push(params?.model?.thinking?.effort);
-          return registry.request(target, { ...params, endpoint: { ...params?.endpoint, fetch: fakeModel.fetch } });
+          return registry.createRequester(target, { ...params, endpoint: { ...params?.endpoint, fetch: fakeModel.fetch } }, execution);
         },
-      } as IProtocolAdapterRegistry,
+      } as unknown as IProviderCatalogService,
       { record: async () => {} } as unknown as ISessionUsageService,
       { sessionId: 'session-1' } as ISessionContext,
       {

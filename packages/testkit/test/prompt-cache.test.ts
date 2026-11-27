@@ -49,17 +49,21 @@ interface Ask {
   readonly messages: ChatCompletionMessageParam[];
   readonly tools?: ChatCompletionTool[];
   readonly key?: string;
-  readonly role?: 'main' | 'compaction' | 'subagent-compaction';
+  readonly role?: 'main' | 'compaction' | 'subagent' | 'subagent-compaction';
+  readonly step?: 'turn_start' | 'tool_results';
+  readonly parent?: string;
   readonly model?: string;
 }
 
 function openai(model: FakeModel) {
   const client = new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
-  return async ({ messages, tools = [READ, BASH], key = 'session-1', role, model: name = 'testkit-model' }: Ask) => {
+  return async ({ messages, tools = [READ, BASH], key = 'session-1', role, step = 'turn_start', parent = 'request-main', model: name = 'testkit-model' }: Ask) => {
     const body: ChatCompletionCreateParamsNonStreaming = { model: name, messages, tools, prompt_cache_key: key };
     const metadata = role === undefined
       ? undefined
-      : { agent_role: role === 'subagent-compaction' ? 'explore' : 'main', step_reason: role === 'main' ? 'tool_use' : 'compact' };
+      : role === 'subagent'
+        ? { agent_role: 'explore', step_reason: step, parent_request_id: parent }
+        : { agent_role: role === 'subagent-compaction' ? 'explore' : 'main', step_reason: role === 'main' ? 'tool_use' : 'compact' };
     return client.chat.completions.create(body, metadata === undefined ? {} : { headers: { 'x-msh-client-metadata': JSON.stringify(metadata) } });
   };
 }
@@ -169,6 +173,98 @@ describe('prompt cache ledger', () => {
 
     expect(model.promptCache()[1]?.break).toMatchObject({ region: 'messages', previous: 'messages[1] user' });
     expect(problemsOf(model)).toEqual([expect.stringContaining('request #1 (every request) does not extend request #0')]);
+  });
+
+  it("compares a subagent's next step with that subagent's previous request and reports a subagent that changed its tools", async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const explore: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Explore the repository.' }];
+    const check: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Check the tests.' }];
+
+    await ask({ messages: SECOND_TURN, role: 'main' });
+    await ask({ messages: explore, role: 'subagent' });
+    await ask({ messages: check, role: 'subagent' });
+    await ask({ messages: [...explore, { role: 'assistant', content: 'Found two packages.' }, { role: 'user', content: 'Keep going.' }], role: 'subagent', step: 'tool_results' });
+    await ask({ messages: [...check, { role: 'assistant', content: 'Found one test.' }, { role: 'user', content: 'Keep going.' }], tools: [READ], role: 'subagent', step: 'tool_results' });
+
+    const entries = model.promptCache();
+    expect(entries.map(({ role, baseline, break: found }) => ({ role, baseline, region: found?.region }))).toEqual([
+      { role: 'main', baseline: undefined, region: undefined },
+      { role: 'subagent', baseline: undefined, region: undefined },
+      { role: 'subagent', baseline: undefined, region: undefined },
+      { role: 'subagent', baseline: 1, region: undefined },
+      { role: 'subagent', baseline: 2, region: 'tools' },
+    ]);
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #4 (every request) does not extend request #2')]);
+  });
+
+  it('checks only the next steps of a subagent run, and only against requests under the same parent request', async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const opening: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Today is Thursday.' }];
+
+    await ask({ messages: [...opening, { role: 'user', content: 'Explore the repository.' }], role: 'subagent', parent: 'request-1' });
+    await ask({ messages: [...opening, { role: 'user', content: 'Check the tests.' }], role: 'subagent', parent: 'request-2' });
+    await ask({ messages: [...opening, { role: 'user', content: 'Check the tests.' }, { role: 'assistant', content: 'One test.' }], role: 'subagent', parent: 'request-2', step: 'tool_results' });
+    await ask({ messages: [SYSTEM, { role: 'user', content: 'Explore the docs.' }, { role: 'assistant', content: 'Two pages.' }], role: 'subagent', parent: 'request-3', step: 'tool_results' });
+
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, undefined, 1, undefined]);
+    expect(problemsOf(model)).toEqual([]);
+  });
+
+  it('tells apart two subagents a parent started with the same task', async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const task: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Count the files.' }];
+
+    await ask({ messages: task, role: 'subagent' });
+    await ask({ messages: task, role: 'subagent' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting src.' }, { role: 'user', content: 'src has 4 files.' }], role: 'subagent', step: 'tool_results' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting test.' }, { role: 'user', content: 'test has 2 files.' }], role: 'subagent', step: 'tool_results' });
+
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, undefined, 1, 0]);
+    expect(problemsOf(model)).toEqual([]);
+  });
+
+  it("compares a subagent's third step with its second, so an earlier step cannot hide a rewrite", async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const task: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Count the files.' }];
+
+    await ask({ messages: task, role: 'subagent' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting src.' }, { role: 'user', content: 'src has 4 files.' }], role: 'subagent', step: 'tool_results' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting test.' }, { role: 'user', content: 'test has 2 files.' }], role: 'subagent', step: 'tool_results' });
+
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, 0, 1]);
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1')]);
+  });
+
+  it("lets a subagent's next turn retire its previous turn, so the earlier turn cannot hide a rewrite", async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const question: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'What does notes.txt say?' }, { role: 'assistant', content: 'Launch on friday.' }];
+    const followUp: ChatCompletionMessageParam[] = [...question, { role: 'user', content: 'And the time?' }];
+
+    await ask({ messages: question, role: 'subagent' });
+    await ask({ messages: followUp, role: 'subagent' });
+    await ask({ messages: [...followUp, { role: 'assistant', content: 'Reading notes.txt.' }, { role: 'user', content: 'noon' }], role: 'subagent', step: 'tool_results' });
+    await ask({ messages: [...followUp, { role: 'assistant', content: 'Reading time.txt.' }, { role: 'user', content: 'noon' }], role: 'subagent', step: 'tool_results' });
+
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, undefined, 1, 2]);
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #3 (every request) does not extend request #2')]);
+  });
+
+  it("accepts a declared break in a subagent's own history", async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const explore: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Explore the repository.' }];
+
+    await ask({ messages: [...explore, { role: 'assistant', content: 'Found two packages.' }, { role: 'user', content: 'Keep going.' }], role: 'subagent' });
+    await ask({ messages: [...explore, { role: 'assistant', content: 'Found three packages.' }, { role: 'user', content: 'Keep going.' }], role: 'subagent', step: 'tool_results' });
+    model.expectCacheBreak('the subagent rewrote its own answer', { at: 'history' });
+
+    expect(model.promptCache()[1]).toMatchObject({ baseline: 0, explanation: 'the subagent rewrote its own answer' });
+    expect(problemsOf(model)).toEqual([]);
   });
 
   it('keeps a subagent compaction out of the main thread, so it neither fails nor lets the main history restart', async () => {

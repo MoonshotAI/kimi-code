@@ -50,8 +50,6 @@ import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { SubagentSuspended } from '#/features/swarm/session/sessionSwarmService';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IHostClock } from '#/os/interface/hostClock';
@@ -104,6 +102,7 @@ import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment
 
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { stubProviderDiscovery } from '../../stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -442,16 +441,16 @@ describe('SessionSubagentScopeCacheService', () => {
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
-    ix.stub(IModelCatalog, { _serviceBrand: undefined } as IModelCatalog);
+    ix.stub(IProviderCatalogService, { _serviceBrand: undefined } as IProviderCatalogService);
     ix.stub(ISessionTokenCountingService, {
       estimateText: () => 0,
       estimateMessage: () => 0,
       estimateMessages: () => 0,
       recordTruncation: () => {},
     } as unknown as ISessionTokenCountingService);
-    ix.stub(IProtocolAdapterRegistry, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
-    } as IProtocolAdapterRegistry);
+    } as IProviderCatalogService);
     ix.stub(IBuiltinAgentProfileLoader, {
       _serviceBrand: undefined,
     } as IBuiltinAgentProfileLoader);

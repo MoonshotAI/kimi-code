@@ -7,7 +7,6 @@ import {
   IAgentToolRegistryService,
   getLiveSessionById,
   ISessionToolPolicy,
-  IModelCatalog,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
 import { listToolsResponseSchema } from '../src/protocol/rest-tool';
@@ -16,6 +15,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+import { fakeModelCatalog } from './helpers/fakeModelCatalog';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 interface Envelope<T> {
   code: number;
@@ -40,28 +41,14 @@ describe('server-v2 /api/v1 tools', () => {
 
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tools-'));
-    const modelCatalog: IModelCatalog = {
-      _serviceBrand: undefined,
-      get: () => {
-        throw new Error('modelCatalog.get not exercised in this test');
-      },
-      findByName: () => [],
-      listModels: async () => [],
-      listProviders: async () => [],
-      getProvider: async () => {
-        throw new Error('modelCatalog.getProvider not exercised in this test');
-      },
-      setDefaultModel: async () => {
-        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
-      },
-    };
+    const modelCatalog = fakeModelCatalog();
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelCatalog, modelCatalog]],
+      seeds: [[IProviderCatalogService, modelCatalog]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });

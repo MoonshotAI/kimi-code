@@ -22,7 +22,7 @@ import type { SystemTriggerOrigin } from '#/agent/contextMemory/types';
 import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
-import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { estimateTokensForMessages } from '#/session/tokenCounting/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import {
   type TestAgentContext,
@@ -229,6 +229,13 @@ describe('FullCompaction', () => {
       role: 'user',
       origin: { kind: 'injection', variant: 'compaction_continuation' },
     });
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'usage.record',
+      args: expect.objectContaining({
+        usageScope: 'session',
+        usage: expect.objectContaining({ inputOther: 1215, output: 8 }),
+      }),
+    }));
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
@@ -1164,6 +1171,13 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         error_type: 'APIStatusError',
+        request_id: 'trace-compact-fail',
+      }),
+    });
+    expect(records).toContainEqual({
+      event: 'api_error',
+      properties: expect.objectContaining({
+        request_kind: 'full_compaction',
         request_id: 'trace-compact-fail',
       }),
     });
@@ -2658,7 +2672,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('[L0:core.overflow-recovery-after-retry] compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
+  it('compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
     const generate: GenerateFn = createMockProvider(async (request, _signal) => {

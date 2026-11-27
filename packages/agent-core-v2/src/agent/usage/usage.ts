@@ -1,5 +1,5 @@
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
+import type { LogContext } from '#/_base/log/log';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 import { type ErrorCode } from '#/errors';
@@ -17,6 +17,22 @@ export class UsageError extends Error2 {
     this.name = 'UsageError';
   }
 }
+
+export type AgentLLMRequestLogFields = Readonly<LogContext>;
+
+export type AgentLLMRequestSource =
+  | {
+      readonly type: 'turn';
+      readonly turnId: number;
+      readonly step?: number;
+      readonly logFields?: AgentLLMRequestLogFields;
+    }
+  | {
+      readonly type: 'operation';
+      readonly turnId?: number;
+      readonly requestKind?: string;
+      readonly logFields?: AgentLLMRequestLogFields;
+    };
 
 export interface UsageStatus {
   readonly byModel?: Record<string, TokenUsage>;

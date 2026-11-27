@@ -1,6 +1,7 @@
 import { assign, fromCallback, setup } from 'xstate';
 
 import { createDecorator, IInstantiationService } from '#/_base/di/instantiation';
+import { sameDir } from '#/_base/utils/workdir-slug';
 import {
   AgentActorService,
   type AgentActorContext,
@@ -92,7 +93,7 @@ const dateChangeInjection = fromCallback(({
     return !(
       environment !== undefined &&
       environment.cwd !== '' &&
-      environment.cwd !== (bindingCwd() ?? sessionContext.cwd)
+      !sameDir(environment.cwd, bindingCwd() ?? sessionContext.cwd)
     );
   };
   const registration = reminder.register<DateInjectionDisclosure>(

@@ -130,7 +130,7 @@ async function compact(kap: Kap, model: FakeModel, sessionId: string, summary: s
 describe.each(PROFILES)('one session with $name', ({ options, roleMetadata, mcp, takesEffect }) => {
   const test = base.extend<ScenarioFixtures>(scenarioFixtures({ ...withAutoCompaction(options), modelOptions: { reportCachedTokens: true } }));
 
-  test('keeps every main request on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent', async ({ kap, model }) => {
+  test('keeps every main request and every request of a subagent on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent', async ({ kap, model }) => {
     const session = await kap.createSession();
 
     model.script(think('planning the first command', bash('echo one')), answer('first answer'));
@@ -148,7 +148,7 @@ describe.each(PROFILES)('one session with $name', ({ options, roleMetadata, mcp,
     await searchDocs(kap, model, session.id, mcp);
     if (roleMetadata) {
       model.script(agent({ prompt: 'look around the workspace', description: 'scout' }), answer('fifth answer'));
-      model.lane('subagent').script(say('nothing unusual'));
+      model.lane('subagent').script(bash('echo scouting'), say('nothing unusual'));
       await turn(kap, session.id, 'Ask a helper to look around.');
     }
     await compact(kap, model, session.id, 'Summary: the commands ran.', roleMetadata);
@@ -159,6 +159,8 @@ describe.each(PROFILES)('one session with $name', ({ options, roleMetadata, mcp,
     const main = ledger.filter((entry) => entry.role === 'main' && !entry.rejected);
     expect(new Set(main.map((entry) => entry.cacheKey)).size).toBe(1);
     expect(main.slice(1).every((entry) => entry.reusedTokens > 0)).toBe(true);
+    const subagent = ledger.filter((entry) => entry.role === 'subagent' && !entry.rejected);
+    expect(subagent.map((entry) => entry.baseline)).toEqual(roleMetadata ? [undefined, subagent[0]?.request] : []);
     expect(model.promptCacheProblems()).toEqual([]);
   });
 });

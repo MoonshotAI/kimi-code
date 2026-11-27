@@ -2,12 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiConfigRpc } from '#/index';
 import { configToTomlData, parseConfigString } from '#/config/index';
-
-const toPosix = (p: string): string => p.replaceAll('\\', '/');
 
 const tempDirs: string[] = [];
 
@@ -28,7 +27,7 @@ describe('SDK config TOML', () => {
     const dir = await makeTempDir();
     const rpc = createKimiConfigRpc();
 
-    await expect(rpc.resolveConfigPath({ homeDir: dir })).resolves.toBe(toPosix(join(dir, 'config.toml')));
+    await expect(rpc.resolveConfigPath({ homeDir: dir })).resolves.toBe(slashPathOf(join(dir, 'config.toml')));
   });
 
   it('returns structured validation issues through the config RPC wrapper', async () => {

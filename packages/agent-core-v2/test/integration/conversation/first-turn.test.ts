@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 
 import { createTestAgent } from '../../harness';
 
-it('[L0:core.first-turn] finishes a first turn and carries the exchange into the next model request', { tags: ['smoke'] }, async ({ onTestFinished }) => {
+it('finishes a first turn and carries the exchange into the next model request', async ({ onTestFinished }) => {
   const agent = createTestAgent();
   onTestFinished(() => agent.dispose());
   agent.mockNextResponse({ type: 'text', text: 'Hello from the agent.' });

@@ -2,13 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2';
 import type { TestProject } from 'vitest/node';
 
 import { startServer } from '../src/start';
 import { fakeModelCatalog } from './helpers/fakeModelCatalog';
 import { fixedTokenAuth } from './helpers/fixedAuth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export const SHARED_SERVER_TOKEN = 'test-token';
 
@@ -23,7 +23,7 @@ export default async function globalSetup(project: TestProject): Promise<() => P
     homeDir: home,
     logLevel: 'silent',
     authTokenService: fixedTokenAuth(SHARED_SERVER_TOKEN),
-    seeds: [[IModelCatalog, fakeModelCatalog()]],
+    seeds: [[IProviderCatalogService, fakeModelCatalog()]],
   });
   project.provide('sharedServer', {
     base: `http://127.0.0.1:${server.port}`,

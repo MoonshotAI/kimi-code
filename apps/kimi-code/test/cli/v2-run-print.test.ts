@@ -27,11 +27,9 @@ import {
   IFlagService,
   ILogService,
   IMcpOAuthService,
-  IModelService,
   IOAuthToolkit,
   IProjectAliases,
   IProjectService,
-  IProviderService,
   IRegionService,
   ISessionContext,
   ISessionIndex,
@@ -65,6 +63,7 @@ import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app'
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
 import { resetKimiRegionCache } from '../../src/utils/region';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
@@ -349,8 +348,7 @@ function makeFakeHarness(toolUpdates = false) {
       },
     ],
     [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
-    [IModelService, { ready: Promise.resolve() }],
-    [IProviderService, { ready: Promise.resolve() }],
+    [IProviderCatalogService, { ready: Promise.resolve() }],
     [IEventService, { subscribe: vi.fn(() => ({ dispose: vi.fn() })) }],
     [ILogService, { warn: vi.fn() }],
     [IMcpOAuthService, { shutdown: vi.fn(async () => {}) }],

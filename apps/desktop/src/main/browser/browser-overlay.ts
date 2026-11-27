@@ -459,24 +459,36 @@ export interface BrowserModelOverlayLayoutInput {
 export interface BrowserModelOverlayLayout {
   bounds: Rectangle;
   menuOffset: { x: number; y: number };
+  menuBottom?: number;
   menuFrame: { x: number; y: number; viewportWidth: number; viewportHeight: number };
 }
 
 export function browserModelOverlayLayout(input: BrowserModelOverlayLayoutInput): BrowserModelOverlayLayout {
   const { contentWidth, contentHeight, anchor } = input;
   const menuWidth = MODEL_OVERLAY_MENU_WIDTH;
-  const menuHeight = Math.max(1, Math.min(input.menuHeight, modelOverlayMaxHeight(anchor.y, contentHeight)));
+  const maxHeight = modelOverlayMaxHeight(anchor.y, contentHeight);
+  const menuHeight = Math.max(1, Math.min(input.menuHeight, maxHeight));
   const maxMenuX = Math.max(VIEWPORT_MARGIN, contentWidth - VIEWPORT_MARGIN - menuWidth);
   const menuX = Math.min(Math.max(VIEWPORT_MARGIN, anchor.x + anchor.width - menuWidth), maxMenuX);
-  const maxMenuY = Math.max(VIEWPORT_MARGIN, contentHeight - VIEWPORT_MARGIN - menuHeight);
-  const menuY = Math.min(Math.max(VIEWPORT_MARGIN, anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - menuHeight), maxMenuY);
+  const menuY = Math.min(
+    Math.max(VIEWPORT_MARGIN, anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - menuHeight),
+    Math.max(VIEWPORT_MARGIN, contentHeight - VIEWPORT_MARGIN - menuHeight),
+  );
+  const highestMenuY = Math.min(
+    Math.max(VIEWPORT_MARGIN, anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - maxHeight),
+    Math.max(VIEWPORT_MARGIN, contentHeight - VIEWPORT_MARGIN - maxHeight),
+  );
   const x = Math.max(0, Math.floor(menuX - MODEL_OVERLAY_FLYOUT_RESERVE_X - BROWSER_OVERLAY_GUTTER));
-  const y = Math.max(0, Math.floor(menuY - MODEL_OVERLAY_FLYOUT_RESERVE_TOP - BROWSER_OVERLAY_GUTTER));
+  const y = Math.max(0, Math.floor(highestMenuY - MODEL_OVERLAY_FLYOUT_RESERVE_TOP - BROWSER_OVERLAY_GUTTER));
   const right = Math.min(contentWidth, Math.ceil(menuX + menuWidth + MODEL_OVERLAY_FLYOUT_RESERVE_X + BROWSER_OVERLAY_GUTTER));
-  const bottom = Math.min(contentHeight, Math.ceil(menuY + menuHeight + MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM + BROWSER_OVERLAY_GUTTER));
+  const bottomAnchor = Math.max(anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET, highestMenuY + maxHeight);
+  const bottom = Math.min(contentHeight, Math.ceil(bottomAnchor + MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM + BROWSER_OVERLAY_GUTTER));
+  const topClamped = menuY <= VIEWPORT_MARGIN && anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - menuHeight < VIEWPORT_MARGIN;
+  const menuBottom = topClamped ? undefined : bottom - (anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET);
   return {
     bounds: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) },
     menuOffset: { x: menuX - x, y: menuY - y },
+    ...(menuBottom === undefined ? {} : { menuBottom }),
     menuFrame: { x: menuX, y: menuY, viewportWidth: contentWidth, viewportHeight: contentHeight },
   };
 }
@@ -523,24 +535,33 @@ export function showBrowserOverlayRendered(
       anchor: current.anchor,
       menuHeight: rendered.height,
     });
-    if (!wasVisible) {
-      entry.host.contentView.removeChildView(entry.view);
-      entry.host.contentView.addChildView(entry.view);
-    }
     const { x, y, width, height } = modelLayout.bounds;
-    entry.view.setBounds({
+    const nextBounds = {
       x: Math.floor(x * zoom),
       y: Math.floor(y * zoom),
       width: Math.ceil((x + width) * zoom) - Math.floor(x * zoom),
       height: Math.ceil((y + height) * zoom) - Math.floor(y * zoom),
-    });
+    };
+    const previousBounds = entry.view.getBounds();
+    const boundsChanged =
+      previousBounds.x !== nextBounds.x ||
+      previousBounds.y !== nextBounds.y ||
+      previousBounds.width !== nextBounds.width ||
+      previousBounds.height !== nextBounds.height;
+    if (wasVisible && !boundsChanged) return;
+    if (!wasVisible) {
+      entry.host.contentView.removeChildView(entry.view);
+      entry.host.contentView.addChildView(entry.view);
+    }
+    entry.view.setBounds(nextBounds);
     entry.visible = true;
     entry.view.setVisible(true);
-    if (current.preserveFocus !== true) entry.view.webContents.focus();
+    if (!wasVisible && current.preserveFocus !== true) entry.view.webContents.focus();
     entry.view.webContents.send(IPC.browserOverlayShown, {
       requestId: current.requestId,
       placement: 'top-end',
       menuOffset: modelLayout.menuOffset,
+      ...(modelLayout.menuBottom === undefined ? {} : { menuBottom: modelLayout.menuBottom }),
       menuFrame: modelLayout.menuFrame,
     } satisfies BrowserOverlayShown);
     return;

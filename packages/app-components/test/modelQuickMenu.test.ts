@@ -24,6 +24,7 @@ let app: App | undefined;
 let host: HTMLDivElement;
 let actions: QuickModelMenuAction[];
 let dismissed = 0;
+let menuProps: { state: QuickModelMenuPayload; maxHeight: number };
 
 function initialState(overrides: Partial<QuickModelMenuPayload> = {}): QuickModelMenuPayload {
   return {
@@ -42,8 +43,9 @@ function initialState(overrides: Partial<QuickModelMenuPayload> = {}): QuickMode
   };
 }
 
-function mountMenu(state: QuickModelMenuPayload): void {
-  const props = reactive({ state, maxHeight: 480 });
+function mountMenu(state: QuickModelMenuPayload, maxHeight = 480): void {
+  const props = reactive({ state, maxHeight });
+  menuProps = props;
   app = createApp({
     render: () =>
       h(ModelQuickMenu, {
@@ -68,7 +70,7 @@ function mountMenu(state: QuickModelMenuPayload): void {
   app.mount(host);
 }
 
-function rows(selector = '.mqm > .mqm-scroll .mqm-row, .mqm > .mqm-actions .mqm-row'): HTMLElement[] {
+function rows(selector = '.mqm .mqm-scroll .mqm-row, .mqm > .mqm-actions .mqm-row'): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>(selector)];
 }
 
@@ -92,9 +94,9 @@ afterEach(() => {
 describe('ModelQuickMenu states', () => {
   it('renders recent models with provider names and additively repeats the current provider group', () => {
     mountMenu(initialState());
-    const labels = [...host.querySelectorAll('.mqm > .mqm-scroll > .mqm-section > .mqm-label')].map((el) => el.textContent?.trim());
+    const labels = [...host.querySelectorAll('.mqm-body > .mqm-label')].map((el) => el.textContent?.trim());
     expect(labels).toEqual(['最近使用', 'Kimi 订阅']);
-    const recentRows = rows('.mqm > .mqm-scroll > .mqm-section:first-child .mqm-row');
+    const recentRows = rows('.mqm-recent-scroll .mqm-row');
     expect(recentRows).toHaveLength(3);
     expect(recentRows[0]?.querySelector('.mqm-name')?.textContent).toBe('Kimi K2.5');
     expect(recentRows[0]?.querySelector('.mqm-provider')?.textContent).toBe('Kimi 订阅');
@@ -105,7 +107,7 @@ describe('ModelQuickMenu states', () => {
   it('hides the recent section entirely when empty', () => {
     mountMenu(initialState({ recentModels: [] }));
     expect(host.textContent).not.toContain('最近使用');
-    expect(host.querySelector('.mqm > .mqm-scroll > .mqm-section > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
+    expect(host.querySelector('.mqm-body > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
   });
 
   it('shows a 500ms hover capability card on model rows', async () => {
@@ -124,7 +126,7 @@ describe('ModelQuickMenu states', () => {
     expect(card?.textContent).toContain('思考');
   });
 
-  it('opens the provider submenu, emits selectProvider without switching models, and caps provider scroll height', async () => {
+  it('keeps the provider submenu open after choosing a provider and closes it when toggled again', async () => {
     mountMenu(initialState());
     host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
     await nextTick();
@@ -135,7 +137,36 @@ describe('ModelQuickMenu states', () => {
     options[1]!.click();
     await nextTick();
     expect(actions).toEqual([{ type: 'select-provider', providerId: 'openrouter' }]);
+    expect(host.querySelector('.mqm-flyout')).not.toBeNull();
+    expect(host.querySelector('.mqm-flyout .mqm-row.is-active')?.textContent?.trim()).toBe('openrouter');
+
+    host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
+    await nextTick();
     expect(host.querySelector('.mqm-flyout')).toBeNull();
+  });
+
+  it('keeps an already open flyout visible without re-positioning when its trigger row is re-entered', async () => {
+    mountMenu(initialState());
+    const menu = host.querySelector<HTMLElement>('.mqm')!;
+    const rectSpy = vi.spyOn(menu, 'getBoundingClientRect');
+    const trigger = host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!;
+    trigger.dispatchEvent(new MouseEvent('mouseenter'));
+    await vi.advanceTimersByTimeAsync(80);
+    await nextTick();
+    await nextTick();
+    const flyout = host.querySelector<HTMLElement>('.mqm-flyout')!;
+    expect(flyout.style.visibility).not.toBe('hidden');
+    expect(rectSpy).toHaveBeenCalled();
+    rectSpy.mockClear();
+
+    trigger.dispatchEvent(new MouseEvent('mouseenter'));
+    vi.advanceTimersByTime(80);
+    await nextTick();
+    expect(rectSpy).not.toHaveBeenCalled();
+    expect(host.querySelector('.mqm-flyout')).toBe(flyout);
+    expect(flyout.style.visibility).not.toBe('hidden');
+    await nextTick();
+    expect(flyout.style.visibility).not.toBe('hidden');
   });
 
   it('disables the thinking submenu when the current model does not support thinking', async () => {
@@ -148,7 +179,7 @@ describe('ModelQuickMenu states', () => {
     expect(host.querySelector('.mqm-flyout')).toBeNull();
   });
 
-  it('opens the thinking submenu with description and emits selectEffort on choice', async () => {
+  it('keeps the thinking submenu open after choosing an effort and moves the highlight to it', async () => {
     mountMenu(initialState());
     host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!.click();
     await nextTick();
@@ -157,7 +188,10 @@ describe('ModelQuickMenu states', () => {
     const options = [...flyout.querySelectorAll<HTMLElement>('.mqm-row')];
     expect(options.map((el) => el.textContent?.trim())).toEqual(['Off', 'Low', 'High']);
     options[1]!.click();
+    await nextTick();
     expect(actions).toEqual([{ type: 'select-effort', effort: 'low' }]);
+    expect(host.querySelector('.mqm-flyout')).not.toBeNull();
+    expect(host.querySelector('.mqm-flyout .mqm-row.is-active')?.textContent?.trim()).toBe('Low');
   });
 
   it('highlights the active effort on open, previews cloud descriptions per highlighted effort, and falls back when unconfigured', async () => {
@@ -273,12 +307,132 @@ describe('ModelQuickMenu states', () => {
     expect(actions).toEqual([{ type: 'select-provider', providerId: 'provider-12' }]);
   });
 
-  it('keeps actions and search fixed below a single scrolling list on short viewports', async () => {
+  it('renders a draggable 4px overlay thumb with edge fades instead of the native scrollbar', async () => {
+    const manyModels = Array.from({ length: 10 }, (_, i) => ({
+      id: `openrouter/m${i}`,
+      provider: 'openrouter',
+      model: `m${i}`,
+      displayName: `Model ${i}`,
+      maxContextSize: 128 * 1024,
+      capabilities: ['tool_use'],
+    }));
+    mountMenu(initialState({ providerModels: manyModels }));
+    await nextTick();
+    await nextTick();
+    const scroller = host.querySelector<HTMLElement>('.mqm-provider-scroll')!;
+    scroller.style.setProperty('--overlay-scrollbar-track-inset', '2px');
+    scroller.style.setProperty('--overlay-scrollbar-thumb-min', '24px');
+    let scrollTopValue = 0;
+    Object.defineProperties(scroller, {
+      scrollTop: { configurable: true, get: () => scrollTopValue, set: (value) => { scrollTopValue = value; } },
+      scrollHeight: { configurable: true, value: 320 },
+      clientHeight: { configurable: true, value: 192 },
+      offsetTop: { configurable: true, value: 200 },
+    });
+    scroller.dispatchEvent(new MouseEvent('mouseenter'));
+    scroller.dispatchEvent(new Event('scroll'));
+    await nextTick();
+
+    const thumb = () => host.querySelector<HTMLElement>('.model-scroll-thumb');
+    expect(thumb()).not.toBeNull();
+    expect(thumb()?.classList.contains('is-visible')).toBe(true);
+    expect(thumb()?.style.height).toBe('112.8px');
+    expect(thumb()?.style.top).toBe('202px');
+    expect(scroller.style.maskImage).toContain('to top');
+
+    scrollTopValue = 64;
+    scroller.dispatchEvent(new Event('scroll'));
+    await nextTick();
+    expect(scroller.style.maskImage).toContain('to bottom');
+    expect(scroller.style.maskImage).toContain('calc(100% - var(--menu-scroll-fade, 20px))');
+    expect(thumb()?.style.top).not.toBe('202px');
+
+    scroller.dispatchEvent(new MouseEvent('mouseleave'));
+    await vi.advanceTimersByTimeAsync(950);
+    await nextTick();
+    expect(thumb()?.classList.contains('is-visible')).toBe(false);
+  });
+
+  it('keeps recent models, provider label, actions, and search fixed while only the provider list scrolls', async () => {
     mountMenu(initialState());
     const menu = host.querySelector<HTMLElement>('.mqm')!;
     expect(menu.style.maxHeight).toBe('480px');
-    expect(menu.querySelector(':scope > .mqm-scroll > .mqm-section .mqm-provider-scroll')).toBeNull();
+    expect(menu.querySelectorAll(':scope > .mqm-body > .mqm-recent-scroll > .mqm-row')).toHaveLength(3);
+    expect(menu.querySelector(':scope > .mqm-body > .mqm-label')?.textContent?.trim()).toBe('最近使用');
+    expect(menu.querySelectorAll(':scope > .mqm-body > .mqm-provider-scroll > .mqm-row')).toHaveLength(3);
+    expect(menu.querySelector(':scope .mqm-provider-scroll [data-row-key^="recent:"]')).toBeNull();
     expect(menu.querySelector(':scope > .mqm-actions')).not.toBeNull();
     expect(menu.querySelector(':scope > .mqm-search')).not.toBeNull();
+  });
+
+  it('re-anchors the open provider flyout within the viewport when switching to a provider with fewer models', async () => {
+    const observerCallbacks: (() => void)[] = [];
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: () => void) { observerCallbacks.push(cb); }
+      observe(): void {}
+      disconnect(): void {}
+    });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+
+    const manyModels = Array.from({ length: 10 }, (_, i) => ({
+      id: `kimi/m${i}`,
+      provider: 'managed:kimi-code',
+      model: `m${i}`,
+      displayName: `Model ${i}`,
+      maxContextSize: 128 * 1024,
+      capabilities: ['tool_use'],
+    }));
+    const providers = Array.from({ length: 8 }, (_, i) => ({ id: `p-${i}`, label: `Provider ${i}` }));
+    mountMenu(initialState({ providerModels: manyModels, providers, activeProvider: 'p-0', activeProviderLabel: 'Provider 0' }));
+
+    let menuTop = 362;
+    const rect = (top: number, width: number, height: number) => ({ x: 600, y: top, left: 600, top, right: 600 + width, bottom: top + height, width, height, toJSON: () => ({}) }) as DOMRect;
+    const menuEl = host.querySelector<HTMLElement>('.mqm')!;
+    const triggerEl = host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!;
+    vi.spyOn(menuEl, 'getBoundingClientRect').mockImplementation(() => rect(menuTop, 240, menuTop === 362 ? 480 : 280));
+    vi.spyOn(triggerEl, 'getBoundingClientRect').mockImplementation(() => rect(712, 224, 32));
+
+    triggerEl.click();
+    await nextTick();
+    await nextTick();
+
+    const flyout = host.querySelector<HTMLElement>('.mqm-flyout')!;
+    vi.spyOn(flyout, 'getBoundingClientRect').mockImplementation(() => rect(600, 240, 292));
+    Object.defineProperty(flyout.querySelector('[data-first-option]'), 'offsetTop', { configurable: true, value: 32 });
+    for (const cb of observerCallbacks) cb();
+    await nextTick();
+    expect(flyout.style.top).toBe('238px');
+
+    const options = [...flyout.querySelectorAll<HTMLElement>('.mqm-row')];
+    options[1]!.click();
+    menuProps.state = {
+      ...menuProps.state,
+      activeProvider: 'p-1',
+      activeProviderLabel: 'Provider 1',
+      providerModels: [otherModels[0]!, otherModels[1]!],
+    };
+    menuTop = 562;
+    await nextTick();
+    expect(flyout.style.top).toBe('38px');
+    for (const cb of observerCallbacks) cb();
+    await nextTick();
+
+    expect(host.querySelector('.mqm-flyout')).not.toBeNull();
+    expect(flyout.style.top).toBe('38px');
+    expect(menuTop + Number.parseFloat(flyout.style.top) + 292).toBeLessThanOrEqual(892);
+  });
+
+  it('falls back to a single scrollable upper body when maxHeight cannot fit the fixed chrome', () => {
+    const fiveRecent = [...kimiModels, ...otherModels].slice(0, 5);
+    mountMenu(initialState({ recentModels: fiveRecent }), 220);
+    const menu = host.querySelector<HTMLElement>('.mqm')!;
+    const body = menu.querySelector<HTMLElement>('.mqm-body.is-fluid')!;
+    expect(menu.style.maxHeight).toBe('220px');
+    expect(body).not.toBeNull();
+    expect(body.querySelectorAll('[data-row-key^="recent:"]')).toHaveLength(5);
+    expect(body.querySelectorAll('[data-row-key^="provider:"]')).toHaveLength(3);
+    expect(menu.querySelector(':scope > .mqm-actions [data-row-key="action:provider"]')).not.toBeNull();
+    expect(menu.querySelector(':scope > .mqm-search input')).not.toBeNull();
   });
 });

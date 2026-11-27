@@ -24,6 +24,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    globalSetup: ['tests/globalSetup.ts'],
     server: {
       deps: {
         inline: [/markstream-vue/],

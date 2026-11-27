@@ -2,7 +2,7 @@
 
 一端是模拟的用户输入，另一端是真实的产品进程，中间只有 testkit 的假模型是假的。每个场景查三样：模型收到了什么、界面显示了什么、磁盘变成了什么样。同一个场景要在 TUI、Web、Desktop、ACP 四个面上各跑一遍，四个面都已接通。
 
-旧 E2E 不在这里：`apps/desktop/e2e/`、`apps/desktop/test/e2e/`、`apps/kimi-code/test/e2e/`，以及 `packages/acp-server/test/` 里的 e2e 和 parity 测试。不要把它们搬进来，也不要 import 它们的夹具。KAP 协议本身的场景在 `tests/scenarios/`。
+旧 E2E 不在这里：`apps/desktop/e2e/`、`apps/kimi-code/test/e2e/`，以及 `packages/acp-server/test/` 里的 e2e 和 parity 测试。不要把它们搬进来，也不要 import 它们的夹具。KAP 协议本身的场景在 `tests/scenarios/`。
 
 ## 目录
 
@@ -26,7 +26,8 @@ playwright.config.ts               一个面一个 project，另有两个跑法�
 - Web 跑的是 CLI 自带的 Web 界面。先 `pnpm sync:web` 把界面构建出来，改了 `apps/desktop/src/renderer` 或它依赖的 `packages/` 之后要重跑；第一次还要装浏览器：`pnpm --filter @moonshot-ai/e2e exec playwright install chromium`。然后 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=web`。CLI 本身和 TUI 一样，默认跑源码，设 `TESTKIT_CLI_BUILD=dist` 跑构建产物。`kimi web` 和用户一样跑在一个真终端里（`surfaces/terminal-process.ts`，`node-pty`），终端输出渲染到 xterm.js 里，地址从渲染出的屏幕按行读（Windows 的 ConPTY 用光标定位而不是换行输出横幅）；结束时驱动在这个终端里按 Ctrl+C，要求它以 0 退出。
 - Desktop 的窗口和 Web 的浏览器默认都不显示。想看着跑，设 `E2E_HEADED=1`。
 - 工作区必须在 git 工作树之外。`TMPDIR` 如果在某个仓库里，夹具会直接报错：POSIX 上，工作区在 git 工作树里时，Edit 和 Write 会被自动批准，审批场景会挂住。
-- CI：`.github/workflows/e2e.yml`，在 Linux 上跑，作业名带 optional。每次合并到 main 都跑；PR 上跳过 draft，只在打了 `e2e` 标签，或改动了 `tests/e2e/`、`packages/testkit/` 或这个工作流时跑。改了产品代码、想在合并前看 E2E 结果，就给 PR 打 `e2e` 标签。Desktop 和 Web 各分成两片（`--shard`），各占一个作业；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。Windows 上也跑这四个面，作业名是 `Windows <面> (optional)`，Desktop 和 Web 各分成两片（例如 `Windows web (optional, 1/2)`、`2/2`）；它们在上面那些会跑 E2E 的 PR 上和手动触发（`workflow_dispatch`）时跑，合并到 main 时不跑，免得每次合并再多占六个 runner。Windows 上只跑 `tui`、`acp`、`desktop`、`web` 四个 project，不跑 `tui-kitty`、`acp-bare` 两个跑法。仓库目前没有必过检查，所以它红了不挡合并。
+- CI：`.github/workflows/e2e.yml`，在 Linux 上跑，作业名带 optional。每次合并到 main 都跑；PR 上跳过 draft，只在打了 `e2e` 标签，或改动了 `tests/e2e/`、`packages/testkit/` 或这个工作流时跑。改了产品代码、想在合并前看 E2E 结果，就给 PR 打 `e2e` 标签。Desktop 和 Web 各分成两片（`--shard`），各占一个作业；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。Windows 上也跑这四个面，作业名是 `Windows <面> (optional)`，Desktop 和 Web 各分成两片（例如 `Windows web (optional, 1/2)`、`2/2`）；它们在上面那些会跑 E2E 的 PR 上、手动触发（`workflow_dispatch`）时和每晚定时运行时跑，合并到 main 时不跑，免得每次合并再多占六个 runner。Windows 上只跑 `tui`、`acp`、`desktop`、`web` 四个 project，不跑 `tui-kitty`、`acp-bare` 两个跑法。仓库目前没有必过检查，所以它红了不挡合并。
+- 每晚定时运行：每天北京时间 04:07（cron `7 20 * * *`，UTC）在 main 上跑一次完整的套件，Windows 也跑。有作业没通过时，最后的 `Notify Feishu about nightly failures` 作业用 `scripts/e2e-nightly-notify.mjs` 往团队的飞书群发一张卡片，列出没通过的作业、停在哪一步，以及没通过的用例，最后一行写「@<负责排查的人的名字>」，请对方打开这次运行、找出引入报错的 PR，再 @ 提这个 PR 的人去修；全部通过就不发。这个 @ 是纯文字，不是飞书的 @ 提醒：自定义机器人 @ 不了群里的机器人。飞书群自定义机器人的 webhook 地址、签名密钥和写在 @ 后面的名字放在仓库 secrets `FEISHU_E2E_WEBHOOK`、`FEISHU_E2E_SECRET`、`FEISHU_E2E_TRIAGE_USER` 里，缺了任何一个，这个作业每晚都会红。通知作业读不到这次运行的结果（GitHub 接口出错等）时，先发一张说明原因的卡片，再让自己变红；读不了的结果文件也列在卡片上；下载结果文件失败时照样发卡片，写明用例没有列出，作业最后仍然变红。手动触发时勾选 `notify`，也会走这一步。想马上试发一张卡片，就手动触发并填 `notify_run_id`（某次历史运行的 ID）：整套 E2E 跳过不跑，直接针对那次运行发一张标题带「【测试】」的卡片，末尾的 @ 也照常写，一两分钟就能看到 webhook、签名和卡片是否正常。用例从那次运行的 `e2e-results-*` 里读，7 天内的夜跑才有；填一次全部通过的运行，什么都不会发。想不发消息、先看卡片长什么样，就在本地对某次运行跑 `GH_TOKEN=$(gh auth token) node scripts/e2e-nightly-notify.mjs --dry-run --repo <owner>/<repo> --run-id <运行 ID> --results-dir <下载的 e2e-results-* 所在目录>`。
 - Windows 上 Desktop 收尾时只能确认主进程退出了，查不到它的子进程：`process.kill(-pid, 0)` 这种按进程组的查法在 Windows 上没有。
 
 ## 写场景
@@ -64,7 +65,8 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 场景结束时产品必须空闲，产品要能正常退出，除了假模型和本机不能连别的地址 | 收尾检查 |
 | 假模型的缓存账本默认开着：主请求和压缩请求都要延续上一个主请求，有意的断点用 `model.expectCacheBreak(原因, { at })` 声明。主请求用到的缓存键个数不能超过「1 + `newSession()` 的次数」：同一个会话的请求必须一直用同一个键，重启之后也一样，否则供应商那边的缓存用不上 | `model.verify()` 和收尾检查 |
 | 选项 `provider` 设假模型服务的类型、模型能力和窗口大小（`type`、`capabilities`、`maxContextSize`），`config` 合并进测试 home 的 `config.toml`（例如 `loopControl`、第二个模型）。只写用户自己也能写进配置文件的内容 | 评审 |
-| 选项 `mcp` 声明用户配置的 MCP 服务：每个服务是本机的一个 testkit HTTP 假服务，写进测试 home 的 `mcp.json`，`deferred` 照写。本体里 `mcp(名字)` 拿到它，`addTool`、`updateTool`、`removeTool` 相当于 MCP 服务自己改了工具：改完通知产品，等到这个服务答复了产品重新要的工具清单才返回。产品收到答复之后是异步更新的，没有承诺紧接着的下一次请求就反映这次变化，所以场景只断言「变化之前的请求里没有、之后的请求里恰好有一次」，不断言是哪一次。没声明的名字直接报错 | `mcp()` 的运行时检查 |
+| 选项 `clock` 给出本机时间的起点（ISO-8601，例如 `2030-01-01T12:00:00Z`），本体里 `clock(时间)` 把本机时间改成另一个时刻，相当于用户的机器上时间过去了。驱动把测试 home 里的时钟文件通过 `KIMI_CODE_CLOCK_FILE` 交给产品，产品只在 `IHostClock` 里读它，它只决定告诉模型的本地日期。没给 `clock` 选项就调用 `clock()` 会报错。要断言日期时，在场景里用 `toLocaleDateString` 算出本地日期，别写死，因为不同时区的日期不同 | `scenario()` 的运行时检查；`scripts/checks/e2e-boundary.json` 的 `testSwitches` |
+| 选项 `mcp` 声明用户配置的 MCP 服务：每个服务是本机的一个 testkit HTTP 假服务，写进测试 home 的 `mcp.json`，`deferred` 照写。本体里 `mcp(名字)` 拿到它，`addTool`、`updateTool`、`removeTool` 相当于 MCP 服务自己改了工具：改完通知产品，等到这个服务答复了产品重新要的工具清单才返回。产品收到答复之后是异步更新的，没有承诺紧接着的下一次请求就反映这次变化，所以场景只断言「变化之前的请求里没有、之后的请求里恰好有一次」，不断言是哪一次。`disconnect()` 断开这个服务的所有会话，相当于 MCP 服务重启了，等到产品自己重新连上、又读了一次工具清单才返回。服务写 `from: 'editor'` 时不写进 `mcp.json`，而是由 ACP 编辑器在 `session/new` 和 `session/load` 里传给产品，场景只能在 ACP 上跑，也不能设 `deferred`。没声明的名字直接报错 | `mcp()` 的运行时检查；`from: 'editor'` 由 `scenario()` 登记时检查 |
 | `scenarios/cache/` 下的场景各自对应 `scenarios/cache/catalog.yaml` 里的一项：清单列出会改变产品发给模型服务的请求的用户操作，写明承诺保持前缀还是有意断开、哪些测试覆盖它，没覆盖的写明缺什么。缓存场景先证明操作生效了（用户看得见的效果，或者模型收到的内容），再断言前后的主请求在账本里的延续关系。别的场景只有在这个操作前后都发了主请求时，才能记成 `implicit` 覆盖，否则账本什么也没比较 | `scripts/checks/e2e-cache-catalog.mjs`：每项都有测试或写明的缺口，每个缓存场景都登记了，承诺保持的场景不声明断点，承诺断开的场景用清单里的原因声明 |
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用一行文字，可以是中文，不含控制字符，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()`、`queue()`、`steer()` 的运行时检查 |
@@ -149,7 +151,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 - 帧的附件名以 `.png` 或 `.txt` 结尾。Playwright 拿附件名里最后一个点之后的部分当文件扩展名，名字里的「b.txt」会让截图存成打不开的文件。
 - 本地跑完用 `pnpm --filter @moonshot-ai/e2e exec playwright show-report` 打开报告。Desktop 和 Web 的帧在用例的「Screenshots」里，TUI 和 ACP 的帧在「Attachments」里。
 - CI 上每个面的报告不管红绿都上传成 artifact `e2e-<面>-report`，保留 7 天；失败时另传 `e2e-<面>-failure`（`test-results/`）。分片的面在名字后面加片号，例如 `e2e-desktop-report-2`。报告解压后双击 `index.html` 就能看步骤和画面。Desktop 和 Web 失败时的 trace 在附件 `desktop-trace`、`web-trace` 里，报告不会把它们显示成「View Trace」，下载后用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <zip>` 打开。
-- 运行页的摘要由 `support/run-summary.ts` 在设置了 `GITHUB_STEP_SUMMARY` 时写出：整体结果，不属于任何用例的错误（例如加载场景文件时出错），每个面的场景结果表和自测的通过数。摘要里写的 artifact 名字和 `.github/workflows/e2e.yml` 里的要一致。
+- 运行页的摘要由 `support/run-summary.ts` 在设置了 `GITHUB_STEP_SUMMARY` 时写出：整体结果，不属于任何用例的错误（例如加载场景文件时出错），每个面的场景结果表和自测的通过数。摘要里写的 artifact 名字和 `.github/workflows/e2e.yml` 里的要一致。设置了 `E2E_RESULTS_FILE` 时，它还把没通过的用例和不属于任何用例的错误写成一个 JSON 文件，连同平台和分片号一起；每晚定时运行时，各作业把它传成 artifact `e2e-results-*`（保留 7 天），飞书通知从这里读用例。只有一片的运行（例如 Windows 上的 `--shard=1/1`）按不分片记，摘要和结果文件里都不写片号。
 - 报告会作为公开仓库的 artifact 上传，场景里的提示词、文件内容和剧本只能用假数据。
 
 ## 红了怎么办
@@ -157,8 +159,3 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 - **先分清是产品坏了还是驱动坏了。** 自测也红，多半是驱动或产品的界面变了；只有场景红，先看场景断言的那条产品行为。
 - **不许靠重试、加等待、跳过让它变绿。** flaky 用例照根 `AGENTS.md` 的规则处理：先找根因。实在找不到根因可以删，PR 里写明删掉的用例原来覆盖什么、现在由谁覆盖。
 - **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、缓存账本（附件 `prompt-cache`：每个请求的通道、缓存键、基线、断点和复用量，以及账本报出的问题）、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。产品没能启动（包括 `restart()` 之后没能重新启动）时，驱动在关掉进程之前收集同样的诊断，附件名前加上第几次启动，例如 `launch-1-desktop-trace`、`launch-2-tui-screen`；Web 在打开页面之前就失败时，附上 `kimi web` 终端里的内容（`launch-1-web-server`）。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
-
-## 不在这里做的事
-
-- 不往 `tests/protected.yaml` 登记。现在登记的 Playwright 条目都会被当成 Desktop 旅程去检查。
-- 不写 `@quarantine`。`scripts/checks/quarantine.mjs` 只允许 Desktop 旅程进隔离名单。

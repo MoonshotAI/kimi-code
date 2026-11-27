@@ -1,21 +1,12 @@
-import { createUserMessage } from '@moonshot-ai/core/llm/message';
 import type { ProtocolName } from '@moonshot-ai/core/llm/protocol/protocol';
 import type { LlmEndpoint, LlmModelSpec, ModelCapability } from '@moonshot-ai/core/llm/request';
-import type { LlmRequester as CoreLlmRequester } from '@moonshot-ai/core/llm/requester';
 import type { ProviderMediaContribution } from '#/media/upload';
 import { assign, createActor, emit, enqueueActions, fromPromise, setup, type Actor } from '#/xstate2';
-
-export type ProviderRequesterSource =
-  | CoreLlmRequester<'protocol'>
-  | Readonly<Record<string, CoreLlmRequester<'protocol'>>>
-  | ((protocol?: ProtocolName, model?: CatalogModelDefinition) => CoreLlmRequester<'protocol'> | undefined);
 
 export type CatalogModelSeed = CatalogModelDefinition;
 
 export interface CatalogProviderHandle {
   readonly id: string;
-  readonly requester?: ProviderRequesterSource;
-  readonly endpoint?: LlmEndpoint;
   readonly listModels?: (signal: AbortSignal) => Promise<readonly CatalogModelSeed[]>;
   readonly media?: ProviderMediaContribution;
 }
@@ -76,12 +67,9 @@ export interface CatalogProviderEntry {
   readonly info?: CatalogProviderInfo;
   readonly discovered: Readonly<Record<string, CatalogModelSeed>>;
   readonly override: Readonly<Record<string, CatalogModelDefinition>>;
-  readonly pingErrors?: Readonly<Record<string, string>>;
 }
 
-export interface CatalogModel extends CatalogModelDefinition {
-  readonly pingError?: string;
-}
+export type CatalogModel = CatalogModelDefinition;
 
 export interface CatalogSnapshot {
   readonly providers: Readonly<Record<string, CatalogProviderEntry>>;
@@ -100,8 +88,7 @@ export type ProviderCatalogEvent =
       models?: readonly CatalogModelDefinition[];
     }
   | { type: 'remove'; providerId: string }
-  | { type: 'refresh'; providers: readonly Provider[] }
-  | { type: 'ping'; provider: Provider; model: string };
+  | { type: 'refresh'; providers: readonly Provider[] };
 
 export type ProviderCatalogEmitted =
   | { readonly type: 'changed'; readonly providers: readonly string[] }
@@ -119,25 +106,12 @@ interface RefreshFailure {
   readonly error: unknown;
 }
 
-interface PingRequest {
-  readonly provider: Provider;
-  readonly model: CatalogModelDefinition;
-}
-
-interface PingOutcome {
-  readonly providerId: string;
-  readonly model: string;
-  readonly error?: string;
-}
-
 interface ProviderCatalogContext {
   readonly snapshot: CatalogSnapshot;
   readonly batch: readonly Provider[];
   readonly queue: readonly Provider[];
   readonly dirty: readonly string[];
   readonly failures: readonly RefreshFailure[];
-  readonly ping?: PingRequest;
-  readonly pingQueue: readonly PingRequest[];
 }
 
 interface PullResult {
@@ -160,7 +134,6 @@ function applyPullResults(
         info: entry?.info,
         override: entry?.override ?? {},
         discovered: Object.fromEntries(result.models.map((model) => [model.id, model])),
-        pingErrors: entry?.pingErrors,
       },
     };
   }
@@ -189,132 +162,14 @@ function enqueueProviders(
   return [...queue, ...incoming.filter((provider) => !active.has(provider.id))];
 }
 
-function applyPingOutcome(
-  snapshot: CatalogSnapshot,
-  outcome: PingOutcome,
-): { snapshot: CatalogSnapshot; changed: boolean } {
-  const entry = snapshot.providers[outcome.providerId];
-  if (entry === undefined) return { snapshot, changed: false };
-  if (entry.pingErrors?.[outcome.model] === outcome.error) return { snapshot, changed: false };
-  const pingErrors = { ...entry.pingErrors };
-  if (outcome.error === undefined) delete pingErrors[outcome.model];
-  else pingErrors[outcome.model] = outcome.error;
-  return {
-    snapshot: {
-      providers: {
-        ...snapshot.providers,
-        [outcome.providerId]: { ...entry, pingErrors },
-      },
-    },
-    changed: true,
-  };
-}
-
-function resolveCatalogModel(
-  entry: CatalogProviderEntry | undefined,
-  modelId: string,
-): CatalogModelDefinition | undefined {
-  if (entry === undefined) return undefined;
-  const override = entry.override[modelId];
-  if (override !== undefined) return mergeModel(override, entry.discovered[modelId]);
-  const discovered = entry.discovered[modelId];
-  if (discovered === undefined) return undefined;
-  return mergeModel({ ...discovered }, undefined);
-}
-
 function mergeEntryModels(entry: CatalogProviderEntry): CatalogModel[] {
-  const attach = (model: CatalogModelDefinition): CatalogModel => {
-    const pingError = entry.pingErrors?.[model.id];
-    return pingError === undefined ? model : { ...model, pingError };
-  };
   const merged = Object.values(entry.override).map((record) =>
-    attach(mergeModel(record, entry.discovered[record.id])),
+    mergeModel(record, entry.discovered[record.id]),
   );
   const discoveredOnly = Object.values(entry.discovered)
     .filter((model) => entry.override[model.id] === undefined)
-    .map((model) => attach(mergeModel({ ...model }, undefined)));
+    .map((model) => mergeModel({ ...model }, undefined));
   return [...merged, ...discoveredOnly].toSorted((a, b) => a.id.localeCompare(b.id));
-}
-
-function enqueuePing(
-  active: PingRequest | undefined,
-  queue: readonly PingRequest[],
-  request: PingRequest,
-): readonly PingRequest[] {
-  const keyOf = (ping: PingRequest): string => `${ping.provider.id}#${ping.model.id}`;
-  if (active !== undefined && keyOf(active) === keyOf(request)) return queue;
-  if (queue.some((ping) => keyOf(ping) === keyOf(request))) return queue;
-  return [...queue, request];
-}
-
-function isCoreRequester(
-  value: ProviderRequesterSource,
-): value is CoreLlmRequester<'protocol'> {
-  return typeof value === 'object' && value !== null && 'with' in value && typeof value.with === 'function';
-}
-
-function baseRequesterOf(
-  provider: Provider,
-  model: CatalogModelDefinition,
-): CoreLlmRequester<'protocol'> | undefined {
-  const source = provider.requester;
-  if (source === undefined) return undefined;
-  if (typeof source === 'function') return source(model.protocol, model);
-  if (isCoreRequester(source)) return source;
-  if (model.protocol !== undefined) return source[model.protocol];
-  return Object.values(source)[0];
-}
-
-function protocolOptionsOf(model: CatalogModelDefinition): Record<string, unknown> | undefined {
-  switch (model.protocol) {
-    case 'openai':
-      return { reasoningKey: model.reasoningKey };
-    case 'anthropic':
-      return { betaApi: model.betaApi };
-    case 'google-genai':
-      return { vertexai: model.vertexai };
-    default:
-      return undefined;
-  }
-}
-
-async function runPingProbe(
-  provider: Provider,
-  model: CatalogModelDefinition,
-): Promise<string | undefined> {
-  try {
-    const base = baseRequesterOf(provider, model);
-    if (base === undefined) return `No requester configured for ${provider.id}/${model.id}`;
-    const requester = base.with({
-      protocol: { options: protocolOptionsOf(model) },
-      endpoint: { ...provider.endpoint, ...model.endpoint },
-      model: { spec: model.spec, maxOutputTokens: 512 },
-      profile: {
-        systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
-        tools: [],
-      },
-      content: { messages: [createUserMessage('ping')] },
-      policy: { recoveries: [], retry: { maxAttemptsPerStep: 1 } },
-    });
-    const outcome = await requester.generate(
-      {
-        endpoint: {
-          credentials:
-            model.apiKey === undefined
-              ? undefined
-              : { resolve: () => ({ apiKey: model.apiKey }) },
-        },
-      },
-      { signal: new AbortController().signal },
-    );
-    if (outcome.type === 'failed') return outcome.error.message;
-    if (outcome.type === 'aborted') {
-      return outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
-    }
-    return undefined;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
 }
 
 export function createProviderCatalogMachine() {
@@ -340,11 +195,6 @@ export function createProviderCatalogMachine() {
           }),
         ),
       ),
-      pingModel: fromPromise<PingOutcome, PingRequest>(async ({ input }) => ({
-        providerId: input.provider.id,
-        model: input.model.id,
-        error: await runPingProbe(input.provider, input.model),
-      })),
     },
   }).createMachine({
     id: 'providerCatalog',
@@ -354,7 +204,6 @@ export function createProviderCatalogMachine() {
       queue: [],
       dirty: [],
       failures: [],
-      pingQueue: [],
     }),
     initial: 'idle',
     on: {
@@ -391,22 +240,6 @@ export function createProviderCatalogMachine() {
     states: {
       idle: {
         on: {
-          ping: [
-            {
-              guard: ({ context, event }) =>
-                resolveCatalogModel(context.snapshot.providers[event.provider.id], event.model) !==
-                undefined,
-              target: 'pinging',
-              actions: assign(({ context, event }) => {
-                const model = resolveCatalogModel(
-                  context.snapshot.providers[event.provider.id],
-                  event.model,
-                );
-                return model === undefined ? {} : { ping: { provider: event.provider, model } };
-              }),
-            },
-            {},
-          ],
           refresh: {
             target: 'refreshing',
             actions: assign(({ event }) => ({
@@ -436,30 +269,6 @@ export function createProviderCatalogMachine() {
               })),
             },
             {
-              guard: ({ context }) => context.pingQueue.length > 0,
-              target: 'pinging',
-              actions: [
-                assign(({ context, event }) => ({
-                  snapshot: applyPullResults(context.snapshot, event.output),
-                  ping: context.pingQueue.at(0) as PingRequest,
-                  pingQueue: context.pingQueue.slice(1),
-                })),
-                enqueueActions(({ context, event, enqueue }) => {
-                  const providers = mergeDirty(context.dirty, event.output);
-                  if (providers.length > 0) {
-                    enqueue.emit({ type: 'changed', providers });
-                  }
-                  for (const failure of [...context.failures, ...pullFailures(event.output)]) {
-                    enqueue.emit({
-                      type: 'refresh-failed',
-                      providerId: failure.providerId,
-                      error: failure.error,
-                    });
-                  }
-                }),
-              ],
-            },
-            {
               target: 'idle',
               actions: [
                 assign(({ context, event }) => ({
@@ -483,107 +292,9 @@ export function createProviderCatalogMachine() {
           ],
         },
         on: {
-          ping: {
-            actions: assign(({ context, event }) => {
-              const model = resolveCatalogModel(
-                context.snapshot.providers[event.provider.id],
-                event.model,
-              );
-              if (model === undefined) return {};
-              return {
-                pingQueue: enqueuePing(context.ping, context.pingQueue, {
-                  provider: event.provider,
-                  model,
-                }),
-              };
-            }),
-          },
           refresh: {
             actions: assign(({ context, event }) => ({
               queue: enqueueProviders(context.batch, context.queue, event.providers),
-            })),
-          },
-        },
-      },
-      pinging: {
-        invoke: {
-          src: 'pingModel',
-          input: ({ context }) => context.ping as PingRequest,
-          onDone: [
-            {
-              guard: ({ context }) => context.pingQueue.length > 0,
-              target: 'pinging',
-              reenter: true,
-              actions: enqueueActions(({ context, event, enqueue }) => {
-                const outcome = applyPingOutcome(context.snapshot, event.output);
-                enqueue.assign({
-                  snapshot: outcome.snapshot,
-                  ping: context.pingQueue.at(0) as PingRequest,
-                  pingQueue: context.pingQueue.slice(1),
-                });
-                if (outcome.changed) {
-                  enqueue.emit({
-                    type: 'changed',
-                    providers: [event.output.providerId],
-                  });
-                }
-              }),
-            },
-            {
-              guard: ({ context }) => context.queue.length > 0,
-              target: 'refreshing',
-              actions: enqueueActions(({ context, event, enqueue }) => {
-                const outcome = applyPingOutcome(context.snapshot, event.output);
-                enqueue.assign({
-                  snapshot: outcome.snapshot,
-                  ping: undefined,
-                  batch: context.queue,
-                  queue: [],
-                  dirty: [],
-                  failures: [],
-                });
-                if (outcome.changed) {
-                  enqueue.emit({
-                    type: 'changed',
-                    providers: [event.output.providerId],
-                  });
-                }
-              }),
-            },
-            {
-              target: 'idle',
-              actions: enqueueActions(({ context, event, enqueue }) => {
-                const outcome = applyPingOutcome(context.snapshot, event.output);
-                enqueue.assign({ snapshot: outcome.snapshot, ping: undefined });
-                if (outcome.changed) {
-                  enqueue.emit({
-                    type: 'changed',
-                    providers: [event.output.providerId],
-                  });
-                }
-              }),
-            },
-          ],
-        },
-        on: {
-          ping: {
-            actions: assign(({ context, event }) => {
-              const model = resolveCatalogModel(
-                context.snapshot.providers[event.provider.id],
-                event.model,
-              );
-              if (model === undefined) return {};
-              return {
-                pingQueue: enqueuePing(context.ping, context.pingQueue, {
-                  provider: event.provider,
-                  model,
-                }),
-              };
-            }),
-          },
-          refresh: {
-            actions: assign(({ context, event }) => ({
-              queue: enqueueProviders([], context.queue, event.providers),
             })),
           },
         },
@@ -608,7 +319,6 @@ export interface ProviderCatalog {
   }): void;
   remove(providerId: string): void;
   refresh(provider: Provider): void;
-  ping(providerId: string, model: string): void;
   onChanged(listener: (event: ProviderCatalogChanged) => void): () => void;
   onRefreshFailed(listener: (event: ProviderCatalogRefreshFailed) => void): () => void;
   stop(): void;
@@ -787,7 +497,6 @@ function buildProviderCatalog(
   }
 
   const read = (): CatalogSnapshot => actor.getSnapshot().context.snapshot;
-  const live = new Map<string, Provider>();
 
   return {
     providers: () => Object.keys(read().providers).toSorted(),
@@ -797,7 +506,6 @@ function buildProviderCatalog(
       return entry === undefined ? [] : mergeEntryModels(entry);
     },
     upsert: (input) => {
-      live.set(input.provider.id, input.provider);
       actor.send({
         type: 'upsert',
         providerId: input.provider.id,
@@ -815,17 +523,10 @@ function buildProviderCatalog(
       });
     },
     remove: (providerId) => {
-      live.delete(providerId);
       actor.send({ type: 'remove', providerId });
     },
     refresh: (provider) => {
-      live.set(provider.id, provider);
       actor.send({ type: 'refresh', providers: [provider] });
-    },
-    ping: (providerId, model) => {
-      const provider = live.get(providerId);
-      if (provider === undefined) return;
-      actor.send({ type: 'ping', provider, model });
     },
     onChanged: (listener) => {
       const subscription = actor.on('changed', listener);
@@ -840,7 +541,6 @@ function buildProviderCatalog(
       };
     },
     stop: () => {
-      live.clear();
       actor.stop();
     },
   };

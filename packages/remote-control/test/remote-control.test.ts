@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
+import { currentProcessLiveness } from '@moonshot-ai/agent-core-v2/_base/utils/processLiveness';
 import {
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
@@ -1008,6 +1009,48 @@ describe('Remote Control single-instance lock', () => {
       pid: number;
     };
     expect(lock.pid).toBe(process.pid);
+  });
+
+  it('reaps a lock whose pid now belongs to a process started after it', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    const lockedAt = Date.now() - 60_000;
+    const reused = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    cleanups.push(() => {
+      reused.kill('SIGKILL');
+    });
+    await new Promise<void>((resolve) => reused.once('spawn', () => resolve()));
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: reused.pid,
+        nonce: 'reused-pid',
+        local_origin: 'http://127.0.0.1:1',
+        device_id: 'old-device',
+        url: 'https://code-rc.kimi.com/devices/old-device/',
+        started_at: lockedAt,
+        liveness: 'kimi-code-live-0-00000000000000000000000000000000',
+      }),
+    );
+    const relay = await startAuthRelay();
+
+    const handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+      clientVersion: CLIENT_VERSION,
+      urlSource: 'kimi_code_cli',
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(async () => handle.close());
+
+    const lock = JSON.parse(await readFile(remoteControlLockPath(homeDir), 'utf8')) as {
+      pid: number;
+      liveness?: string;
+    };
+    expect(lock.pid).toBe(process.pid);
+    expect(lock.liveness).toBe(currentProcessLiveness());
   });
 
   it('releases the lock on close and on relay-initiated shutdown', async () => {

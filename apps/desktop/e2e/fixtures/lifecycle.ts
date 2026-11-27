@@ -2,12 +2,6 @@ import type { WebSocketRoute } from '@playwright/test';
 
 import type { DesktopApp } from './app';
 
-export async function enableQuitConfirm(app: DesktopApp): Promise<void> {
-  await app.electron.evaluate(() => {
-    process.env['KIMI_DESKTOP_E2E'] = 'quit-confirm';
-  });
-}
-
 export async function clickAppMenu(app: DesktopApp, label: string): Promise<void> {
   const found = await app.electron.evaluate(({ app: electronApp, Menu }, wanted) => {
     const visit = (items: readonly Electron.MenuItem[]): Electron.MenuItem | undefined => {

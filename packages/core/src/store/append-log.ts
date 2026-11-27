@@ -108,6 +108,8 @@ interface LogState {
   failureWarned: boolean;
   stuckWatch: NodeJS.Timeout | undefined;
   cutoverEpoch: number;
+  readEpoch: number;
+  appendedBytes: number;
   refCount: number;
   retired: boolean;
   ready: Promise<void>;
@@ -196,6 +198,9 @@ export class AppendLogStore {
     await this.flushLog(scope, key);
     const state = this.state(scope, key);
     const lengthAtStart = this.diskLength(scope, key);
+    const appendedAtStart = state.appendedBytes;
+    const cutoverEpochAtStart = state.cutoverEpoch;
+    const readEpoch = ++state.readEpoch;
     try {
       const onTruncate = options?.onTruncate;
       const textDecoder = new TextDecoder();
@@ -233,8 +238,12 @@ export class AppendLogStore {
       }
     } finally {
       const disk = this.diskLength(scope, key);
-      if (disk !== undefined) {
-        state.knownLength = lengthAtStart === disk ? disk : (lengthAtStart ?? 0);
+      if (
+        disk !== undefined &&
+        state.cutoverEpoch === cutoverEpochAtStart &&
+        readEpoch === state.readEpoch
+      ) {
+        state.knownLength = (lengthAtStart ?? 0) + (state.appendedBytes - appendedAtStart);
       }
     }
   }
@@ -374,6 +383,8 @@ export class AppendLogStore {
         failureWarned: false,
         stuckWatch: undefined,
         cutoverEpoch: 0,
+        readEpoch: 0,
+        appendedBytes: 0,
         refCount: 0,
         retired: false,
         ready,
@@ -548,6 +559,7 @@ export class AppendLogStore {
         state.recovery = undefined;
         wrote = true;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
+        state.appendedBytes += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
         state.inFlightBytes = 0;

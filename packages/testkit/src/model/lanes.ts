@@ -98,6 +98,12 @@ export class LaneState implements Lane {
   }
 }
 
+export function subagentStepOf(request: RequestFacts): { readonly agent: string; readonly continues: boolean } | undefined {
+  const metadata = request.metadata;
+  if (metadata?.agentRole === undefined || metadata.agentRole === 'main') return undefined;
+  return { agent: `${metadata.agentRole} ${metadata.parentRequestId ?? ''}`, continues: metadata.stepReason === 'tool_results' };
+}
+
 export function promptCacheRoleOf(request: RequestFacts): BuiltInLaneName {
   const agentRole = request.metadata?.agentRole;
   return agentRole !== undefined && agentRole !== 'main' ? 'subagent' : builtInLaneOf(request);

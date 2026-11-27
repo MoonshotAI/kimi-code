@@ -7,7 +7,7 @@ import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
-import type { VideoUploader } from '#/llm-adapter/model/media';
+import type { VideoUploader } from '#/provider-catalog/model/media';
 
 export interface RegisterMediaToolsDeps {
   readonly attachmentStore: ISessionMediaStore;

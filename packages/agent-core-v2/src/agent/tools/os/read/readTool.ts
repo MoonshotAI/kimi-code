@@ -21,7 +21,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/llm-adapter/contract/tokens';
+import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/session/tokenCounting/tokens';
 import {
   ToolAccesses,
   type ExecutableToolResult,
