@@ -3,9 +3,12 @@ import {
   WORKTREE_REMOVE_FAILED_CODE,
   type AppSession,
   type AppSessionWorktree,
+  type AppWorkspace,
   type AppWorktree,
+  type AppWorktreeHeldPrompt,
   type AppWorktreeRisk,
   type AppWorktreeSetup,
+  type WorkspaceGitBranches,
 } from '@moonshot-ai/app-core/api';
 
 export function worktreeSetup(overrides: Partial<AppWorktreeSetup> = {}): AppWorktreeSetup {
@@ -26,6 +29,34 @@ export function sessionWorktree(
   setup: Partial<AppWorktreeSetup> = {},
 ): AppSessionWorktree {
   return { ...overrides, setup: worktreeSetup({ status, ...setup }) };
+}
+
+export function heldPromptFixture(overrides: Partial<AppWorktreeHeldPrompt> = {}): AppWorktreeHeldPrompt {
+  return {
+    promptId: 'held-1',
+    kind: 'prompt',
+    createdAt: '2026-11-18T00:00:00.000Z',
+    content: [{ type: 'text', text: 'hello' }],
+    ...overrides,
+  };
+}
+
+export function workspaceGitBranches(overrides: Partial<WorkspaceGitBranches> = {}): WorkspaceGitBranches {
+  return {
+    isRepo: true,
+    remotes: ['origin'],
+    headBranch: 'main',
+    dirty: false,
+    branches: [
+      { name: 'topic', committedAt: '2026-11-18T00:00:00.000Z' },
+      { name: 'main', committedAt: '2026-11-17T00:00:00.000Z', remoteRef: 'origin/main' },
+    ],
+    ...overrides,
+  };
+}
+
+export function appWorkspace(id: string, overrides: Partial<AppWorkspace> = {}): AppWorkspace {
+  return { id, root: `/${id}`, name: id, kind: 'managed', additionalDirs: [], sessionCount: 0, ...overrides };
 }
 
 export function appSession(overrides: Partial<AppSession> = {}): AppSession {

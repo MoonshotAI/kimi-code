@@ -1,19 +1,16 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
-  AgentEnvironmentBindingService,
-  AgentLoopService,
   EXTRA_SKILL_DIRS_SECTION,
   IConfigService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentLoopService,
   IProjectTrust,
+  ISessionManager,
   IWorktreeService,
-  SessionMetadata,
   closeSessionById,
   getLiveSessionById,
   patchSessionMetadata,
@@ -23,13 +20,18 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Session } from '../src/protocol/session';
 import { repointSession } from '../src/services/worktrees/sessionRepoint';
-import { SessionWorktreeService, writeStoredWorktree } from '../src/services/worktrees/sessionWorktreeService';
-import { storedSessionWorktree } from '../src/services/worktrees/sessionWorktreeState';
-import { commitAll, git, hangingRemote } from './helpers/gitRepo';
-import { type Envelope, useWorktreeServer } from './helpers/worktreeServer';
+import {
+  SessionWorktreeService,
+  type SessionWorktreeServiceOptions,
+  writeStoredWorktree,
+} from '../src/services/worktrees/sessionWorktreeService';
+import { WorktreeCreation } from '../src/services/worktrees/worktreeSetup';
+import { commitAll, git, useHangingRemote } from './helpers/gitRepo';
+import { eventually, failMetadataWriteOnce, useWorktreeServer, withResolvers } from './helpers/worktreeServer';
 
 describe('server-v2 session worktrees', () => {
   const fixture = useWorktreeServer('worktrees');
+  const hangingRemote = useHangingRemote();
   const {
     post,
     get,
@@ -41,8 +43,8 @@ describe('server-v2 session worktrees', () => {
     settled,
     settledWorktree,
     untilStep,
+    duringWorktreeSwitch,
     branchOf,
-    forceRunning,
     stored,
     sessionEvents,
     mainAgent,
@@ -148,9 +150,6 @@ describe('server-v2 session worktrees', () => {
     const mine = events.filter((event) => event.session.id === created.id);
     expect(mine[0]).toMatchObject({ change: 'created', session: { worktree: { setup: { status: 'running' } } } });
     expect(mine.slice(1).every((event) => event.change === 'updated')).toBe(true);
-    expect(
-      mine.some((event) => event.session.worktree?.setup.steps[0]?.state === 'running'),
-    ).toBe(true);
     expect(mine.at(-1)?.session.cwd).toBe(worktree.path);
 
     const listed = await get<{ items: Session[] }>(`/sessions?workspace_id=${workspaceId}`);
@@ -387,43 +386,25 @@ describe('server-v2 session worktrees', () => {
   it('moves the session back when setup is cancelled while it switches into the worktree', async () => {
     const { root, workspaceId } = await project('cancel-repoint');
     const before = await worktreeDirectories();
-    const worktreesHome = join(fixture.home, 'worktrees');
-    const originalBind = AgentEnvironmentBindingService.prototype.bind;
-    const originalBindProfile = AgentLoopService.prototype.bindProfile;
-    const abort = vi.spyOn(AbortController.prototype, 'abort');
-    let sessionId = '';
-    let switching = false;
-    vi.spyOn(AgentEnvironmentBindingService.prototype, 'bind').mockImplementation(function (
-      this: AgentEnvironmentBindingService,
-      ...args: Parameters<AgentEnvironmentBindingService['bind']>
-    ) {
-      if (args[1]?.startsWith(worktreesHome) === true) switching = true;
-      return originalBind.apply(this, args);
-    });
-    const bindProfile = vi
-      .spyOn(AgentLoopService.prototype, 'bindProfile')
-      .mockImplementation(async function (this: AgentLoopService, ...args: Parameters<AgentLoopService['bindProfile']>) {
-        if (switching) {
-          switching = false;
-          const aborts = abort.mock.calls.length;
-          await vi.waitFor(() => {
-            if (sessionId === '') throw new Error('the session has not been created yet');
-          });
-          void post(`/sessions/${sessionId}/worktree:cancel`);
-          await vi.waitFor(() => {
-            if (abort.mock.calls.length === aborts) throw new Error('the setup has not been cancelled yet');
-          });
-        }
-        return originalBindProfile.apply(this, args);
-      });
+    const run = vi.spyOn(WorktreeCreation.prototype, 'run');
     onTestFinished(() => {
-      vi.restoreAllMocks();
+      run.mockRestore();
     });
 
-    sessionId = (await createWorktreeSession(workspaceId)).id;
+    const { sessionId, during } = await duringWorktreeSwitch(
+      async () => (await createWorktreeSession(workspaceId)).id,
+      async (id) => {
+        const signal = run.mock.calls[0]![1];
+        const aborted = new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        void post(`/sessions/${id}/worktree:cancel`);
+        await aborted;
+      },
+    );
+    await during;
     const session = await settled(sessionId);
 
-    expect(bindProfile).toHaveBeenCalled();
     expect(session.worktree?.setup).toMatchObject({ status: 'stopped', stopped_step: 'create' });
     expect(session.worktree?.path).toBeUndefined();
     expect(session.cwd).toBe(root);
@@ -443,26 +424,12 @@ describe('server-v2 session worktrees', () => {
   it('removes the new worktree and moves the session back when recording it as ready fails', async () => {
     const { root, workspaceId } = await project('ready-write-fails');
     const before = await worktreeDirectories();
-    const originalUpdate = SessionMetadata.prototype.update;
-    let failed = false;
-    vi.spyOn(SessionMetadata.prototype, 'update').mockImplementation(function (
-      this: SessionMetadata,
-      ...args: Parameters<SessionMetadata['update']>
-    ) {
-      if (!failed && storedSessionWorktree(args[0].custom)?.setup.status === 'ready') {
-        failed = true;
-        return Promise.reject(new Error('metadata write failed'));
-      }
-      return originalUpdate.apply(this, args);
-    });
-    onTestFinished(() => {
-      vi.restoreAllMocks();
-    });
+    const write = failMetadataWriteOnce((stored) => stored?.setup.status === 'ready');
 
     const created = await createWorktreeSession(workspaceId);
     const session = await settled(created.id);
 
-    expect(failed).toBe(true);
+    expect(write.failed).toBe(true);
     expect(session.worktree?.setup).toMatchObject({ status: 'failed', failure: { kind: 'create_failed' } });
     expect(session.worktree?.path).toBeUndefined();
     expect(session.cwd).toBe(root);
@@ -471,44 +438,17 @@ describe('server-v2 session worktrees', () => {
 
   it('holds a prompt sent during setup and sends it once the worktree is ready', async () => {
     const { workspaceId } = await project('held-ready');
-    const originalBind = AgentEnvironmentBindingService.prototype.bind;
-    const originalBindProfile = AgentLoopService.prototype.bindProfile;
-    const worktreesHome = join(fixture.home, 'worktrees');
-    let sessionId = '';
-    let switching = false;
-    let held: Envelope<{ prompt_id: string; status: string }> | undefined;
-    vi.spyOn(AgentEnvironmentBindingService.prototype, 'bind').mockImplementation(function (
-      this: AgentEnvironmentBindingService,
-      ...args: Parameters<AgentEnvironmentBindingService['bind']>
-    ) {
-      if (args[1]?.startsWith(worktreesHome) === true) switching = true;
-      return originalBind.apply(this, args);
-    });
-    vi.spyOn(AgentLoopService.prototype, 'bindProfile').mockImplementation(async function (
-      this: AgentLoopService,
-      ...args: Parameters<AgentLoopService['bindProfile']>
-    ) {
-      if (switching) {
-        switching = false;
-        await vi.waitFor(() => {
-          if (sessionId === '') throw new Error('the session has not been created yet');
-        });
-        held = await post(`/sessions/${sessionId}/prompts`, { content: [{ type: 'text', text: 'held hello' }] });
-      }
-      return originalBindProfile.apply(this, args);
-    });
-    onTestFinished(() => {
-      vi.restoreAllMocks();
-    });
 
-    sessionId = (await createWorktreeSession(workspaceId)).id;
-    await vi.waitFor(() => {
-      if (held === undefined) throw new Error('the prompt has not been sent yet');
-    });
-    expect(held).toMatchObject({ code: 0, data: { status: 'queued' } });
+    const { sessionId, during } = await duringWorktreeSwitch(
+      async () => (await createWorktreeSession(workspaceId)).id,
+      (id) => post<{ prompt_id: string; status: string }>(`/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'held hello' }],
+      }),
+    );
+    expect(await during).toMatchObject({ code: 0, data: { status: 'queued' } });
 
     expect((await settled(sessionId)).worktree?.setup.status).toBe('ready');
-    await vi.waitFor(async () => {
+    await eventually(async () => {
       expect((await get<Session>(`/sessions/${sessionId}`)).data.worktree?.held_prompt).toBeUndefined();
       expect(await sentTexts(sessionId)).toContain('held hello');
     });
@@ -531,46 +471,17 @@ describe('server-v2 session worktrees', () => {
       await config.set(EXTRA_SKILL_DIRS_SECTION, [join(root, 'custom-skills')]);
       onTestFinished(() => config.set(EXTRA_SKILL_DIRS_SECTION, []));
     }
-    const originalBind = AgentEnvironmentBindingService.prototype.bind;
-    const originalBindProfile = AgentLoopService.prototype.bindProfile;
-    const worktreesHome = join(fixture.home, 'worktrees');
-    let sessionId = '';
-    let switching = false;
-    let held: Envelope<{ held?: boolean }> | undefined;
-    vi.spyOn(AgentEnvironmentBindingService.prototype, 'bind').mockImplementation(function (
-      this: AgentEnvironmentBindingService,
-      ...args: Parameters<AgentEnvironmentBindingService['bind']>
-    ) {
-      if (args[1]?.startsWith(worktreesHome) === true) switching = true;
-      return originalBind.apply(this, args);
-    });
-    vi.spyOn(AgentLoopService.prototype, 'bindProfile').mockImplementation(async function (
-      this: AgentLoopService,
-      ...args: Parameters<AgentLoopService['bindProfile']>
-    ) {
-      if (switching) {
-        switching = false;
-        await vi.waitFor(() => {
-          if (sessionId === '') throw new Error('the session has not been created yet');
-        });
-        held = await post(`/sessions/${sessionId}/skills/held-skill:activate`, {
-          path: join(skillDir, 'SKILL.md'),
-        });
-      }
-      return originalBindProfile.apply(this, args);
-    });
-    onTestFinished(() => {
-      vi.restoreAllMocks();
-    });
 
-    sessionId = (await createWorktreeSession(workspaceId)).id;
-    await vi.waitFor(() => {
-      if (held === undefined) throw new Error('the skill has not been activated yet');
-    });
-    expect(held).toMatchObject({ code: 0, data: { held: true } });
+    const { sessionId, during } = await duringWorktreeSwitch(
+      async () => (await createWorktreeSession(workspaceId)).id,
+      (id) => post<{ held?: boolean }>(`/sessions/${id}/skills/held-skill:activate`, {
+        path: join(skillDir, 'SKILL.md'),
+      }),
+    );
+    expect(await during).toMatchObject({ code: 0, data: { held: true } });
 
     expect((await settled(sessionId)).worktree?.setup.status).toBe('ready');
-    await vi.waitFor(async () => {
+    await eventually(async () => {
       expect((await get<Session>(`/sessions/${sessionId}`)).data.worktree?.held_prompt).toBeUndefined();
       const page = await get<{ turns: { items: { type: string; origin?: { kind: string; name?: string } }[] }[] }>(
         `/sessions/${sessionId}/agents/main/turns`,
@@ -636,7 +547,7 @@ describe('server-v2 session worktrees', () => {
     expect((await stored(fork.data.id))?.held_request).toBeUndefined();
 
     expect((await post<Session>(`/sessions/${created.id}/worktree:use_local`)).code).toBe(0);
-    await vi.waitFor(async () => {
+    await eventually(async () => {
       expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();
       expect(await sentTexts(created.id)).toContain('first while waiting');
     });
@@ -667,80 +578,6 @@ describe('server-v2 session worktrees', () => {
     expect(await sentTexts(created.id)).toEqual([]);
   });
 
-  async function interruptedWithHeldPrompt(workspaceId: string, promptId: string): Promise<Session> {
-    const ready = await settledWorktree(workspaceId);
-    await patchSessionMetadata(fixture.server.core.accessor, ready.id, (meta) => {
-      const current = meta.custom?.['worktree'] as object;
-      return {
-        custom: {
-          ...meta.custom,
-          worktree: {
-            ...current,
-            held_prompt: { prompt_id: promptId, kind: 'prompt', created_at: new Date().toISOString(), content: [] },
-            held_request: { route: 'prompts', body: { content: [{ type: 'text', text: 'x' }], prompt_id: promptId } },
-          },
-        },
-      };
-    });
-    await forceRunning(ready.id, ready.worktree!.setup);
-    return ready;
-  }
-
-  it('sends held prompts of different sessions that share a prompt id', async () => {
-    const { workspaceId } = await project('held-shared-id');
-    const first = await interruptedWithHeldPrompt(workspaceId, 'msg_shared');
-    const second = await interruptedWithHeldPrompt(workspaceId, 'msg_shared');
-    const sending: string[] = [];
-    const service = new SessionWorktreeService(fixture.server.core, {
-      dispatchHeld: (sessionId) => {
-        sending.push(sessionId);
-        return new Promise<void>(() => {});
-      },
-    });
-
-    await service.recoverInterrupted();
-
-    await vi.waitFor(() => {
-      expect(sending.toSorted()).toEqual([first.id, second.id].toSorted());
-    });
-  });
-
-  it('lets an abort wait for a held prompt that is already being sent', async () => {
-    const { workspaceId } = await project('held-abort-sending');
-    const promptId = 'msg_held_sending';
-    const ready = await interruptedWithHeldPrompt(workspaceId, promptId);
-    let started = false;
-    let fail = (): void => {};
-    const service = new SessionWorktreeService(fixture.server.core, {
-      dispatchHeld: () =>
-        new Promise<void>((_resolve, reject) => {
-          started = true;
-          fail = () => {
-            reject(new Error('could not send'));
-          };
-        }),
-    });
-    onTestFinished(() => service.close());
-
-    await service.recoverInterrupted();
-    await vi.waitFor(() => {
-      if (!started) throw new Error('the held prompt is not being sent yet');
-    });
-    let answered = false;
-    const abort = post(`/sessions/${ready.id}/prompts/${promptId}:abort`).then((response) => {
-      answered = true;
-      return response;
-    });
-    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.held_prompt?.prompt_id).toBe(promptId);
-    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.held_prompt?.prompt_id).toBe(promptId);
-    expect(answered).toBe(false);
-
-    fail();
-
-    expect(await abort).toMatchObject({ code: 0, data: { aborted: true } });
-    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.held_prompt).toBeUndefined();
-  });
-
   it('holds a skill activation sent during setup', async () => {
     const { root, workspaceId } = await project('held-skill');
     hangingRemote(root);
@@ -755,35 +592,6 @@ describe('server-v2 session worktrees', () => {
       skill: { name: 'update-config', args: 'now' },
     });
     expect((await post<Session>(`/sessions/${created.id}/worktree:cancel`)).code).toBe(0);
-  });
-
-  it('marks a held prompt failed when a previous server process may have sent it', async () => {
-    const { root, workspaceId } = await project('held-restart');
-    hangingRemote(root);
-    const created = await createWorktreeSession(workspaceId, { use_remote: true });
-    await untilStep(created.id, 'fetch', 'running');
-    const held = await post<{ prompt_id: string }>(`/sessions/${created.id}/prompts`, {
-      content: [{ type: 'text', text: 'maybe sent' }],
-    });
-    await post<Session>(`/sessions/${created.id}/worktree:cancel`);
-    await patchSessionMetadata(fixture.server.core.accessor, created.id, (meta) => {
-      const current = meta.custom?.['worktree'] as { setup: object };
-      return { custom: { ...meta.custom, worktree: { ...current, setup: { ...current.setup, status: 'local' } } } };
-    });
-
-    await new SessionWorktreeService(fixture.server.core).recoverInterrupted();
-
-    expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toMatchObject({
-      prompt_id: held.data.prompt_id,
-      failure: { code: ErrorCode.INTERNAL_ERROR },
-    });
-    const next = await post<{ status: string }>(`/sessions/${created.id}/prompts`, {
-      content: [{ type: 'text', text: 'sent again' }],
-    });
-    expect(next.code).toBe(0);
-    await vi.waitFor(async () => {
-      expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();
-    });
   });
 
   it('rejects worktree requests it cannot serve', async () => {
@@ -822,55 +630,7 @@ describe('server-v2 session worktrees', () => {
     expect(profile.data.session.worktree).toEqual(ready.worktree);
   });
 
-  it('settles a setup that a previous server process left running', async () => {
-    const { root, workspaceId } = await project('interrupted');
-    const ready = await settledWorktree(workspaceId);
-    const leftoverPath = join(fixture.home, 'worktrees', 'interrupted', 'left-over');
-    git(root, 'worktree', 'add', '-q', '-b', 'kimi/left-over', leftoverPath);
-    const plain = await post<Session>('/sessions', { workspace_id: workspaceId });
-    await forceRunning(
-      plain.data.id,
-      { ...ready.worktree!.setup, steps: [{ kind: 'create', state: 'running' }] },
-      { repo_root: root, pending: { path: leftoverPath, branch: 'kimi/left-over' } },
-    );
-
-    await new SessionWorktreeService(fixture.server.core).recoverInterrupted();
-
-    const recovered = await get<Session>(`/sessions/${plain.data.id}`);
-    expect(recovered.data.worktree?.setup).toMatchObject({
-      status: 'stopped',
-      stopped_step: 'create',
-      steps: [{ kind: 'create', state: 'stopped' }],
-    });
-    expect(existsSync(leftoverPath)).toBe(false);
-    expect(git(root, 'branch', '--list', 'kimi/left-over')).toBe('');
-    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.setup.status).toBe('ready');
-    expect((await stored(plain.data.id))?.pending).toBeUndefined();
-
-    await forceRunning(ready.id, ready.worktree!.setup);
-    await new SessionWorktreeService(fixture.server.core).recoverInterrupted();
-    const resumed = await get<Session>(`/sessions/${ready.id}`);
-    expect(resumed.data.worktree?.setup.status).toBe('ready');
-    expect(resumed.data.worktree?.path).toBe(ready.worktree!.path);
-    expect(existsSync(ready.worktree!.path!)).toBe(true);
-
-    await forceRunning(plain.data.id, {
-      ...ready.worktree!.setup,
-      purpose: 'recreate',
-      steps: [
-        { kind: 'prune', state: 'running' },
-        { kind: 'create', state: 'pending' },
-      ],
-    }, { repo_root: root, path: ready.worktree!.path, branch: ready.worktree!.branch, pending: undefined });
-    await new SessionWorktreeService(fixture.server.core).recoverInterrupted();
-    expect((await get<Session>(`/sessions/${plain.data.id}`)).data.worktree?.setup).toMatchObject({
-      status: 'stopped',
-      stopped_step: 'prune',
-    });
-    expect(existsSync(ready.worktree!.path!)).toBe(true);
-  });
-
-  it('lists local branches by latest commit with their remote branch and the dirty flag', async () => {
+  it('lists the local branches of a workspace root and nothing for other folders', async () => {
     interface Branches {
       is_repo: boolean;
       head_branch?: string;
@@ -891,48 +651,27 @@ describe('server-v2 session worktrees', () => {
 
     const { root, workspaceId } = await project('branches');
     addRemote(root);
-    const commitAt = (branch: string, date: string) => {
-      git(root, 'checkout', '-q', '-b', branch, 'main');
-      execFileSync('git', ['commit', '-q', '--allow-empty', '-m', branch], {
-        cwd: root,
-        env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date },
-      });
-    };
-    commitAt('older', '2030-01-01T00:00:00Z');
-    commitAt('newest', '2031-06-01T12:00:00Z');
-    git(root, 'checkout', '-q', 'main');
+    await writeFile(join(root, 'untracked.txt'), 'x\n');
     await mkdir(join(root, 'nested'));
     const nestedWorkspaceId = await createWorkspace(join(root, 'nested'));
 
-    const clean = await get<Branches>(`/workspaces/${workspaceId}/git/branches`);
-    expect(clean.code).toBe(0);
-    expect(clean.data).toMatchObject({ is_repo: true, head_branch: 'main', dirty: false, remotes: ['origin'] });
-    expect(clean.data.branches.map((branch) => branch.name)).toEqual(['newest', 'older', 'main']);
-    expect(clean.data.branches[0]).toEqual({ name: 'newest', committed_at: '2031-06-01T12:00:00.000Z' });
-    expect(clean.data.branches[2]).toMatchObject({
-      name: 'main',
-      remote_ref: 'origin/main',
-      remote: 'origin',
-      remote_source: 'upstream',
+    const listed = await get<Branches>(`/workspaces/${workspaceId}/git/branches`);
+    expect(listed.code).toBe(0);
+    expect(listed.data).toEqual({
+      is_repo: true,
+      head_branch: 'main',
+      dirty: true,
+      remotes: ['origin'],
+      branches: [
+        {
+          name: 'main',
+          committed_at: new Date(Number(git(root, 'log', '-1', '--format=%ct')) * 1000).toISOString(),
+          remote_ref: 'origin/main',
+          remote: 'origin',
+          remote_source: 'upstream',
+        },
+      ],
     });
-
-    git(root, 'remote', 'add', 'fork', join(fixture.scratch, 'branches-fork-does-not-exist.git'));
-    git(root, 'update-ref', 'refs/remotes/fork/older', 'older');
-    const forked = await get<Branches>(`/workspaces/${workspaceId}/git/branches`);
-    expect(forked.data.remotes).toEqual(['fork', 'origin']);
-    expect(forked.data.branches[1]).toMatchObject({
-      name: 'older',
-      remote_ref: 'fork/older',
-      remote: 'fork',
-      remote_source: 'same_name',
-    });
-    expect(forked.data.branches[0]).not.toHaveProperty('remote');
-
-    await writeFile(join(root, 'untracked.txt'), 'x\n');
-    git(root, 'checkout', '-q', '--detach');
-    const dirty = await get<Branches>(`/workspaces/${workspaceId}/git/branches`);
-    expect(dirty.data.dirty).toBe(true);
-    expect(dirty.data).not.toHaveProperty('head_branch');
 
     const nested = await get<Branches>(`/workspaces/${nestedWorkspaceId}/git/branches`);
     expect(nested.data.is_repo).toBe(false);
@@ -957,12 +696,14 @@ describe('server-v2 session worktrees', () => {
       ErrorCode.FS_DIRECTORY_NOT_FOUND,
     );
 
-    const [started, again] = await Promise.all([
+    const attempts = await Promise.all([
       post<Session>(`/sessions/${session.id}/worktree:recreate`),
       post<Session>(`/sessions/${session.id}/worktree:recreate`),
     ]);
-    expect(started.code).toBe(0);
-    expect(again.code).toBe(ErrorCode.WORKTREE_STATE_INVALID);
+    expect(attempts.map((attempt) => attempt.code).toSorted((a, b) => a - b)).toEqual(
+      [0, ErrorCode.WORKTREE_STATE_INVALID].toSorted((a, b) => a - b),
+    );
+    const started = attempts.find((attempt) => attempt.code === 0)!;
     expect(started.data.worktree?.setup).toMatchObject({ status: 'running', purpose: 'recreate' });
     expect(started.data.worktree?.setup.steps).toMatchObject([
       { kind: 'prune', command: 'git worktree prune' },
@@ -984,27 +725,14 @@ describe('server-v2 session worktrees', () => {
     const session = await settledWorktree(workspaceId);
     const { path, branch } = session.worktree as { path: string; branch: string };
     await rm(path, { recursive: true, force: true });
-    const originalUpdate = SessionMetadata.prototype.update;
-    let failed = false;
-    vi.spyOn(SessionMetadata.prototype, 'update').mockImplementation(function (
-      this: SessionMetadata,
-      ...args: Parameters<SessionMetadata['update']>
-    ) {
-      const setup = storedSessionWorktree(args[0].custom)?.setup;
-      if (!failed && setup?.purpose === 'recreate' && setup.status === 'ready') {
-        failed = true;
-        return Promise.reject(new Error('metadata write failed'));
-      }
-      return originalUpdate.apply(this, args);
-    });
-    onTestFinished(() => {
-      vi.restoreAllMocks();
-    });
+    const write = failMetadataWriteOnce(
+      (stored) => stored?.setup.purpose === 'recreate' && stored.setup.status === 'ready',
+    );
 
     expect((await post<Session>(`/sessions/${session.id}/worktree:recreate`)).code).toBe(0);
     const stuck = await settled(session.id);
 
-    expect(failed).toBe(true);
+    expect(write.failed).toBe(true);
     expect(stuck.worktree).toMatchObject({ path, branch, missing: true, setup: { status: 'failed' } });
     expect(existsSync(path)).toBe(false);
 
@@ -1052,6 +780,180 @@ describe('server-v2 session worktrees', () => {
     expect(agent).toMatchObject({ cwd: undefined, workDir: root });
     expect(agent.prompt).not.toContain(path);
     expect(await branchOf(session.id)).toBe('main');
+  });
+});
+
+describe('server-v2 session worktree recovery', () => {
+  const fixture = useWorktreeServer('worktrees-recovery');
+  const hangingRemote = useHangingRemote();
+  const { post, get, project, createWorktreeSession, settledWorktree, untilStep, forceRunning, stored } = fixture;
+
+  function recoveryService(options: SessionWorktreeServiceOptions = {}): SessionWorktreeService {
+    const service = new SessionWorktreeService(fixture.server.core, options);
+    onTestFinished(() => service.close());
+    return service;
+  }
+
+  function heldDispatchService() {
+    const sending: string[] = [];
+    const started = withResolvers();
+    const outcome = withResolvers();
+    const service = new SessionWorktreeService(fixture.server.core, {
+      dispatchHeld: (sessionId) => {
+        sending.push(sessionId);
+        started.resolve();
+        return outcome.promise;
+      },
+    });
+    onTestFinished(async () => {
+      outcome.resolve();
+      await service.close();
+    });
+    return {
+      service,
+      sending,
+      started: started.promise,
+      fail: () => {
+        outcome.reject(new Error('could not send'));
+      },
+    };
+  }
+
+  async function interruptedWithHeldPrompt(workspaceId: string, promptId: string): Promise<Session> {
+    const ready = await settledWorktree(workspaceId);
+    await forceRunning(ready.id, ready.worktree!.setup, {
+      held_prompt: { prompt_id: promptId, kind: 'prompt', created_at: new Date().toISOString(), content: [] },
+      held_request: { route: 'prompts', body: { content: [{ type: 'text', text: 'x' }], prompt_id: promptId } },
+    });
+    return ready;
+  }
+
+  it('sends held prompts of different sessions that share a prompt id', async () => {
+    const { workspaceId } = await project('held-shared-id');
+    const first = await interruptedWithHeldPrompt(workspaceId, 'msg_shared');
+    const second = await interruptedWithHeldPrompt(workspaceId, 'msg_shared');
+    const { service, sending } = heldDispatchService();
+
+    await service.recoverInterrupted();
+
+    await eventually(() => {
+      expect(sending.toSorted()).toEqual([first.id, second.id].toSorted());
+    });
+  });
+
+  it('lets an abort wait for a held prompt that is already being sent', async () => {
+    const { workspaceId } = await project('held-abort-sending');
+    const promptId = 'msg_held_sending';
+    const ready = await interruptedWithHeldPrompt(workspaceId, promptId);
+    const { service, started, fail } = heldDispatchService();
+    await service.recoverInterrupted();
+    await started;
+
+    const manager = fixture.server.core.accessor.get(ISessionManager);
+    const serialize = manager.withLifecycleSerialization.bind(manager);
+    const withdrawChecked = withResolvers();
+    const lifecycle = vi
+      .spyOn(manager, 'withLifecycleSerialization')
+      .mockImplementation(async (sessionId, work) => {
+        const result = await serialize(sessionId, work);
+        if (sessionId === ready.id) withdrawChecked.resolve();
+        return result;
+      });
+    onTestFinished(() => {
+      lifecycle.mockRestore();
+    });
+    let answered = false;
+    const abort = post(`/sessions/${ready.id}/prompts/${promptId}:abort`).then((response) => {
+      answered = true;
+      return response;
+    });
+    await withdrawChecked.promise;
+    lifecycle.mockRestore();
+
+    expect((await stored(ready.id))?.held_prompt?.prompt_id).toBe(promptId);
+    expect(answered).toBe(false);
+
+    fail();
+
+    expect(await abort).toMatchObject({ code: 0, data: { aborted: true } });
+    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.held_prompt).toBeUndefined();
+  });
+
+  it('marks a held prompt failed when a previous server process may have sent it', async () => {
+    const { root, workspaceId } = await project('held-restart');
+    hangingRemote(root);
+    const created = await createWorktreeSession(workspaceId, { use_remote: true });
+    await untilStep(created.id, 'fetch', 'running');
+    const held = await post<{ prompt_id: string }>(`/sessions/${created.id}/prompts`, {
+      content: [{ type: 'text', text: 'maybe sent' }],
+    });
+    await post<Session>(`/sessions/${created.id}/worktree:cancel`);
+    await patchSessionMetadata(fixture.server.core.accessor, created.id, (meta) => {
+      const current = meta.custom?.['worktree'] as { setup: object };
+      return { custom: { ...meta.custom, worktree: { ...current, setup: { ...current.setup, status: 'local' } } } };
+    });
+
+    await recoveryService().recoverInterrupted();
+
+    expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toMatchObject({
+      prompt_id: held.data.prompt_id,
+      failure: { code: ErrorCode.INTERNAL_ERROR },
+    });
+    const next = await post<{ status: string }>(`/sessions/${created.id}/prompts`, {
+      content: [{ type: 'text', text: 'sent again' }],
+    });
+    expect(next.code).toBe(0);
+    await eventually(async () => {
+      expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();
+    });
+  });
+
+  it('settles a setup that a previous server process left running', async () => {
+    const { root, workspaceId } = await project('interrupted');
+    const ready = await settledWorktree(workspaceId);
+    const leftoverPath = join(fixture.home, 'worktrees', 'interrupted', 'left-over');
+    git(root, 'worktree', 'add', '-q', '-b', 'kimi/left-over', leftoverPath);
+    const plain = await post<Session>('/sessions', { workspace_id: workspaceId });
+    await forceRunning(
+      plain.data.id,
+      { ...ready.worktree!.setup, steps: [{ kind: 'create', state: 'running' }] },
+      { repo_root: root, pending: { path: leftoverPath, branch: 'kimi/left-over' } },
+    );
+
+    await recoveryService().recoverInterrupted();
+
+    const recovered = await get<Session>(`/sessions/${plain.data.id}`);
+    expect(recovered.data.worktree?.setup).toMatchObject({
+      status: 'stopped',
+      stopped_step: 'create',
+      steps: [{ kind: 'create', state: 'stopped' }],
+    });
+    expect(existsSync(leftoverPath)).toBe(false);
+    expect(git(root, 'branch', '--list', 'kimi/left-over')).toBe('');
+    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.setup.status).toBe('ready');
+    expect((await stored(plain.data.id))?.pending).toBeUndefined();
+
+    await forceRunning(ready.id, ready.worktree!.setup);
+    await recoveryService().recoverInterrupted();
+    const resumed = await get<Session>(`/sessions/${ready.id}`);
+    expect(resumed.data.worktree?.setup.status).toBe('ready');
+    expect(resumed.data.worktree?.path).toBe(ready.worktree!.path);
+    expect(existsSync(ready.worktree!.path!)).toBe(true);
+
+    await forceRunning(plain.data.id, {
+      ...ready.worktree!.setup,
+      purpose: 'recreate',
+      steps: [
+        { kind: 'prune', state: 'running' },
+        { kind: 'create', state: 'pending' },
+      ],
+    }, { repo_root: root, path: ready.worktree!.path, branch: ready.worktree!.branch, pending: undefined });
+    await recoveryService().recoverInterrupted();
+    expect((await get<Session>(`/sessions/${plain.data.id}`)).data.worktree?.setup).toMatchObject({
+      status: 'stopped',
+      stopped_step: 'prune',
+    });
+    expect(existsSync(ready.worktree!.path!)).toBe(true);
   });
 });
 

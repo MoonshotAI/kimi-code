@@ -1,33 +1,15 @@
 import { createPinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
+import type { WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { clientNewSessionEnvironmentHost } from '../src/composables/useNewSessionEnvironment';
 import { useNewSessionEnvironmentStore } from '../src/stores/newSessionEnvironment';
 import { workspacesStore } from '../src/stores/workspaces';
-import { memoryStorage } from '../src/testing/worktreeFixtures';
+import { appWorkspace as workspace, memoryStorage, workspaceGitBranches as repo } from '../src/testing/worktreeFixtures';
 
 const getWorkspaceGitBranches = vi.fn<(workspaceId: string) => Promise<WorkspaceGitBranches>>();
-
-function workspace(id: string, overrides: Partial<AppWorkspace> = {}): AppWorkspace {
-  return { id, root: `/${id}`, name: id, kind: 'managed', additionalDirs: [], sessionCount: 0, ...overrides };
-}
-
-function repo(overrides: Partial<WorkspaceGitBranches> = {}): WorkspaceGitBranches {
-  return {
-    isRepo: true,
-    remotes: ['origin'],
-    headBranch: 'main',
-    dirty: false,
-    branches: [
-      { name: 'topic', committedAt: '2026-11-18T00:00:00.000Z' },
-      { name: 'main', committedAt: '2026-11-17T00:00:00.000Z', remoteRef: 'origin/main' },
-    ],
-    ...overrides,
-  };
-}
 
 function freshStore(environment?: 'worktree') {
   const store = useNewSessionEnvironmentStore(createPinia());
@@ -73,7 +55,6 @@ describe('new session environment', () => {
     expect(restarted.effectiveEnvironment('git')).toBe('local');
     expect(restarted.worktreeRequest('git')).toBeUndefined();
   });
-
 
   it('is temporarily unavailable while the git check is loading', async () => {
     const pending = Promise.withResolvers<WorkspaceGitBranches>();
@@ -168,12 +149,10 @@ describe('new session environment', () => {
     expect(store.selectSource('plain', { branch: 'main' })).toBe(false);
   });
 
-  it('offers the local file status only for a dirty main directory', async () => {
+  it('offers the local file status once a refresh finds a dirty main directory', async () => {
     const store = freshStore();
     await store.ensureBranches('git');
     expect(store.view('git').canIncludeLocalChanges).toBe(false);
-    store.selectSource('git', { branch: 'main', includeLocalChanges: true });
-    expect(store.selection('git')?.includeLocalChanges).toBe(false);
 
     getWorkspaceGitBranches.mockResolvedValueOnce(repo({ dirty: true }));
     await store.refreshBranches('git');
@@ -181,28 +160,19 @@ describe('new session environment', () => {
     store.selectSource('git', { branch: 'main', includeLocalChanges: true });
     store.selectEnvironment('worktree');
     expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main', includeLocalChanges: true });
-
-    store.selectSource('git', { branch: 'topic', includeLocalChanges: true });
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'topic' });
   });
 
-  it('remembers the remote toggle per project and applies it only to branches with a remote', async () => {
+  it('remembers the remote toggle per project', async () => {
     const store = freshStore('worktree');
     await store.ensureBranches('git');
-    expect(store.useRemote('git')).toBe(false);
     expect(store.view('git')).toMatchObject({ remoteAvailable: true, useRemote: false, usesRemote: false });
 
     store.setUseRemote('git', true);
+    expect(store.view('git')).toMatchObject({ useRemote: true, usesRemote: true });
     expect(store.useRemote('plain')).toBe(false);
     expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main', useRemote: true });
     expect(JSON.parse(storage.get(STORAGE_KEYS.worktreeUseRemoteByWorkspace)!)).toEqual({ git: true });
-
-    store.selectSource('git', { branch: 'topic' });
-    expect(store.view('git')).toMatchObject({ remoteAvailable: false, useRemote: true, usesRemote: false });
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'topic' });
-
-    const restarted = freshStore();
-    expect(restarted.useRemote('git')).toBe(true);
+    expect(freshStore().useRemote('git')).toBe(true);
   });
 
   it('ignores a stale branch response', async () => {

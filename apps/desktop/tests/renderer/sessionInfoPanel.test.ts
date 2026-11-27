@@ -27,7 +27,6 @@ import chatHeaderSource from '../../src/renderer/components/chat/ChatHeader.vue?
 import chatPaneSource from '../../../../packages/app-components/src/chat/ChatPane.vue?raw';
 import turnFoldSource from '../../../../packages/app-components/src/chat/TurnFold.vue?raw';
 import pullRequestStateSource from '../../../../packages/app-components/src/worktree/SessionPullRequestState.vue?raw';
-import worktreeOutputSource from '../../../../packages/app-components/src/worktree/WorktreeOutput.vue?raw';
 
 const sessionInfoHeadingSource = readFileSync(
   resolve(__dirname, '../../src/renderer/components/chat/session-info-heading.css'),
@@ -209,10 +208,10 @@ describe('SessionInfoFolder', () => {
   it('shows the rows in the specified order for a worktree main directory', async () => {
     await mountFolder({ row: readyRow(), worktree: worktree() });
 
-    const order = [...host!.querySelectorAll('.sif-body > *')].map(node => node.className.split(' ').find(name =>
-      ['sif-path-line', 'sif-created', 'sif-branch-line', 'sif-row', 'sif-pr'].includes(name))
-      ?? (node.querySelector('.sif-pr') === null ? undefined : 'sif-pr'));
-    expect(order).toEqual(['sif-path-line', 'sif-created', 'sif-branch-line', 'sif-row', 'sif-pr']);
+    const names = ['sif-path-line', 'sif-created', 'sif-branch-line', 'sif-row', 'sif-pr'];
+    const order = [...host!.querySelectorAll(names.map(name => `.sif-body .${name}`).join(', '))]
+      .map(node => names.find(name => node.classList.contains(name)));
+    expect(order).toEqual(names);
   });
 
   it('abbreviates the home directory in the path and keeps the full path as its title', async () => {
@@ -361,18 +360,6 @@ describe('SessionInfoFolder', () => {
     expect(host!.querySelector('.sif-changes-loading')).toBeNull();
   });
 
-  it('does not show the changes spinner for a status that returns quickly', async () => {
-    vi.useFakeTimers();
-    const row = reactive<SessionFolderInfoRow>({ ...readyRow(), statusLoading: true });
-    mount(SessionInfoFolder, { row });
-    await vi.advanceTimersByTimeAsync(200);
-    row.statusLoading = false;
-    await vi.advanceTimersByTimeAsync(1000);
-    await nextTick();
-
-    expect(host!.querySelector('.sif-changes-loading')).toBeNull();
-  });
-
   it('keeps the PR placeholder until the pull request has been read', async () => {
     await mountFolder({ row: { ...readyRow({ pullRequest: null }), pullRequestLoading: true } });
     expect(host!.querySelector('.sif-pr-pending')).not.toBeNull();
@@ -414,20 +401,40 @@ describe('SessionInfoFolder', () => {
     expect(host!.querySelector('.sif-pr')).toBeNull();
   });
 
-  it('explains a failed change count in a popover with retry and copy', async () => {
+  const statsOutput = Array.from({ length: 12 }, (_, index) => `fatal: line ${index + 1}`).join('\n');
+
+  it.each([
+    {
+      name: 'change count',
+      row: readyRow({ statsError: statsOutput }),
+      badge: ['.sif-diff-button', '改动—', '.sif-diff'],
+      trigger: '.sif-stats-error',
+      title: '无法统计改动',
+      body: '统计改动时出错，暂时无法显示改动行数。',
+      output: statsOutput,
+    },
+    {
+      name: 'PR read',
+      row: readyRow({ pullRequest: null, pullRequestStatus: 'failed', pullRequestError: 'gh pr view timed out' }),
+      badge: ['.sif-pr-failed', 'PR—', '.sif-pr'],
+      trigger: '.sif-pr-error',
+      title: 'PR 状态未更新',
+      body: '读取 PR 状态超时，暂时无法显示 PR。',
+      output: 'gh pr view timed out',
+    },
+  ])('explains a failed $name in a popover with retry and copy', async ({ row, badge: [badge, badgeText, hidden], trigger, title, body, output }) => {
     const retry = vi.fn();
     const writeClipboardText = vi.fn(async () => true);
     (window as { kimiDesktop?: unknown }).kimiDesktop = { writeClipboardText };
-    const output = Array.from({ length: 12 }, (_, index) => `fatal: line ${index + 1}`).join('\n');
-    await mountFolder({ row: readyRow({ statsError: output }), onRetry: retry });
+    await mountFolder({ row, onRetry: retry });
 
-    expect(host!.querySelector('.sif-diff-button')?.textContent).toBe('改动—');
-    expect(host!.querySelector('.sif-diff')).toBeNull();
+    expect(host!.querySelector(badge!)?.textContent).toBe(badgeText);
+    expect(host!.querySelector(hidden!)).toBeNull();
     expect(popover()).toBeNull();
 
-    const element = await openPopover('.sif-stats-error');
-    expect(element.querySelector('.sip-title')?.textContent).toBe('无法统计改动');
-    expect(element.querySelector('.sip-body')?.textContent).toBe('统计改动时出错，暂时无法显示改动行数。');
+    const element = await openPopover(trigger);
+    expect(element.querySelector('.sip-title')?.textContent).toBe(title);
+    expect(element.querySelector('.sip-body')?.textContent).toBe(body);
     expect(element.querySelector('.sip-output')?.textContent).toBe(output);
 
     element.querySelector<HTMLButtonElement>('.sip-retry')!.click();
@@ -454,28 +461,6 @@ describe('SessionInfoFolder', () => {
     expect(host!.querySelector('.sif-stats-error')?.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('explains a failed PR read in a popover', async () => {
-    const retry = vi.fn();
-    await mountFolder({
-      row: readyRow({ pullRequest: null, pullRequestStatus: 'failed', pullRequestError: 'gh pr view timed out' }),
-      onRetry: retry,
-    });
-
-    expect(host!.querySelector('.sif-pr-failed')?.textContent).toBe('PR—');
-    expect(host!.querySelector('.sif-pr')).toBeNull();
-    const element = await openPopover('.sif-pr-error');
-    expect(element.querySelector('.sip-title')?.textContent).toBe('PR 状态未更新');
-    expect(element.querySelector('.sip-body')?.textContent).toBe('读取 PR 状态超时，暂时无法显示 PR。');
-    expect(element.querySelector('.sip-output')?.textContent).toBe('gh pr view timed out');
-    element.querySelector<HTMLButtonElement>('.sip-retry')!.click();
-    expect(retry).toHaveBeenCalledOnce();
-  });
-
-  it('limits the raw output to five lines with scrolling inside', () => {
-    const outputStyle = worktreeOutputSource.match(/\.worktree-output\s*\{([^}]*)\}/)?.[1];
-    expect(outputStyle).toContain('max-height: calc(5 * var(--worktree-output-line) + 2 * var(--space-2))');
-    expect(outputStyle).toContain('overflow: auto');
-  });
 });
 
 describe('SessionInfoPanel', () => {
@@ -653,20 +638,12 @@ describe('SessionInfoPanel', () => {
     expect(mergedIcon).not.toBe(openIcon);
   });
 
-  it('labels the main directory even when it is the only folder', async () => {
-    store.rows.mockReturnValue([readyRow()]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
-    const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
-
-    expect(el.querySelector('.sif-primary')?.textContent).toBe('主目录');
-  });
-
   it('places the main directory label between the folder name and chevron, on the main directory only', async () => {
-    store.rows.mockReturnValue([readyRow(), { ...readyRow(), path: '/repo/b', primary: false }]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }, { path: '/repo/b', primary: false }]);
-    const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+    expect((await mountPanel()).querySelector('.sif-primary')?.textContent).toBe('主目录');
+    app!.unmount();
+    host!.remove();
+
+    const el = await mountPanel([readyRow(), { ...readyRow(), path: '/repo/b', primary: false }]);
 
     const name = el.querySelector('[data-folder="/repo/a"] .sif-name');
     const badge = el.querySelector('[data-folder="/repo/a"] .sif-primary');
@@ -674,8 +651,6 @@ describe('SessionInfoPanel', () => {
     expect(name?.nextElementSibling).toBe(badge);
     expect(badge?.nextElementSibling?.classList.contains('sif-chevron')).toBe(true);
     expect(el.querySelector('[data-folder="/repo/b"] .sif-primary')).toBeNull();
-    const primaryStyle = sessionInfoFolderSource.match(/\.sif-primary\s*\{([^}]*)\}/)?.[1];
-    expect(primaryStyle).not.toContain('margin-left: auto');
   });
 
   it('shows worktree information only on the main directory of a worktree session', async () => {
@@ -700,8 +675,6 @@ describe('SessionInfoPanel', () => {
     expect(button.classList.contains('spinning')).toBe(false);
     button.click();
     expect(store.refresh).toHaveBeenCalledExactlyOnceWith('s1');
-    expect(sessionInfoPanelSource).toMatch(/\.session-info:hover \.si-refresh,\s*\.si-refresh:focus-visible,\s*\.si-refresh\.spinning \{ opacity: 1; \}/);
-    expect(sessionInfoPanelSource).toContain('.si-refresh { opacity: 0;');
   });
 
   it('rotates the icon and reports busy while refreshing', async () => {

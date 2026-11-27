@@ -3,31 +3,23 @@ import { createApp, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import type { AppWorktree, WorktreeInspection } from '@moonshot-ai/app-core/api';
+import type { AppWorktree } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { resetWorktreeManageDialogs, useWorktreeManageDialogs } from '@moonshot-ai/app-client/composables';
 import { worktreesStore, type WorktreeRemovalItem } from '@moonshot-ai/app-client/stores';
-import { appWorktree, memoryStorage, worktreeRisk } from '@moonshot-ai/app-client/testing';
+import { appWorktree, memoryStorage, sessionRef, worktreeManageApi, worktreeRisk } from '@moonshot-ai/app-client/testing';
 import WorktreesPanel from '../src/settings/WorktreesPanel.vue';
 
 const i18n = createKimiI18n({ locale: 'en' });
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
 
-const api = {
-  listWorktrees: vi.fn(),
-  inspectWorktrees: vi.fn<(paths: string[]) => Promise<WorktreeInspection>>(),
-  removeWorktree: vi.fn(),
-};
+const api = worktreeManageApi();
 
 const dialogs = useWorktreeManageDialogs();
 let app: App | undefined;
 let host: HTMLDivElement;
 let openSession: ReturnType<typeof vi.fn>;
-
-function session(id: string, title: string, extra: Partial<AppWorktree['sessions'][number]> = {}) {
-  return { id, title, archived: false, busy: false, ...extra };
-}
 
 function worktree(name: string, overrides: Partial<AppWorktree> = {}): AppWorktree {
   return appWorktree(name, { workspaceName: 'kimi-code-app', sizeBytes: 60 * MB, ...overrides });
@@ -38,14 +30,19 @@ const fixture = (): AppWorktree[] => [
     workspaceId: 'ws-demo',
     workspaceName: 'kimi-worktree-demo',
     repoRoot: '/code/demo',
-    sessions: [session('s-demo', 'Reply hello')],
+    sessions: [sessionRef('s-demo', 'Reply hello')],
   }),
-  worktree('badge', { sizeBytes: 640 * MB, sessions: [session('s-badge', 'Sidebar badge', { busy: true })] }),
+  worktree('badge', { sizeBytes: 640 * MB, sessions: [sessionRef('s-badge', 'Sidebar badge', { busy: true })] }),
   worktree('login', {
     sizeBytes: 1.1 * GB,
-    sessions: [session('s-login', 'Fix login redirect'), session('s-2', 'Two'), session('s-3', 'Three')],
+    sessions: [
+      sessionRef('s-old', 'Old attempt', { archived: true }),
+      sessionRef('s-login', 'Fix login redirect'),
+      sessionRef('s-2', 'Two'),
+      sessionRef('s-3', 'Three'),
+    ],
   }),
-  worktree('retry', { sizeBytes: 310 * MB, sessions: [session('s-retry', 'Retry requests', { archived: true })] }),
+  worktree('retry', { sizeBytes: 310 * MB, sessions: [sessionRef('s-retry', 'Retry requests', { archived: true })] }),
   worktree('task-3', { branch: 'tower/task-3-api-client', origin: 'external', sizeBytes: 260 * MB }),
 ];
 
@@ -76,8 +73,8 @@ function failedRemoval(name: string, reason: 'in_use' | 'unknown', output: strin
   return { path: `/wt/${name}`, name, deleteBranch: false, state: 'failed', reason, output };
 }
 
-function deletingRemoval(name: string): WorktreeRemovalItem {
-  return { path: `/wt/${name}`, name, deleteBranch: false, state: 'deleting' };
+function deletingRemoval(name: string, state: 'waiting' | 'deleting' = 'deleting'): WorktreeRemovalItem {
+  return { path: `/wt/${name}`, name, deleteBranch: false, state };
 }
 
 function text(el: Element | null | undefined): string {
@@ -178,8 +175,8 @@ describe('Worktrees settings page', () => {
 
   it('renders each kind of row', () => {
     mount({
-      items: [...fixture(), worktree('hello')],
-      removals: [failedRemoval('hello', 'in_use', 'busy'), deletingRemoval('badge')],
+      items: [...fixture(), worktree('hello'), worktree('queued')],
+      removals: [failedRemoval('hello', 'in_use', 'busy'), deletingRemoval('badge'), deletingRemoval('queued', 'waiting')],
       deleted: { '/wt/hello': 'Hello' },
     });
 
@@ -188,7 +185,7 @@ describe('Worktrees settings page', () => {
     expect(row('demo').querySelector('.manage-row__open')).not.toBeNull();
 
     expect(text(row('login').querySelector('.manage-row__title'))).toBe('Fix login redirect');
-    expect(text(row('login').querySelector('.manage-row__meta'))).toBe('kimi/login · 1.1 GB · 3 sessions in use');
+    expect(text(row('login').querySelector('.manage-row__meta'))).toBe('kimi/login · 1.1 GB · 4 sessions in use');
 
     expect(text(row('retry').querySelector('.manage-row__title'))).toBe('Retry requests Archived');
     expect(row('retry').querySelector('.manage-row__open')).toBeNull();
@@ -202,15 +199,23 @@ describe('Worktrees settings page', () => {
     expect(row('task-3').querySelector('.manage-row__open')).toBeNull();
 
     expect(text(row('hello').querySelector('.manage-row__title'))).toBe('Hello Deleted');
+    expect(row('hello').querySelector('.manage-row__name')!.classList.contains('is-directory')).toBe(false);
+    expect(text(row('hello').querySelector('.manage-row__meta'))).toBe('kimi/hello · 60 MB');
+    expect(text(row('hello').querySelector('.manage-row__failure'))).toBe('Deletion failed: directory in use View Raw Output');
+    expect(row('hello').querySelector('.manage-row__open')).toBeNull();
+    expect(row('hello').querySelector('.manage-row__delete')).not.toBeNull();
+
     expect(text(row('badge').querySelector('.manage-row__actions'))).toBe('Deleting…');
+    expect(text(row('queued').querySelector('.manage-row__actions'))).toBe('Deleting…');
+    expect(row('queued').querySelector('.manage-row__delete')).toBeNull();
   });
 
-  it('opens the associated session', () => {
+  it('opens the first active associated session', () => {
     mount();
 
-    row('demo').querySelector<HTMLButtonElement>('.manage-row__open')!.click();
+    row('login').querySelector<HTMLButtonElement>('.manage-row__open')!.click();
 
-    expect(openSession).toHaveBeenCalledWith('s-demo');
+    expect(openSession).toHaveBeenCalledWith('s-login');
   });
 
   it('collapses and expands a project card', async () => {

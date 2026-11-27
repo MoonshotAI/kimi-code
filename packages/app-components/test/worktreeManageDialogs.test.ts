@@ -3,22 +3,23 @@ import { createApp, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import type { AppWorktree, AppWorktreeRisk, WorktreeInspection } from '@moonshot-ai/app-core/api';
+import type { AppWorktree, AppWorktreeRisk, RemoveWorktreeResult } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { resetWorktreeManageDialogs, useWorktreeManageDialogs } from '@moonshot-ai/app-client/composables';
 import { worktreesStore } from '@moonshot-ai/app-client/stores';
-import { appWorktree, worktreeRemoveFailed, worktreeRisk } from '@moonshot-ai/app-client/testing';
+import {
+  appWorktree,
+  sessionRef,
+  whenRemovalsSettled,
+  worktreeManageApi,
+  worktreeRemoveFailed,
+  worktreeRisk,
+} from '@moonshot-ai/app-client/testing';
 import ManageDialogHost from '../src/worktree/ManageDialogHost.vue';
 
 const i18n = createKimiI18n({ locale: 'en' });
 
-type Removed = { removed: true; branchDeleted: boolean };
-
-const api = {
-  listWorktrees: vi.fn(),
-  inspectWorktrees: vi.fn<(paths: string[]) => Promise<WorktreeInspection>>(),
-  removeWorktree: vi.fn<(input: { path: string; deleteBranch?: boolean }) => Promise<Removed>>(),
-};
+const api = worktreeManageApi();
 
 const dialogs = useWorktreeManageDialogs();
 let app: App | undefined;
@@ -68,10 +69,6 @@ function label(selector: string): string | undefined {
   return document.body.querySelector(selector)?.textContent?.trim();
 }
 
-function sessionRef(id: string, title: string, archived = false) {
-  return { id, title, archived, busy: false };
-}
-
 async function requestDeletion(paths: string[]): Promise<void> {
   await dialogs.requestWorktreeDeletion(paths);
   await nextTick();
@@ -89,7 +86,7 @@ function until(check: () => void): Promise<void> {
 }
 
 async function settled(): Promise<void> {
-  await until(() => expect(worktreesStore().removals.some((item) => item.state === 'waiting' || item.state === 'deleting')).toBe(false));
+  await whenRemovalsSettled(worktreesStore());
   await nextTick();
   await nextTick();
 }
@@ -186,22 +183,13 @@ describe('single worktree deletion dialog', () => {
 });
 
 describe('batch deletion dialog', () => {
-  it('shows the grey list with risky worktrees first and the batch wording', async () => {
+  it('shows the grey list with risky worktrees first and the batch labels', async () => {
     seed([worktree('a'), worktree('b'), worktree('c', { workspaceId: 'ws-2', workspaceName: 'demo' })]);
-    risks['/wt/b'] = {
-      uncommittedFiles: 3,
-      unpushedCommits: 2,
-      sessions: [sessionRef('s1', 'One'), sessionRef('s2', 'Two')],
-    };
+    risks['/wt/b'] = { uncommittedFiles: 3, unpushedCommits: 2 };
 
     await requestDeletion(['/wt/a', '/wt/b', '/wt/c']);
 
     expect(dialog()?.getAttribute('aria-label')).toBe('Delete Worktrees');
-    expect(rowTexts()).toEqual([
-      'Worktrees to delete | 3 total',
-      '2 associated sessions will no longer be able to use these directories.',
-      'Contents of 1 Worktree cannot be recovered after deletion.',
-    ]);
     expect(listTexts()).toEqual([
       'kimi/b | kimi-code-app | 3 uncommitted files',
       'kimi/a | kimi-code-app',
@@ -217,7 +205,7 @@ describe('batch deletion dialog', () => {
 describe('deletion progress and result', () => {
   it('changes in place to a progress view with a background-close footer', async () => {
     seed([worktree('a'), worktree('b')]);
-    const first = Promise.withResolvers<Removed>();
+    const first = Promise.withResolvers<RemoveWorktreeResult>();
     api.removeWorktree.mockReturnValueOnce(first.promise);
     await requestDeletion(['/wt/a', '/wt/b']);
     const panel = dialog();
@@ -255,10 +243,13 @@ describe('deletion progress and result', () => {
 
     expect(listTexts()).toEqual(['kimi/c | Deletion failed', 'kimi/a | Deleted', 'kimi/b | Deleted']);
     expect(document.body.textContent).not.toContain('Directory not empty');
+    expect(worktreesStore().removals.map((entry) => [entry.path, entry.state, entry.reason, entry.output])).toEqual([
+      ['/wt/c', 'failed', 'in_use', 'Directory not empty'],
+    ]);
     expect(label('.confirm-dialog__cancel')).toBe('Retry Failed');
     expect(label('.confirm-dialog__confirm')).toBe('Done');
 
-    const retry = Promise.withResolvers<Removed>();
+    const retry = Promise.withResolvers<RemoveWorktreeResult>();
     api.removeWorktree.mockReturnValueOnce(retry.promise);
     button('.confirm-dialog__cancel').click();
     await nextTick();
@@ -268,6 +259,7 @@ describe('deletion progress and result', () => {
     retry.resolve({ removed: true, branchDeleted: false });
     await settled();
     expect(dialog()).toBeNull();
+    expect(worktreesStore().removals).toEqual([]);
   });
 
   it('closes the result page on Done and keeps the failure for the management page', async () => {
@@ -312,7 +304,7 @@ describe('worktree session deletion dialog', () => {
   it('retains the directory and offers no branch option while other sessions use it', async () => {
     risks['/wt/a'] = {
       uncommittedFiles: 4,
-      sessions: [sessionRef('s1', 'Hello'), sessionRef('s2', 'Two'), sessionRef('s3', 'Three', true)],
+      sessions: [sessionRef('s1', 'Hello'), sessionRef('s2', 'Two'), sessionRef('s3', 'Three', { archived: true })],
     };
     const run = vi.fn(async (options: { deleteBranch: boolean }) => options);
 

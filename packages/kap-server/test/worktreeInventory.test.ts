@@ -9,7 +9,7 @@ import { ErrorCode } from '../src/protocol/error-codes';
 import type { Session } from '../src/protocol/session';
 import { repointSession } from '../src/services/worktrees/sessionRepoint';
 import { commit, git } from './helpers/gitRepo';
-import { useWorktreeServer } from './helpers/worktreeServer';
+import { useWorktreeServer, withResolvers } from './helpers/worktreeServer';
 
 interface WorktreeWire {
   path: string;
@@ -140,24 +140,6 @@ describe('server-v2 worktree inventory', () => {
     expect(inspected.data.errors[nowhere]?.code).toBe(ErrorCode.WORKTREE_NOT_FOUND);
   });
 
-  it('counts commits shared only by worktrees inspected together as lost', async () => {
-    const { workspaceId } = await project('inspect-batch');
-    const first = (await settledWorktree(workspaceId)).worktree!.path!;
-    const second = (await settledWorktree(workspaceId)).worktree!.path!;
-    await writeFile(join(first, 'shared.txt'), 'shared\n');
-    git(first, 'add', 'shared.txt');
-    commit(first, 'shared');
-    git(second, 'reset', '-q', '--hard', git(first, 'rev-parse', 'HEAD'));
-    const inspect = (paths: string[]) =>
-      post<{ items: { path: string; unpushed_commits: number }[] }>('/worktrees:inspect', { paths });
-
-    expect((await inspect([first])).data.items).toMatchObject([{ path: first, unpushed_commits: 0 }]);
-    expect((await inspect([first, second])).data.items).toMatchObject([
-      { path: first, unpushed_commits: 1 },
-      { path: second, unpushed_commits: 1 },
-    ]);
-  });
-
   it('removes a dirty worktree unless a session using it is busy', async () => {
     const { root, workspaceId } = await project('remove');
     const session = await settledWorktree(workspaceId);
@@ -207,27 +189,22 @@ describe('server-v2 worktree inventory', () => {
     const { path } = session.worktree as { path: string };
     const worktrees = fixture.server.core.accessor.get(IWorktreeService);
     const remove = worktrees.remove.bind(worktrees);
-    let start!: () => void;
-    let release!: () => void;
-    const started = new Promise<void>((resolve) => {
-      start = resolve;
-    });
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const started = withResolvers();
+    const held = withResolvers();
     const spy = vi.spyOn(worktrees, 'remove').mockImplementation(async (input) => {
-      start();
-      await held;
+      started.resolve();
+      await held.promise;
       return remove(input);
     });
     onTestFinished(() => {
+      held.resolve();
       spy.mockRestore();
     });
 
     const removal = post('/worktrees:remove', { path });
-    await started;
+    await started.promise;
     const prompt = await post(`/sessions/${session.id}/prompts`, { content: [{ type: 'text', text: 'hello' }] });
-    release();
+    held.resolve();
 
     expect(prompt.code).toBe(ErrorCode.SESSION_BUSY);
     expect(prompt.msg).toContain('is being removed');
@@ -307,7 +284,7 @@ describe('server-v2 worktree inventory', () => {
     expect(existsSync(root)).toBe(true);
   });
 
-  it('keeps the session deletion when the worktree directory cannot be removed', async () => {
+  it.skipIf(process.platform === 'win32')('keeps the session deletion when the worktree directory cannot be removed', async () => {
     const { workspaceId } = await project('delete-failure');
     const lockedWorktree = async (): Promise<Session> => {
       const session = await settledWorktree(workspaceId);

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -5,7 +6,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { listLocalBranches, resolveRemoteRef } from '../../src/services/worktrees/gitRefs';
+import { isDirty, listLocalBranches, resolveRemoteRef } from '../../src/services/worktrees/gitRefs';
 import {
   WorktreeCreation,
   abbreviateHome,
@@ -15,11 +16,12 @@ import {
   type SetupProgress,
   type WorktreeCreationOptions,
 } from '../../src/services/worktrees/worktreeSetup';
-import { createRepoTemplate, git, hangingRemote, type RepoTemplate } from '../helpers/gitRepo';
+import { createRepoTemplate, git, type RepoTemplate, useHangingRemote } from '../helpers/gitRepo';
 
 describe('worktree setup engine', () => {
   let scratch: string;
   let template: RepoTemplate;
+  const hangingRemote = useHangingRemote();
 
   beforeAll(async () => {
     scratch = await realpath(await mkdtemp(join(tmpdir(), 'kimi-worktree-setup-')));
@@ -269,5 +271,33 @@ describe('worktree setup engine', () => {
       'never-pushed': undefined,
       'local-upstream': undefined,
     });
+  });
+
+  it('lists local branches newest commit first with their remote, and reads HEAD and local changes', async () => {
+    const root = await createRepo('branch-list');
+    const commitAt = (branch: string, date: string) => {
+      git(root, 'checkout', '-q', '-b', branch, 'main');
+      execFileSync('git', ['commit', '-q', '--allow-empty', '-m', branch], {
+        cwd: root,
+        env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date },
+      });
+    };
+    commitAt('older', '2030-01-01T00:00:00Z');
+    commitAt('newest', '2031-06-01T12:00:00Z');
+    git(root, 'checkout', '-q', 'main');
+    git(root, 'remote', 'add', 'fork', join(scratch, 'branch-list-fork-does-not-exist.git'));
+    git(root, 'update-ref', 'refs/remotes/fork/older', 'older');
+
+    const listed = await listLocalBranches(root);
+    expect(listed.headBranch).toBe('main');
+    expect(listed.branches.map((branch) => branch.name)).toEqual(['newest', 'older', 'main']);
+    expect(listed.branches[0]).toEqual({ name: 'newest', committedAt: '2031-06-01T12:00:00.000Z', remote: undefined });
+    expect(listed.branches[1]?.remote).toMatchObject({ remote: 'fork', source: 'same_name', ref: 'fork/older' });
+    expect(await isDirty(root)).toBe(false);
+
+    await writeFile(join(root, 'untracked.txt'), 'x\n');
+    git(root, 'checkout', '-q', '--detach');
+    expect((await listLocalBranches(root)).headBranch).toBeUndefined();
+    expect(await isDirty(root)).toBe(true);
   });
 });

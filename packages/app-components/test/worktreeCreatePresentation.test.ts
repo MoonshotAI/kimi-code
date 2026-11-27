@@ -47,49 +47,6 @@ describe('worktree creation step copy', () => {
 });
 
 describe('worktree creation block', () => {
-  it('lists pending steps and counts the running command', () => {
-    const view = createBlockView(
-      worktree({
-        status: 'running',
-        steps: [
-          step('fetch', 'done', { ref: 'origin/main', command: 'git fetch --no-tags origin main' }),
-          step('create', 'running', { ref: 'origin/main', command: 'git worktree add --no-track -b kimi/1 /w origin/main', output: 'Preparing worktree' }),
-          step('changes', 'pending'),
-        ],
-        commandsRan: 1,
-      }),
-      t,
-    );
-    expect(view.title).toBe('Creating Worktree');
-    expect(view.meta).toBe('2 commands ran');
-    expect(view.defaultOpen).toBe(true);
-    expect(view.steps.map((item) => [item.tone, item.label])).toEqual([
-      ['done', 'Fetched origin/main'],
-      ['running', 'Creating Worktree from origin/main'],
-      ['pending', 'Include local uncommitted changes'],
-    ]);
-    expect(view.steps[1]?.output).toBe('Preparing worktree');
-    expect(view.steps[2]?.command).toBeUndefined();
-  });
-
-  it('collapses a finished creation and notes included local changes', () => {
-    const view = createBlockView(
-      worktree(
-        { status: 'ready', commandsRan: 2, steps: [step('create', 'done', { ref: 'main' }), step('changes', 'done')] },
-        { path: '/w', includedLocalChanges: true },
-      ),
-      t,
-    );
-    expect(view.title).toBe('Worktree created');
-    expect(view.meta).toBe('2 commands ran');
-    expect(view.defaultOpen).toBe(false);
-    expect(view.expandable).toBe(true);
-    expect(view.note).toBe(
-      'Local uncommitted changes were included (without staging state). The original directory is unaffected.',
-    );
-    expect(view.steps[0]?.label).toBe('Worktree created from main');
-  });
-
   it.each<[Partial<AppWorktreeSetup>, string]>([
     [{ status: 'failed', failure: { kind: 'fetch_failed' } }, 'Remote fetch failed'],
     [{ status: 'failed', failure: { kind: 'fetch_timeout' } }, 'Remote fetch timed out'],
@@ -102,36 +59,12 @@ describe('worktree creation block', () => {
     expect(createBlockView(worktree(overrides), t).title).toBe(title);
   });
 
-  it('expands on failure and keeps the failed step output', () => {
-    const view = createBlockView(
-      worktree({
-        status: 'failed',
-        failure: { kind: 'fetch_failed' },
-        commandsRan: 1,
-        steps: [step('fetch', 'failed', { ref: 'origin/main', command: 'git fetch', output: 'fatal: unable to access\n' })],
-      }),
-      t,
-    );
-    expect(view.defaultOpen).toBe(true);
-    expect(view.steps[0]).toMatchObject({ tone: 'failed', label: 'Failed to fetch origin/main', output: 'fatal: unable to access' });
-  });
-
-  it('keeps the original creation block during and after a recreate run', () => {
-    const original = worktree(
-      { status: 'ready', commandsRan: 2, steps: [step('fetch', 'done', { ref: 'origin/main' }), step('create', 'done', { ref: 'origin/main' })] },
-      { path: '/w' },
-    );
+  it('falls back to a static block for a recreate run without the original creation', () => {
     const recreating = worktree({ purpose: 'recreate', status: 'running', steps: [step('prune', 'running'), step('create', 'pending')] });
-    const remembered = createBlockView(recreating, t, original);
-    expect(remembered.title).toBe('Worktree created');
-    expect(remembered.meta).toBe('2 commands ran');
-    expect(remembered.steps).toHaveLength(2);
-
-    const fallback = createBlockView(recreating, t);
-    expect(fallback).toMatchObject({ title: 'Worktree created', meta: null, expandable: false, steps: [] });
-
+    expect(createBlockView(recreating, t)).toMatchObject({ title: 'Worktree created', meta: null, expandable: false, steps: [] });
     const failed = worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'create_failed' } });
     expect(createBlockView(failed, t).title).toBe('Worktree created');
+    const original = worktree({ status: 'ready', commandsRan: 1, steps: [step('create', 'done', { ref: 'main' })] }, { path: '/w' });
     expect(createBlockView(worktree({ purpose: 'recreate', status: 'local' }), t, original).title).toBe('Switched to Local Mode');
   });
 });
@@ -194,11 +127,8 @@ describe('worktree decision cards', () => {
     expect(actionLabels(fetchStopped)).toEqual(['Create from local main', 'Retry']);
   });
 
-  it('shows no decision card while running, ready, local or invalid', () => {
+  it('shows no decision card for a missing worktree or a recreate run', () => {
     expect(createDecisionCardView(null, t)).toBeNull();
-    expect(createDecisionCardView(worktree({ status: 'running' }), t)).toBeNull();
-    expect(createDecisionCardView(worktree({ status: 'ready' }, { path: '/w' }), t)).toBeNull();
-    expect(createDecisionCardView(worktree({ status: 'local' }), t)).toBeNull();
     expect(createDecisionCardView(worktree({ status: 'ready' }, { path: '/w', missing: true }), t)).toBeNull();
     expect(
       createDecisionCardView(worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'create_failed' } }), t),

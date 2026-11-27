@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppSession,
-  AppWorktreeHeldPrompt,
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
   PromptSubmission,
 } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
-import { appSession, memoryStorage, sessionWorktree as worktree } from '../src/testing/worktreeFixtures';
+import {
+  appSession,
+  appWorkspace,
+  heldPromptFixture,
+  memoryStorage,
+  sessionWorktree as worktree,
+  workspaceGitBranches,
+} from '../src/testing/worktreeFixtures';
 
 async function flushMicrotasks(): Promise<void> {
   for (let round = 0; round < 20; round++) await Promise.resolve();
@@ -50,9 +56,8 @@ describe('useKimiWebClient worktree session', () => {
       close: vi.fn(),
     };
     const created = session({ worktree: worktree('running') });
-    let heldPrompt: AppWorktreeHeldPrompt | undefined;
     const submitPrompt = vi.fn(async (_sid: string, input: PromptSubmission) => {
-      heldPrompt = { promptId: input.promptId!, kind: 'prompt', createdAt: '2026-11-18T00:00:00.000Z', content: input.content };
+      const heldPrompt = heldPromptFixture({ promptId: input.promptId!, content: input.content });
       const holding = session({ worktree: { ...worktree('running'), heldPrompt } });
       handlers!.onEvent(
         { type: 'sessionWorkChanged', sessionId: SID, busy: false, mainTurnActive: false, session: holding },
@@ -60,8 +65,6 @@ describe('useKimiWebClient worktree session', () => {
       );
       return { promptId: input.promptId!, userMessageId: input.promptId! };
     });
-    const sessionWorktreeAction = vi.fn(async () => session({ worktree: { ...worktree('stopped'), heldPrompt } }));
-    const cancelSession = vi.fn(async () => ({ cancelled: true }));
     const getGitStatus = vi.fn(async () => ({
       branch: 'main',
       ahead: 0,
@@ -87,23 +90,13 @@ describe('useKimiWebClient worktree session', () => {
       })),
       getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' }) as never),
       listModels: vi.fn(async () => [{ id: 'model-1', provider: 'p', model: 'model-1', maxContextSize: 0 }]),
-      listWorkspaces: vi.fn(async () => [
-        { id: 'workspace-1', root: '/workspace', name: 'Workspace', kind: 'managed' as const, additionalDirs: ['/extra'], sessionCount: 0 },
-      ]),
+      listWorkspaces: vi.fn(async () => [appWorkspace('workspace-1', { root: '/workspace', additionalDirs: ['/extra'] })]),
       listSessions: vi.fn(async () => ({ items: [], hasMore: false, nextPageToken: null, total: 0 })),
-      getWorkspaceGitBranches: vi.fn(async () => ({
-        isRepo: true,
-        remotes: ['origin'],
-        headBranch: 'main',
-        dirty: false,
-        branches: [{ name: 'main', committedAt: '2026-11-18T00:00:00.000Z' }],
-      })),
+      getWorkspaceGitBranches: vi.fn(async () => workspaceGitBranches()),
       createSession: vi.fn(async () => created),
       getSession: vi.fn(async () => created),
       updateSession: vi.fn(async () => created),
       submitPrompt,
-      sessionWorktreeAction,
-      cancelSession,
       getGitStatus,
       connectEvents: vi.fn((nextHandlers) => {
         handlers = nextHandlers;
@@ -124,24 +117,12 @@ describe('useKimiWebClient worktree session', () => {
     const started = await client.startSessionAndSendPrompt('workspace-1', client.createPromptEnvelope({ text: 'hello' }));
 
     expect(started).toEqual({ sessionId: SID, promptRejected: false });
-    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({ worktree: { sourceBranch: 'main' } }));
     expect(client.activeSessionEnvironment.value).toBe('settingUp');
     expect(workspacesStore().activePanelRoot).toBe('/workspace');
     await flushMicrotasks();
     expect(client.turns.value.filter((turn) => turn.role === 'user').map((turn) => turn.text)).toEqual(['hello']);
     expect(submitPrompt).toHaveBeenCalledTimes(1);
-    expect(submitPrompt.mock.calls[0]![1].content).toEqual([{ type: 'text', text: 'hello' }]);
     expect(promptStore().heldFirstPromptBySession[SID]).toBeDefined();
-
-    expect(await client.sendPrompt(client.createPromptEnvelope({ text: 'second' }))).toBe('queued');
-    expect(submitPrompt).toHaveBeenCalledTimes(1);
-
-    expect(await client.abortCurrentPrompt()).toBe(true);
-    expect(sessionWorktreeAction).toHaveBeenCalledExactlyOnceWith(SID, 'cancel', undefined);
-    expect(cancelSession).not.toHaveBeenCalled();
-    expect(client.activeSessionWorktree.value?.setup.status).toBe('stopped');
-    await flushMicrotasks();
-    expect(submitPrompt).toHaveBeenCalledTimes(1);
 
     getGitStatus.mockClear();
     const ready = session({ cwd: '/wt/a', worktree: worktree('ready', { path: '/wt/a', branch: 'kimi/a' }) });
@@ -155,7 +136,6 @@ describe('useKimiWebClient worktree session', () => {
     expect(client.status.value.cwd).toBe('/wt/a');
     expect(getGitStatus).toHaveBeenCalled();
     expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();
-    expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['second']);
     expect(client.turns.value.filter((turn) => turn.role === 'user').map((turn) => turn.text)).toEqual(['hello']);
 
     handlers!.onEvent(

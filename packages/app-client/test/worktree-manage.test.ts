@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
-
-import type { AppWorktree } from '@moonshot-ai/app-core/api';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import {
   formatWorktreeSize,
   worktreeDeleteRows,
   worktreeFailureText,
-  worktreeManageRow,
   worktreeRemovalProgress,
   worktreeRemovalSummaryText,
   worktreeRiskRow,
@@ -14,8 +11,6 @@ import {
   type WorktreeDeleteTarget,
   type WorktreeRemovalProgressItem,
 } from '../src/lib/worktreeManage';
-import type { WorktreeRemovalItem } from '../src/stores/worktrees';
-import { appWorktree } from '../src/testing/worktreeFixtures';
 
 function translator(locale: 'en' | 'zh') {
   const i18n = createKimiI18n({ locale });
@@ -39,14 +34,6 @@ function target(name: string, overrides: Partial<WorktreeDeleteTarget> = {}): Wo
     risk: { uncommittedFiles: 0, unpushedCommits: 0 },
     ...overrides,
   };
-}
-
-function worktree(overrides: Partial<AppWorktree> = {}): AppWorktree {
-  return appWorktree('a', { sizeBytes: 60 * MB, ...overrides });
-}
-
-function session(id: string, overrides: Partial<AppWorktree['sessions'][number]> = {}) {
-  return { id, title: `Session ${id}`, archived: false, busy: false, ...overrides };
 }
 
 describe('risk wording', () => {
@@ -189,51 +176,7 @@ describe('session deletion dialog', () => {
   });
 });
 
-describe('management rows', () => {
-  it('counts every associated session and leads with an active one', () => {
-    const row = worktreeManageRow(
-      worktree({ sessions: [session('old', { archived: true }), session('live'), session('other')] }),
-    );
-    expect(row.title).toBe('Session live');
-    expect(row.sessionsInUse).toBe(3);
-    expect(row.label).toBeNull();
-    expect(row.openSessionId).toBe('live');
-  });
-
-  it('keeps the deleted session name and label from this run', () => {
-    const removal: WorktreeRemovalItem = {
-      path: '/wt/a',
-      name: 'a',
-      deleteBranch: false,
-      state: 'failed',
-      reason: 'in_use',
-      output: 'Directory not empty',
-    };
-    const row = worktreeManageRow(worktree(), removal, 'Hello');
-    expect(row).toMatchObject({
-      title: 'Hello',
-      titleIsDirectory: false,
-      label: 'deleted',
-      noSession: false,
-      status: 'failed',
-      failureReason: 'in_use',
-      output: 'Directory not empty',
-      deletable: true,
-    });
-    expect(row.openSessionId).toBeUndefined();
-  });
-
-  it.each(['waiting', 'deleting'] as const)('reads a %s removal as deleting', (state) => {
-    const row = worktreeManageRow(worktree({ sessions: [session('s1')] }), {
-      path: '/wt/a',
-      name: 'a',
-      deleteBranch: false,
-      state,
-    });
-    expect(row.status).toBe('deleting');
-    expect(row.deletable).toBe(false);
-  });
-
+describe('failure wording', () => {
   it.each([
     ['in_use', 'Deletion failed: directory in use', en],
     ['session_busy', 'Deletion failed: session is running', en],

@@ -4,16 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import type { BrowserCapture } from '@moonshot-ai/app-core/browser-reference';
 import { browserReferenceNode, composerSchema, createComposerSnapshot, docToText } from '@moonshot-ai/app-composer/model';
-import type {
-  AppSession,
-  AppSessionWorktree,
-  AppWorktreeHeldPrompt,
-  WorkspaceGitBranches,
-} from '@moonshot-ai/app-core/api';
+import type { AppSession, AppSessionWorktree, AppWorktreeHeldPrompt } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { buildPromptContent, buildPromptMetadata } from '../src/lib/browserReferenceSubmission';
 import { createWorkspaceRig, type WorkspaceRig } from '../src/testing/workspaceRig';
-import { appSession, sessionWorktree as worktree } from '../src/testing/worktreeFixtures';
+import {
+  appSession,
+  appWorkspace,
+  heldPromptFixture,
+  sessionWorktree as worktree,
+  workspaceGitBranches,
+} from '../src/testing/worktreeFixtures';
 import { modelsStore } from '../src/stores/models';
 import { modeStore } from '../src/stores/mode';
 import { useNewSessionEnvironment } from '../src/composables/useNewSessionEnvironment';
@@ -24,14 +25,6 @@ import { warningsStore } from '../src/stores/warnings';
 import { workspacesStore } from '../src/stores/workspaces';
 
 const SID = 'session-1';
-
-const BRANCHES: WorkspaceGitBranches = {
-  isRepo: true,
-  remotes: ['origin'],
-  headBranch: 'main',
-  dirty: false,
-  branches: [{ name: 'main', committedAt: '2026-11-18T00:00:00.000Z', remoteRef: 'origin/main' }],
-};
 
 function session(overrides: Partial<AppSession> = {}): AppSession {
   return appSession({ id: SID, title: SID, ...overrides });
@@ -117,7 +110,7 @@ async function createRig(options: { worktree?: boolean } = {}) {
     getSession: vi.fn(async () => created),
     getGitStatus: vi.fn().mockRejectedValue(new Error('not needed')),
     getSessionWarnings: vi.fn(async () => []),
-    getWorkspaceGitBranches: vi.fn(async (): Promise<WorkspaceGitBranches> => BRANCHES),
+    getWorkspaceGitBranches: vi.fn(async () => workspaceGitBranches()),
     updateSession: vi.fn(async () => ({})),
     submitPrompt: vi.fn(
       async (sid: string, input: { promptId?: string; content: AppWorktreeHeldPrompt['content']; metadata?: Record<string, unknown> }) => {
@@ -127,13 +120,11 @@ async function createRig(options: { worktree?: boolean } = {}) {
             ...existing,
             worktree: {
               ...current,
-              heldPrompt: {
+              heldPrompt: heldPromptFixture({
                 promptId: input.promptId!,
-                kind: 'prompt',
-                createdAt: '2026-11-18T00:00:00.000Z',
                 content: input.content,
                 ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
-              },
+              }),
             },
           }));
         }
@@ -189,9 +180,7 @@ async function createRig(options: { worktree?: boolean } = {}) {
   };
 
   const store = workspacesStore();
-  store.workspaces = [
-    { id: 'workspace', root: '/workspace', name: 'workspace', kind: 'managed', additionalDirs: [], sessionCount: 0 },
-  ];
+  store.workspaces = [appWorkspace('workspace')];
   store.storedActiveWorkspaceId = 'workspace';
 
   if (options.worktree !== false) {
@@ -255,14 +244,10 @@ describe('worktree first-prompt hold', () => {
     ]);
   });
 
-  it('restores the attachments and skills of a failed held prompt after the client reloads', async () => {
-    const { ws } = await createRig({ worktree: false });
-    openExisting({
-      ...worktree('ready', { path: '/wt/a' }),
-      heldPrompt: {
-        promptId: 'held-1',
-        kind: 'prompt',
-        createdAt: '2026-11-18T00:00:00.000Z',
+  it.each([
+    {
+      name: 'prompt with its attachments and skills',
+      held: heldPromptFixture({
         content: [
           { type: 'text', text: 'look' },
           { type: 'image', source: { kind: 'file', fileId: 'f-1' }, name: 'shot.png' },
@@ -270,13 +255,8 @@ describe('worktree first-prompt hold', () => {
         ],
         skills: [{ name: 'review', args: 'now' }],
         failure: { code: 50001, msg: 'boom' },
-      },
-    });
-
-    ws.syncWorktreeHold(SID);
-
-    expect(promptStore().queuedBySession[SID]).toEqual([
-      expect.objectContaining({
+      }),
+      queued: {
         id: 'held-1',
         text: 'look',
         attachments: [
@@ -284,8 +264,32 @@ describe('worktree first-prompt hold', () => {
           { kind: 'file', fileId: 'f-2', name: 'notes.txt', mediaType: 'text/plain', size: 3 },
         ],
         skills: [{ name: 'review', args: 'now' }],
+      },
+    },
+    {
+      name: 'skill activation',
+      held: heldPromptFixture({
+        promptId: 'held-skill',
+        kind: 'skill',
+        content: [{ type: 'image', source: { kind: 'file', fileId: 'f-1' } }],
+        skill: { name: 'review', path: '/workspace/.kimi-code/skills/review/SKILL.md', args: 'now' },
+        failure: { code: 40401, msg: 'missing' },
       }),
-    ]);
+      queued: {
+        id: 'held-skill',
+        text: '/review now',
+        attachments: [{ kind: 'image', fileId: 'f-1' }],
+        skills: [{ name: 'review', path: '/workspace/.kimi-code/skills/review/SKILL.md', args: 'now' }],
+      },
+    },
+  ])('puts a failed held $name back in the queue after the client reloads', async ({ held, queued }) => {
+    const { ws } = await createRig({ worktree: false });
+    openExisting({ ...worktree('ready', { path: '/wt/a' }), heldPrompt: held });
+
+    ws.syncWorktreeHold(SID);
+
+    expect(promptStore().queuedBySession[SID]).toEqual([expect.objectContaining(queued)]);
+    expect(warningsStore().warnings).toHaveLength(1);
   });
 
   it('restores a failed held prompt with a browser screenshot so that it sends the same content again', async () => {
@@ -310,14 +314,7 @@ describe('worktree first-prompt hold', () => {
     const { ws } = await createRig({ worktree: false });
     openExisting({
       ...worktree('ready', { path: '/wt/a' }),
-      heldPrompt: {
-        promptId: 'held-1',
-        kind: 'prompt',
-        createdAt: '2026-11-18T00:00:00.000Z',
-        content,
-        metadata: buildPromptMetadata(sent),
-        failure: { code: 50001, msg: 'boom' },
-      },
+      heldPrompt: heldPromptFixture({ content, metadata: buildPromptMetadata(sent), failure: { code: 50001, msg: 'boom' } }),
     });
 
     ws.syncWorktreeHold(SID);
@@ -343,44 +340,11 @@ describe('worktree first-prompt hold', () => {
     expect(sentTexts(api.submitPrompt)).toEqual(['first', 'second']);
   });
 
-  it('puts a held skill activation the server could not send back in the queue', async () => {
-    const { ws } = await createRig({ worktree: false });
-    openExisting({
-      ...worktree('ready', { path: '/wt/a' }),
-      heldPrompt: {
-        promptId: 'held-skill',
-        kind: 'skill',
-        createdAt: '2026-11-18T00:00:00.000Z',
-        content: [{ type: 'image', source: { kind: 'file', fileId: 'f-1' } }],
-        skill: { name: 'review', path: '/workspace/.kimi-code/skills/review/SKILL.md', args: 'now' },
-        failure: { code: 40401, msg: 'missing' },
-      },
-    });
-
-    ws.syncWorktreeHold(SID);
-
-    expect(promptStore().queuedBySession[SID]).toEqual([
-      expect.objectContaining({
-        id: 'held-skill',
-        text: '/review now',
-        attachments: [{ kind: 'image', fileId: 'f-1' }],
-        skills: [{ name: 'review', path: '/workspace/.kimi-code/skills/review/SKILL.md', args: 'now' }],
-      }),
-    ]);
-    expect(warningsStore().warnings).toHaveLength(1);
-  });
-
   it('restores failed held prompts of different sessions that share a prompt id', async () => {
     const { ws } = await createRig({ worktree: false });
     const failed = (): AppSessionWorktree => ({
       ...worktree('ready', { path: '/wt/a' }),
-      heldPrompt: {
-        promptId: 'shared',
-        kind: 'prompt',
-        createdAt: '2026-11-18T00:00:00.000Z',
-        content: [{ type: 'text', text: 'retry me' }],
-        failure: { code: 50001, msg: 'boom' },
-      },
+      heldPrompt: heldPromptFixture({ promptId: 'shared', failure: { code: 50001, msg: 'boom' } }),
     });
     sessionsStore().setSessions([
       session({ cwd: '/wt/a', worktree: failed() }),
@@ -399,13 +363,7 @@ describe('worktree first-prompt hold', () => {
     const { ws } = await createRig({ worktree: false });
     openExisting({
       ...worktree('running'),
-      heldPrompt: {
-        promptId: 'held-1',
-        kind: 'skill',
-        createdAt: '2026-11-18T00:00:00.000Z',
-        content: [{ type: 'text', text: 'evidence' }],
-        skill: { name: 'review', args: 'now' },
-      },
+      heldPrompt: heldPromptFixture({ kind: 'skill', content: [{ type: 'text', text: 'evidence' }], skill: { name: 'review', args: 'now' } }),
     });
 
     ws.syncWorktreeHold(SID);
@@ -462,17 +420,6 @@ describe('worktree first-prompt hold', () => {
 
     await becomeReady(ws);
     expect(sentTexts(api.submitPrompt)).toEqual(['later']);
-  });
-
-  it('cannot send into a session whose worktree is missing', async () => {
-    const { api, ws } = await createRig({ worktree: false });
-    openExisting(worktree('ready', { path: '/wt/a', missing: true }));
-
-    expect(await send(ws, 'hello')).toBe('rejected');
-    ws.flushQueueHead(SID);
-    await flush();
-    expect(api.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession[SID] ?? []).toEqual([]);
   });
 
   it('applies a worktree action result and releases the hold when it settles', async () => {
@@ -580,10 +527,9 @@ describe('worktree first-prompt hold', () => {
   it('surfaces a rejected source branch as an error, holds nothing and restores the default branch', async () => {
     const { api, ws } = await createRig();
     const environment = useNewSessionEnvironment();
-    api.getWorkspaceGitBranches.mockResolvedValueOnce({
-      ...BRANCHES,
-      branches: [...BRANCHES.branches, { name: 'gone', committedAt: '2026-11-17T00:00:00.000Z' }],
-    });
+    api.getWorkspaceGitBranches.mockResolvedValueOnce(
+      workspaceGitBranches({ branches: [...workspaceGitBranches().branches, { name: 'gone', committedAt: '2026-11-17T00:00:00.000Z' }] }),
+    );
     await environment.refreshBranches('workspace');
     environment.selectSource('workspace', { branch: 'gone' });
     api.createSession.mockRejectedValueOnce(
@@ -609,7 +555,7 @@ describe('worktree first-prompt hold', () => {
     api.createSession.mockRejectedValueOnce(
       new DaemonApiError({ code: 40938, msg: 'workspace root is not a repository root', requestId: 'r1' }),
     );
-    api.getWorkspaceGitBranches.mockResolvedValueOnce({ isRepo: false, dirty: false, remotes: [], branches: [] });
+    api.getWorkspaceGitBranches.mockResolvedValueOnce(workspaceGitBranches({ isRepo: false, remotes: [], branches: [] }));
 
     const started = await start(ws);
     await flush();

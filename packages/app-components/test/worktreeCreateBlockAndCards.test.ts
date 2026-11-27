@@ -194,39 +194,6 @@ describe('CreateDecisionCard', () => {
     pressEnter();
     expect(onAction).not.toHaveBeenCalled();
   });
-});
-
-describe('CreateDecisionCard for a missing worktree', () => {
-  it('offers recreate and local mode for a missing worktree', async () => {
-    const onAction = vi.fn();
-    const view = createInvalidCardView(sessionWorktree('ready', { path: '/w', branch: 'kimi/1', missing: true }), t)!;
-    await mount(CreateDecisionCard, { view, onAction });
-
-    expect(text('.wcc-text')).toBe(view.body);
-    expect(button('Recreate Worktree').classList.contains('ui-button--primary')).toBe(true);
-    button('Recreate Worktree').click();
-    button('Use Local Mode').click();
-    expect(onAction.mock.calls.map((call) => call[0])).toEqual(['recreate', 'useLocal']);
-  });
-
-  it('shows the running command with a stop button while recreating', async () => {
-    const onAction = vi.fn();
-    const view = createInvalidCardView(
-      sessionWorktree(
-        'running',
-        { branch: 'kimi/1', missing: true },
-        { purpose: 'recreate', steps: [step('prune', 'done'), step('create', 'running', { command: 'git worktree add /w kimi/1' })] },
-      ),
-      t,
-    )!;
-    await mount(CreateDecisionCard, { view, onAction });
-
-    expect(text('.wcc-command')).toBe('git worktree add /w kimi/1');
-    expect(host.querySelectorAll('.abtns button')).toHaveLength(1);
-    expect(button('Stop').classList.contains('ui-button--primary')).toBe(false);
-    button('Stop').click();
-    expect(onAction).toHaveBeenCalledWith('stop');
-  });
 
   it('toggles the raw output of a failed recreate without emitting', async () => {
     const onAction = vi.fn();

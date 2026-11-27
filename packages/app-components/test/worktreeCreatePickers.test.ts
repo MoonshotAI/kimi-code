@@ -67,9 +67,9 @@ async function settle(): Promise<void> {
   }
 }
 
-function setBranches(workspaceId: string, info: WorkspaceGitBranches): void {
-  const store = useNewSessionEnvironment();
-  store.branchesByWorkspace = { ...store.branchesByWorkspace, [workspaceId]: { status: 'ready', info } };
+async function loadBranches(info: WorkspaceGitBranches): Promise<void> {
+  api.getWorkspaceGitBranches.mockResolvedValue(info);
+  await useNewSessionEnvironment().refreshBranches('ws1');
 }
 
 function pressKey(target: EventTarget, key: string): void {
@@ -143,9 +143,7 @@ describe('CreateEnvironmentPicker', () => {
   });
 
   it('dims Worktree for a project that is not a Git repository and falls back to Local', async () => {
-    const plain = { isRepo: false, dirty: false, remotes: [], branches: [] };
-    setBranches('ws1', plain);
-    api.getWorkspaceGitBranches.mockResolvedValue(plain);
+    api.getWorkspaceGitBranches.mockResolvedValue({ isRepo: false, dirty: false, remotes: [], branches: [] });
     useNewSessionEnvironment().selectEnvironment('worktree');
     await mountOpen();
 
@@ -158,7 +156,7 @@ describe('CreateEnvironmentPicker', () => {
   });
 
   it('rechecks on open and shows a repository that became available', async () => {
-    setBranches('ws1', { isRepo: false, dirty: false, remotes: [], branches: [] });
+    await loadBranches({ isRepo: false, dirty: false, remotes: [], branches: [] });
     const branches = Promise.withResolvers<WorkspaceGitBranches>();
     api.getWorkspaceGitBranches.mockReturnValueOnce(branches.promise);
     await mountOpen();
@@ -171,7 +169,6 @@ describe('CreateEnvironmentPicker', () => {
   });
 
   it('supports arrow keys, Enter and Esc', async () => {
-    setBranches('ws1', repo);
     await mountOpen();
 
     const panel = q('.wce-panel')!;
@@ -196,7 +193,6 @@ describe('CreateEnvironmentPicker', () => {
     api.listWorktrees.mockResolvedValue({ items: [], totalSizeBytes: 5.3 * GB });
     const openSettings = vi.fn();
     registerWorktreeSettingsOpener(openSettings);
-    setBranches('ws1', repo);
     await mountOpen();
     worktreeRow().click();
     await vi.waitFor(() => expect(toasts).toHaveLength(1));
@@ -213,8 +209,7 @@ describe('CreateEnvironmentPicker', () => {
 
 describe('CreateSourceBranchPicker', () => {
   async function mountOpen(info: WorkspaceGitBranches = repo): Promise<void> {
-    setBranches('ws1', info);
-    api.getWorkspaceGitBranches.mockResolvedValue(info);
+    await loadBranches(info);
     useNewSessionEnvironment().selectEnvironment('worktree');
     mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
     await settle();
@@ -223,7 +218,7 @@ describe('CreateSourceBranchPicker', () => {
   }
 
   it('is hidden in Local mode and shows the selected branch in Worktree mode', async () => {
-    setBranches('ws1', repo);
+    await loadBranches(repo);
     mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
     await nextTick();
     expect(q('.wsb')).toBeNull();
@@ -399,9 +394,9 @@ describe('CreateSourceBranchPicker', () => {
   });
 
   it('shows the remote ref and the included changes in the hover card', async () => {
+    await loadBranches(repo);
     vi.useFakeTimers();
     try {
-      setBranches('ws1', repo);
       const store = useNewSessionEnvironment();
       store.selectEnvironment('worktree');
       store.selectSource('ws1', { branch: 'main', includeLocalChanges: true });

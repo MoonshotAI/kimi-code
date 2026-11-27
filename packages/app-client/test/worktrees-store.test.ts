@@ -1,7 +1,7 @@
 import { createPinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppWorktree, WorktreeList } from '@moonshot-ai/app-core/api';
+import type { AppWorktree, RemoveWorktreeResult, WorktreeList } from '@moonshot-ai/app-core/api';
 import { STORAGE_KEYS, WORKTREE_DISK_REMINDER_STEP_BYTES as GB } from '@moonshot-ai/app-core/lib';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import {
@@ -10,14 +10,9 @@ import {
   useWorktreesStore,
 } from '../src/stores/worktrees';
 import { appWorktree, memoryStorage, worktreeRemoveFailed } from '../src/testing/worktreeFixtures';
+import { whenRemovalsSettled as settled, worktreeManageApi } from '../src/testing/worktreeManageFixtures';
 
-type Removed = { removed: true; branchDeleted: boolean };
-
-const api = {
-  listWorktrees: vi.fn<(input?: { refreshSizes?: boolean }) => Promise<WorktreeList>>(),
-  inspectWorktrees: vi.fn(),
-  removeWorktree: vi.fn<(input: { path: string; deleteBranch?: boolean }) => Promise<Removed>>(),
-};
+const api = worktreeManageApi();
 
 function item(name: string, overrides: Partial<AppWorktree> = {}): AppWorktree {
   return appWorktree(name, { sizeBytes: GB, ...overrides });
@@ -43,15 +38,6 @@ function waitFor(check: () => void): Promise<void> {
 
 function states(store: ReturnType<typeof freshStore>): string[] {
   return store.removals.map((entry) => entry.state);
-}
-
-function running(store: ReturnType<typeof freshStore>): boolean {
-  return states(store).some((state) => state === 'waiting' || state === 'deleting');
-}
-
-async function settled(store: ReturnType<typeof freshStore>): Promise<void> {
-  await waitFor(() => expect(running(store)).toBe(false));
-  await Promise.resolve();
 }
 
 let storage: Map<string, string>;
@@ -129,8 +115,8 @@ describe('worktree list', () => {
 
 describe('worktree removal queue', () => {
   it('deletes one worktree at a time in order', async () => {
-    const first = Promise.withResolvers<Removed>();
-    const second = Promise.withResolvers<Removed>();
+    const first = Promise.withResolvers<RemoveWorktreeResult>();
+    const second = Promise.withResolvers<RemoveWorktreeResult>();
     api.removeWorktree.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     const store = await loadedStore();
 
@@ -199,7 +185,7 @@ describe('worktree removal queue', () => {
   });
 
   it('keeps running without any consumer and accepts more work while busy', async () => {
-    const first = Promise.withResolvers<Removed>();
+    const first = Promise.withResolvers<RemoveWorktreeResult>();
     api.removeWorktree.mockReturnValueOnce(first.promise);
     const store = await loadedStore();
 
@@ -243,7 +229,7 @@ describe('worktree removal queue', () => {
 
   it('only dismisses finished removals in the requested states', async () => {
     const store = await loadedStore();
-    const slow = Promise.withResolvers<Removed>();
+    const slow = Promise.withResolvers<RemoveWorktreeResult>();
     api.removeWorktree
       .mockRejectedValueOnce(worktreeRemoveFailed('in_use', 'busy'))
       .mockReturnValueOnce(slow.promise);

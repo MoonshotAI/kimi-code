@@ -5,7 +5,7 @@ import { IProjectPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent
 import { IProjectPersistence } from '@moonshot-ai/agent-core-v2/app/project/projectPersistence';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { delimiter, join, sep } from 'node:path';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -13,7 +13,7 @@ import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environme
 import { createGitRepository, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { sendMappedError } from '../src/routes/fs';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -725,6 +725,15 @@ describe('server-v2 /api/v1 fs routes', () => {
   }, 20000);
 
   it('fs:git_status reports the head, untracked additions and the pull request lookup outcome', async () => {
+    const fakeBin = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fake-gh-'));
+    await writeFile(join(fakeBin, 'gh'), `#!/bin/sh\necho 'no pull requests found for branch "main"' >&2\nexit 1\n`, {
+      mode: 0o755,
+    });
+    vi.stubEnv('PATH', `${fakeBin}${delimiter}${process.env['PATH'] ?? ''}`);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(fakeBin, { recursive: true, force: true });
+    });
     await initRepo(work!, { 'main.txt': 'one\n' });
     await writeFile(join(work!, 'fresh.txt'), 'one\ntwo\n');
     const id = await createSession();
@@ -758,7 +767,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(batch.data.results[work!]?.additions).toBe(2);
     expect(status.data.stats_error).toBeUndefined();
     expect(status.data.pullRequest).toBeNull();
-    expect(['none', 'unavailable']).toContain(status.data.pull_request_status);
+    expect(status.data.pull_request_status).toBe('none');
     expect(pullRequest.code).toBe(0);
     expect(pullRequest.data).toBeNull();
     expect(pullRequest.details).toEqual({ pull_request_status: status.data.pull_request_status });

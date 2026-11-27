@@ -3,12 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  AgentEnvironmentBindingService,
+  AgentLoopService,
   IAgentLifecycleService,
   MAIN_AGENT_ID,
+  SessionMetadata,
   getLiveSessionById,
   patchSessionMetadata,
 } from '@moonshot-ai/agent-core-v2';
-import { afterAll, afterEach, beforeAll, expect, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, onTestFinished, vi } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import type { Session } from '../../src/protocol/session';
@@ -54,6 +57,47 @@ const STUB_CONFIG = [
   'max_context_size = 1000',
   '',
 ].join('\n');
+
+export interface Resolvers<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (reason: unknown) => void;
+}
+
+export function withResolvers<T = void>(): Resolvers<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+export function eventually<T>(check: () => T | Promise<T>): Promise<T> {
+  return vi.waitFor(check, { timeout: 10_000, interval: 25 });
+}
+
+export function failMetadataWriteOnce(
+  predicate: (stored: StoredSessionWorktree | undefined) => boolean,
+): { readonly failed: boolean } {
+  const state = { failed: false };
+  const originalUpdate = SessionMetadata.prototype.update;
+  const update = vi.spyOn(SessionMetadata.prototype, 'update').mockImplementation(function (
+    this: SessionMetadata,
+    ...args: Parameters<SessionMetadata['update']>
+  ) {
+    if (!state.failed && predicate(storedSessionWorktree(args[0].custom))) {
+      state.failed = true;
+      return Promise.reject(new Error('metadata write failed'));
+    }
+    return originalUpdate.apply(this, args);
+  });
+  onTestFinished(() => {
+    update.mockRestore();
+  });
+  return state;
+}
 
 export function useWorktreeServer(name: string, options: { extraConfig?: string } = {}) {
   let server: RunningServer;
@@ -154,14 +198,11 @@ export function useWorktreeServer(name: string, options: { extraConfig?: string 
   }
 
   async function settled(id: string): Promise<Session> {
-    return vi.waitFor(
-      async () => {
-        const session = (await get<Session>(`/sessions/${id}`)).data;
-        expect(session.worktree?.setup.status, `worktree setup of ${id}`).not.toBe('running');
-        return session;
-      },
-      { timeout: 10_000, interval: 25 },
-    );
+    return eventually(async () => {
+      const session = (await get<Session>(`/sessions/${id}`)).data;
+      expect(session.worktree?.setup.status, `worktree setup of ${id}`).not.toBe('running');
+      return session;
+    });
   }
 
   async function settledWorktree(workspaceId: string, worktree?: Record<string, unknown>): Promise<Session> {
@@ -169,14 +210,53 @@ export function useWorktreeServer(name: string, options: { extraConfig?: string 
   }
 
   async function untilStep(id: string, kind: string, state: string): Promise<void> {
-    await vi.waitFor(
-      async () => {
-        const session = (await get<Session>(`/sessions/${id}`)).data;
-        const step = session.worktree?.setup.steps.find((candidate) => candidate.kind === kind);
-        expect(step?.state, `step ${kind} of ${id}`).toBe(state);
-      },
-      { timeout: 10_000, interval: 25 },
-    );
+    await eventually(async () => {
+      const session = (await get<Session>(`/sessions/${id}`)).data;
+      const step = session.worktree?.setup.steps.find((candidate) => candidate.kind === kind);
+      expect(step?.state, `step ${kind} of ${id}`).toBe(state);
+    });
+  }
+
+  async function duringWorktreeSwitch<T>(
+    start: () => Promise<string>,
+    during: (sessionId: string) => Promise<T>,
+  ): Promise<{ sessionId: string; during: Promise<T> }> {
+    const worktreesHome = join(home, 'worktrees');
+    const created = withResolvers<string>();
+    const finished = withResolvers<T>();
+    created.promise.catch(() => undefined);
+    let switching = false;
+    const originalBind = AgentEnvironmentBindingService.prototype.bind;
+    const originalBindProfile = AgentLoopService.prototype.bindProfile;
+    const bind = vi.spyOn(AgentEnvironmentBindingService.prototype, 'bind').mockImplementation(function (
+      this: AgentEnvironmentBindingService,
+      ...args: Parameters<AgentEnvironmentBindingService['bind']>
+    ) {
+      if (args[1]?.startsWith(worktreesHome) === true) switching = true;
+      return originalBind.apply(this, args);
+    });
+    const bindProfile = vi.spyOn(AgentLoopService.prototype, 'bindProfile').mockImplementation(async function (
+      this: AgentLoopService,
+      ...args: Parameters<AgentLoopService['bindProfile']>
+    ) {
+      if (switching) {
+        switching = false;
+        await during(await created.promise).then(finished.resolve, finished.reject);
+      }
+      return originalBindProfile.apply(this, args);
+    });
+    onTestFinished(() => {
+      bind.mockRestore();
+      bindProfile.mockRestore();
+    });
+    try {
+      const sessionId = await start();
+      created.resolve(sessionId);
+      return { sessionId, during: finished.promise };
+    } catch (error) {
+      created.reject(error);
+      throw error;
+    }
   }
 
   async function branchOf(sessionId: string): Promise<string> {
@@ -231,7 +311,7 @@ export function useWorktreeServer(name: string, options: { extraConfig?: string 
 
   function worktreeDirectories(): Promise<string[]> {
     return readdir(join(home, 'worktrees'), { recursive: true }).then(
-      (entries) => entries.filter((entry) => /^[^/]+\/\d{4}-[0-9a-f]{4}(-\d+)?$/.test(entry)),
+      (entries) => entries.filter((entry) => /^[^/\\]+[/\\]\d{4}-[0-9a-f]{4}(-\d+)?$/.test(entry)),
       () => [],
     );
   }
@@ -264,6 +344,7 @@ export function useWorktreeServer(name: string, options: { extraConfig?: string 
     settled,
     settledWorktree,
     untilStep,
+    duringWorktreeSwitch,
     branchOf,
     forceRunning,
     stored,

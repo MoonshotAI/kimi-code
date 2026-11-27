@@ -82,19 +82,15 @@ describe('SessionRow environment indicator', () => {
     expect(icon.nextElementSibling?.classList.contains('ts')).toBe(true);
   });
 
-  it('shows the worktree icon and a spinner while the session is running', () => {
-    mountRow(session({ environment: 'worktree', busy: true }));
+  it.each<[string, Partial<Session>]>([
+    ['the session is running', { environment: 'worktree', busy: true }],
+    ['the worktree is being created', { environment: 'settingUp' }],
+  ])('shows the worktree icon and a spinner while %s', (_label, overrides) => {
+    mountRow(session(overrides));
 
     const icon = host.querySelector<HTMLElement>('.act .wt')!;
+    expect(icon.querySelector('[data-icon="git-fork"]')).not.toBeNull();
     expect(icon.nextElementSibling?.classList.contains('st')).toBe(true);
-    expect(host.querySelector('.st .ui-spinner')).not.toBeNull();
-    expect(host.querySelector('.ts')).toBeNull();
-  });
-
-  it('shows the worktree icon and a spinner while the worktree is being created', () => {
-    mountRow(session({ environment: 'settingUp' }));
-
-    expect(host.querySelector('.act .wt [data-icon="git-fork"]')).not.toBeNull();
     expect(host.querySelector('.st .ui-spinner')).not.toBeNull();
     expect(host.querySelector('.ts')).toBeNull();
   });

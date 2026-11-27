@@ -1425,6 +1425,9 @@ const MIXED_READS: Array<{
   { name: 'session', call: (api, options) => api.getSession('sess/1', options), data: WIRE_SESSION, url: 'http://daemon.test/api/v1/sessions/sess%2F1' },
   { name: 'sessions', call: (api, options) => api.listSessions({ include: 'git', pageSize: 2 }, options), data: EMPTY_SESSIONS_PAGE, url: 'http://daemon.test/api/v1/sessions?page_size=2&include=git' },
   { name: 'session groups', call: (api, options) => api.listSessionGroups({ groupPageSize: 2 }, options), data: EMPTY_SESSIONS_PAGE, url: 'http://daemon.test/api/v1/sessions?view=by_workspace&group_page_size=2' },
+  { name: 'workspace branches', call: (api, options) => api.getWorkspaceGitBranches('ws/1', options), data: { is_repo: true, dirty: false, remotes: [], branches: [] }, url: 'http://daemon.test/api/v1/workspaces/ws%2F1/git/branches' },
+  { name: 'worktrees', call: (api, options) => api.listWorktrees(undefined, options), data: { items: [] }, url: 'http://daemon.test/api/v1/worktrees' },
+  { name: 'worktree sizes', call: (api, options) => api.listWorktrees({ refreshSizes: true }, options), data: { items: [] }, url: 'http://daemon.test/api/v1/worktrees?refresh=sizes' },
 ];
 
 describe('DaemonKimiWebApi background admission', () => {

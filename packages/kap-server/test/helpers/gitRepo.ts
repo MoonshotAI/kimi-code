@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { type AddressInfo, type Server, type Socket, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { afterAll, beforeAll } from 'vitest';
 
 const COMMIT_OPTIONS = [
   '-c',
@@ -54,8 +57,27 @@ export async function createRepoTemplate(files: Readonly<Record<string, string>>
   };
 }
 
-export function hangingRemote(root: string): void {
-  git(root, 'config', 'protocol.ext.allow', 'always');
-  git(root, 'remote', 'add', 'origin', 'ext::sleep 30');
-  git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+export function useHangingRemote(): (root: string) => void {
+  let listener: Server;
+  const sockets = new Set<Socket>();
+
+  beforeAll(async () => {
+    listener = createServer((socket) => {
+      sockets.add(socket);
+      socket.on('error', () => undefined);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));
+  });
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  });
+
+  return (root) => {
+    const { port } = listener.address() as AddressInfo;
+    git(root, 'remote', 'add', 'origin', `git://127.0.0.1:${port}/hanging.git`);
+    git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  };
 }
