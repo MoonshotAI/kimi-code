@@ -120,8 +120,8 @@
 
 ## 实验特性
 
-- 还没公开的功能放在实验开关后面，未配置时一律默认关闭，注册结构不设 `default` 字段；全量转正时直接移除开关（某端先行转正时可在 `stages` 中将该端设为 `'ga'`，不再出现在该端实验列表中，也不受其他端在共享 `config.toml` 里写入的关闭值影响）。
-- 实验开关分 `beta` 与 `experimental` 两档：`KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关；`KIMI_CODE_EXPERIMENTAL_FLAG` 与 `config.toml` 的 `[experimental].beta` 只开启全部 `beta` 功能，不开启 `experimental` 功能。优先级：`beta` 为单项环境变量 > Beta 总开关（`KIMI_CODE_EXPERIMENTAL_FLAG` 或 `[experimental].beta`）> `[experimental].<id>` > `false`；`experimental` 为单项环境变量 > `[experimental].<id>` > `false`。
+- 还没公开的功能放在实验开关后面，未配置时一律默认关闭，注册结构不设 `default` 字段；全量转正时直接移除开关（某端先行转正时可在 `stages` 中将该端设为 `'ga'`，不再出现在该端实验列表中，也不受该档案 `config.toml` 子表里写入的关闭值影响）。
+- 实验开关分 `beta` 与 `experimental` 两档，并在 `config.toml` 中按宿主档案拆为 `[experimental.cli]`（`kimi`、`kimi web`、`kimi rc` 共用）和 `[experimental.desktop]`（桌面端及其 Remote Control Web 共用）两张子表；跨端功能共用单一规范 ID，不拆 `_app` 变体。`KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关（桌面端不从登录 Shell 导入 `KIMI_CODE_EXPERIMENTAL_*`）；`KIMI_CODE_EXPERIMENTAL_FLAG` 与对应子表的 `beta = true` 只开启全部 `beta` 功能，不开启 `experimental` 功能。优先级：`beta` 为单项环境变量 > Beta 总开关（`KIMI_CODE_EXPERIMENTAL_FLAG` 或 `[experimental.<profile>].beta`）> `[experimental.<profile>].<id>` > `false`；`experimental` 为单项环境变量 > `[experimental.<profile>].<id>` > `false`。
   - `packages/agent-core-v2` 和 kap-server 的模块：没有集中的开关目录。在所属领域里用 `registerFlagDefinition` 声明各端 `stages` 与 `effectTiming`，再用 `IFlagService.enabled(id)` 检查。
 
 ## 技能
