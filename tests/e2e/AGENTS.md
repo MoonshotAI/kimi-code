@@ -11,6 +11,7 @@ scenarios/<业务>/<行为>.spec.ts   场景，各个面共用
 scenarios/cache/                   prompt 缓存专题的场景，和登记它们的 catalog.yaml
 self-test/<动作>.spec.ts          驱动自测：每个动作的正例和反例
 surfaces/                          各个面的驱动
+surfaces/acp-*.spec.ts             ACP 驱动里纯函数的单测：不启动产品，只挂在 acp 这个 project 上
 support/                           scenario()、selfTest()、VERBS、收尾检查、步骤标题、CI 运行页摘要
 playwright.config.ts               一个面一个 project，另有两个跑法：tui-kitty、acp-bare
 ```
@@ -147,7 +148,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | TUI 驱动像真终端那样对待同步输出：产品用 `ESC [?2026h` 和 `ESC [?2026l` 包起来的一帧，收齐了才写进虚拟终端。否则伪终端把一帧切成几段送来时，读屏幕会读到只画了一半的帧，例如输入框和排队区还没画出来 | 驱动自测（`queue` 的「同样的文字已经在队列里」反例在读到半帧时会漏判） |
 | 每个驱动实现 `frame()`，返回用户此刻看到的画面：Desktop 和 Web 是主页面的 1 倍截图，TUI 是终端当前的视口文本，ACP 没有界面，是编辑器这一侧本回合收到的内容加上上一帧之后新增的 JSON-RPC 消息。取画面只能用只看不改的手段：截图时不隐藏光标（`caret: 'initial'`），不在页面里执行代码，不往界面里画任何东西，不用会改页面的截图选项（`style`、`mask`、`animations: 'disabled'`） | 评审 |
 | Desktop 和 Web 的驱动按产品的默认设置和英文界面工作。「消息自动折叠」默认是关的，打开之后被折起来的卡片驱动找不到 | 评审 |
-| ACP 上工具的结果不能只看 agent 自己报的状态，还要核对编辑器这一侧：Read 完成，要在这次工具调用期间有一条同一路径、编辑器答复成功的 `fs/read_text_file`；Edit 和 Write 完成，要有同样条件的 `fs/write_text_file`；Bash 完成，它引用的终端必须是编辑器建的、跑的是这条命令、退出码是 0 | ACP 驱动的 `expectTool`。场景和自测只能证明它不误报；真实产品造不出反例，靠改坏驱动的破坏性检查和评审 |
+| ACP 上工具的结果不能只看 agent 自己报的状态，还要核对编辑器这一侧：Read 完成，要在本回合的 `session/prompt` 之后、这次工具调用结束之前，有一条同一路径、编辑器答复成功的 `fs/read_text_file`；Edit 和 Write 完成，要有同样条件的 `fs/write_text_file`；Bash 完成，它引用的终端必须是编辑器建的、跑的是这条命令、退出码是 0。读写的窗口从回合开始算，不从工具卡算：acp-server 拿到回合号之前会扣住工具事件，读写请求却直接发给编辑器，不用审批的工具的读写可能先于它的工具卡到达。代价是同一回合里先后访问同一路径的几个工具分不开，前一个的读写也算后一个的证据 | ACP 驱动的 `expectTool`；窗口怎么取由 `surfaces/acp-evidence.spec.ts` 的单测覆盖。场景和自测只能证明它不误报；真实产品造不出反例，其余靠改坏驱动的破坏性检查和评审 |
 | ACP 的 stdout 上只能有 JSON-RPC 消息，agent 只能调用编辑器实现了的方法，编辑器只往测试目录里写文件，结束时没有还在跑的终端命令，进程在输入关闭后以 0 退出 | ACP 驱动的收尾检查 |
 | ACP 上每条 `session/update` 都要通过 SDK 的 schema | 没通过的通知到不了驱动，回合就永远不算结束：等待超时，报错里写明收到几条、通过几条 |
 | 编辑器的行为照真实编辑器来：命令一退出就报告退出状态，不等它留下的后台进程；`terminal/release` 之后这个终端就不存在了；命令起不来时 `terminal/create` 直接失败 | 评审 |

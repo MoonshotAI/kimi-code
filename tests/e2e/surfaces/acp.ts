@@ -50,6 +50,7 @@ import {
   type ToolExpectation,
   type ToolStatus,
 } from '../support/verbs';
+import { editorServedFile, type WireEvent } from './acp-evidence';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 
@@ -100,6 +101,7 @@ const EDITOR_CAPABILITY_METHODS = [
 interface Turn {
   readonly prompt: string;
   readonly updates: number;
+  readonly timeline: number;
   stopReason: StopReason | undefined;
   rejection: unknown;
   done: boolean;
@@ -133,14 +135,6 @@ interface ToolView {
 }
 
 type Entry = { readonly kind: 'reply'; text: string } | { readonly kind: 'tool'; readonly id: string };
-
-interface WireEvent {
-  readonly tool?: string;
-  readonly settled?: boolean;
-  readonly read?: string;
-  readonly write?: string;
-  readonly request?: JsonRpcId;
-}
 
 function reasonOf(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -419,7 +413,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`send() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
     }
-    const turn: Turn = { prompt: text, updates: this.updates.length, stopReason: undefined, rejection: undefined, done: false };
+    const turn: Turn = { prompt: text, updates: this.updates.length, timeline: this.timeline.length, stopReason: undefined, rejection: undefined, done: false };
     this.turn = turn;
     this.restored = false;
     this.prompts.push(text);
@@ -1051,13 +1045,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (expectation.name === 'Bash') return this.missingTerminalEvidence(tool, expectation);
     if (expectation.status !== 'done') return undefined;
     const path = normalize(join(this.home.workspace, expectation.target));
-    const first = this.timeline.findIndex((event) => event.tool === tool.id);
-    const last = this.timeline.findLastIndex((event) => event.tool === tool.id && event.settled === true);
-    const during = this.timeline.slice(first, last + 1).filter((event) => event.request !== undefined && this.served.has(event.request));
-    if (expectation.name === 'Read') {
-      return during.some((event) => event.read === path) ? undefined : 'the agent did not get the file from the editor with fs/read_text_file while that tool ran';
-    }
-    return during.some((event) => event.write === path) ? undefined : 'the agent did not send the file to the editor with fs/write_text_file while that tool ran';
+    const access = expectation.name === 'Read' ? 'read' : 'write';
+    const turnStart = this.turn?.timeline ?? this.timeline.length;
+    if (editorServedFile({ timeline: this.timeline, served: this.served, turnStart, tool: tool.id, access, path })) return undefined;
+    return access === 'read'
+      ? 'the agent did not get the file from the editor with fs/read_text_file in this turn before that tool finished'
+      : 'the agent did not send the file to the editor with fs/write_text_file in this turn before that tool finished';
   }
 
   private missingTerminalEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
