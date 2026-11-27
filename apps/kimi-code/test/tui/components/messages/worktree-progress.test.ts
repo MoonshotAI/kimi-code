@@ -145,6 +145,37 @@ describe('WorktreeProgressComponent', () => {
     expect(rendered({ phase: 'cancelled', sourceDir: '/home/me/code/repo' })).toBe(
       ['', '● Cancelled. Staying in ~/code/repo.'].join('\n'),
     );
+    expect(
+      rendered({
+        phase: 'moved',
+        name: 'fix-login',
+        sourceDir: '/home/me/code/repo',
+        sourceDirty: true,
+        missingSubdir: 'packages/foo',
+      }),
+    ).toBe(
+      [
+        '',
+        '✓ Moved session to worktree fix-login',
+        '  Uncommitted changes in ~/code/repo stay there.',
+        "  packages/foo doesn't exist at this commit, so the session continues at the worktree root.",
+      ].join('\n'),
+    );
+    expect(
+      rendered({
+        phase: 'move_failed',
+        name: 'fix-login',
+        sourceDir: '/home/me/code/repo',
+        reason: 'Session busy.',
+      }),
+    ).toBe(
+      [
+        '',
+        "✗ Created worktree fix-login, couldn't move session",
+        '  Session busy.',
+        '  Session stays in ~/code/repo. Run /worktree to open fix-login.',
+      ].join('\n'),
+    );
   });
 
   it('keeps every line within a narrow width', () => {

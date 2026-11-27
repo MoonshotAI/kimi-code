@@ -27,7 +27,6 @@ export * from './useTurnFolding';
 export * from './usePasteImageAutoMention';
 export * from './useRunningSendMode';
 export * from './useActivityRunFolding';
-export * from './useAutoReviewHint';
 export * from './useTranscriptScroll';
 export * from './usePanelScroll';
 export * from './useWorkspaceTrust';

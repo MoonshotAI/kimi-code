@@ -141,7 +141,7 @@ describe('AgentTitlePromptSource', () => {
     ]);
   });
 
-  it('returns no title prompts when history contains only slash activations', async () => {
+  it('uses slash skill labels without exposing expanded instructions, and skips plugin or model activations', async () => {
     liveMessages = [
       userMessage('skill', 'expanded skill instructions', {
         kind: 'skill_activation',
@@ -156,9 +156,94 @@ describe('AgentTitlePromptSource', () => {
         commandName: 'run',
         trigger: 'user-slash',
       }),
+      userMessage('model-skill', 'model loaded skill instructions', {
+        kind: 'skill_activation',
+        activationId: 'skill-2',
+        skillName: 'internal',
+        trigger: 'model-tool',
+      }),
     ];
 
-    await expect(ix.get(IAgentTitlePromptSource).firstUserPrompts(3)).resolves.toEqual([]);
+    await expect(ix.get(IAgentTitlePromptSource).firstUserPrompts(3)).resolves.toEqual(['/compact']);
+  });
+
+  it('pairs a user-slash skill opener with its assistant reply for first turn and digest', async () => {
+    liveMessages = [
+      userMessage('skill-1', 'User activated the skill "review".\n\n<skill-loaded>hidden body</skill-loaded>', {
+        kind: 'skill_activation',
+        activationId: 'act-1',
+        skillName: 'review',
+        skillArgs: 'src/app.ts',
+        trigger: 'user-slash',
+      }),
+      assistantMessage('a1', [{ type: 'text', text: 'Reviewed src/app.ts and found two issues.' }]),
+      userMessage('u2', 'Fix the first one'),
+      assistantMessage('a2', [{ type: 'text', text: 'Fixed.' }]),
+    ];
+    const source = ix.get(IAgentTitlePromptSource);
+
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({
+      user: '/review src/app.ts',
+      assistant: 'Reviewed src/app.ts and found two issues.',
+    });
+    await expect(source.digestExcerpt()).resolves.toEqual({
+      turns: [
+        { user: '/review src/app.ts', assistant: 'Reviewed src/app.ts and found two issues.' },
+        { user: 'Fix the first one', assistant: 'Fixed.' },
+      ],
+    });
+  });
+
+  it('prefers client display text for a user-slash skill opener and falls back when empty', async () => {
+    liveMessages = [
+      userMessage('skill-1', 'expanded skill body', {
+        kind: 'skill_activation',
+        activationId: 'act-1',
+        skillName: 'review',
+        skillArgs: 'src',
+        trigger: 'user-slash',
+        clientMetadata: [{ display_text: 'Review the Save button' }],
+      }),
+      assistantMessage('a1', [{ type: 'text', text: 'Done' }]),
+    ];
+    const source = ix.get(IAgentTitlePromptSource);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({
+      user: 'Review the Save button',
+      assistant: 'Done',
+    });
+
+    liveMessages = [
+      userMessage('skill-2', 'expanded skill body', {
+        kind: 'skill_activation',
+        activationId: 'act-2',
+        skillName: 'review',
+        trigger: 'user-slash',
+        clientMetadata: [{ display_text: '' }],
+      }),
+    ];
+    await expect(source.firstUserPrompts(3)).resolves.toEqual(['/review']);
+  });
+
+  it('falls back to bundled skill labels when a bundled prompt has no remaining text', async () => {
+    liveMessages = [
+      userMessage('bundled', '   ', {
+        kind: 'user',
+        skillActivations: [
+          { activationId: 'act-1', skillName: 'review', skillArgs: 'src' },
+          { activationId: 'act-2', skillName: 'security' },
+        ],
+      }),
+      assistantMessage('a1', [{ type: 'text', text: 'Checked.' }]),
+    ];
+    const source = ix.get(IAgentTitlePromptSource);
+    await expect(source.firstUserPrompts(3)).resolves.toEqual(['/review src /security']);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({
+      user: '/review src /security',
+      assistant: 'Checked.',
+    });
+    await expect(source.digestExcerpt()).resolves.toEqual({
+      turns: [{ user: '/review src /security', assistant: 'Checked.' }],
+    });
   });
 
   it('counts a queued prompt already appended to the context only once', async () => {

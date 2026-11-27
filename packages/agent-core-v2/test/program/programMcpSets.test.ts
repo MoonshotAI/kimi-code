@@ -6,7 +6,6 @@ import { basename, join, normalize, relative } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
@@ -23,10 +22,8 @@ import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { ProgramDependencies } from '#/program/programDependencies';
 import type { ProgramMcpLease } from '#/program/programMcp';
 import { ProgramMcpSets } from '#/program/programMcpSets';
-import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
-import type { SessionWillCreateEvent } from '#/project/sessionLifecycle/sessionLifecycle';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IProjectContext } from '#/project/projectContext/projectContext';
 import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
 import type { ProjectTrustChange } from '#/project/projectTrust/projectTrust';
@@ -77,9 +74,10 @@ describe('ProgramMcpSets', () => {
   let pluginServers: Record<string, McpServerConfig>;
   let pluginReloads: AsyncEmitter<PluginReloadEvent>;
   let storeWrites: AsyncEmitter<McpConfigWriteEvent>;
-  let willCreateSession: Emitter<SessionWillCreateEvent>;
   let oauth: McpOAuthService;
   let created: ProgramMcpSets[];
+  let sessions: SessionMcpService[];
+  let environmentServices: IEnvironmentService;
   let spawn: MockInstance<HostProcessService['spawn']>;
 
   beforeEach(() => {
@@ -95,13 +93,14 @@ describe('ProgramMcpSets', () => {
     pluginServers = {};
     pluginReloads = disposables.add(new AsyncEmitter<PluginReloadEvent>());
     storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
-    willCreateSession = disposables.add(new Emitter<SessionWillCreateEvent>());
     oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     created = [];
+    sessions = [];
     spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
   });
 
   afterEach(async () => {
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
     await Promise.all(created.map((sets) => sets.dispose()));
     await oauth.dispose();
     vi.restoreAllMocks();
@@ -136,6 +135,12 @@ describe('ProgramMcpSets', () => {
       { process: new HostProcessService() },
     );
     const lease = { environment, track: <T,>(resource: T): T => resource, dispose: () => {} };
+    environmentServices = {
+      _serviceBrand: undefined,
+      inspect: () => environment,
+      acquire: () => lease,
+      acquireWhenReady: async () => lease,
+    } as unknown as IEnvironmentService;
     const dependencies = {
       bootstrap: { homeDir },
       config: { ready: Promise.resolve(), onDidSectionChange: Event.None, get: () => undefined },
@@ -149,7 +154,7 @@ describe('ProgramMcpSets', () => {
           Object.entries(pluginServers).map(([name, config]) => ({ name, config, pluginId: 'plugin', serverName: name })),
         onDidReload: pluginReloads.event,
       },
-      sessionManager: { current: { onWillCreateSession: willCreateSession.event }, onDidChange: Event.None },
+      sessionManager: { current: undefined, onDidChange: Event.None },
       telemetry: noopTelemetryService,
       workspaces: {
         projectDirAt: ({ root }: { readonly root: string }, dir: string) =>
@@ -189,8 +194,29 @@ describe('ProgramMcpSets', () => {
   }
 
   async function settled(lease: ProgramMcpLease): Promise<McpConnectionView> {
-    await lease.service.ready;
-    return lease.service.connectionManager();
+    const sessionId = `settled-${sessions.length}`;
+    const session = new SessionMcpService(
+      makeSessionContext({ sessionId, workspaceId: 'workspace', sessionDir: checkout, sessionScope: 'ws', cwd: checkout }),
+      {},
+      lease.service.sources(),
+      [],
+      { ready: Promise.resolve(), get: () => undefined } as never,
+      oauth,
+      environmentServices,
+      stubAgentIdentity(),
+      stubLog(),
+    );
+    sessions.push(session);
+    const disposeLease = lease.dispose;
+    let released = false;
+    lease.dispose = () => {
+      if (released) return;
+      released = true;
+      void session.disposeAsync();
+      disposeLease();
+    };
+    await session.ready;
+    return session.connectionManager;
   }
 
   function startedTags(): string[] {
@@ -590,7 +616,8 @@ describe('ProgramMcpSets', () => {
     try {
       await writeMcpJson(userFile(), { remote: { transport: 'http', url: remote.url } });
       const sets = createSets();
-      const views = [await settled(await sets.acquire()), await settled(await sets.acquire(worktree))];
+      const leases = [await sets.acquire(), await sets.acquire(worktree)];
+      const views = await Promise.all(leases.map(settled));
       expect(views.map((view) => view.get('remote')?.status)).toEqual(['needs-auth', 'needs-auth']);
       const reconnect = vi.spyOn(McpConnectionManager.prototype, 'reconnectAndJoin').mockResolvedValue(undefined);
 
@@ -599,7 +626,11 @@ describe('ProgramMcpSets', () => {
       await vi.waitFor(() => {
         expect(reconnect.mock.calls).toEqual([['remote'], ['remote']]);
       });
-      expect(new Set(reconnect.mock.contexts)).toEqual(new Set(views));
+      expect(new Set(reconnect.mock.contexts)).toEqual(
+        new Set(
+          leases.map((lease) => lease.service.sources().find((source) => source.id === 'user')?.view),
+        ),
+      );
     } finally {
       await remote.close();
     }
@@ -637,6 +668,7 @@ describe('ProgramMcpSets', () => {
     const view = await settled(lease);
     expect(names(view)).toEqual(['remote']);
 
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
     lease.dispose();
     await sets.dispose();
 
@@ -672,26 +704,34 @@ describe('ProgramMcpSets', () => {
     const sets = createSets();
     const openSession = async (cwd: string, pinned?: string) => {
       const lease = await sets.acquire(pinned);
-      const seeds = new Map<unknown, unknown>([
-        [ISessionMcpHandle, lease.service.sessionHandle()],
-        [ISessionEphemeralMcpServers, { eph: stdioServer('eph', { environment_id: 'local' }) }],
-        [ISessionContext, makeSessionContext({ sessionId: cwd, workspaceId: 'wd', sessionDir: cwd, sessionScope: cwd, cwd })],
-      ]);
-      const disposers: Array<() => void> = [];
-      willCreateSession.fire({
-        sessionId: cwd,
-        onDidCreateScope: Event.None as SessionWillCreateEvent['onDidCreateScope'],
-        readSeed: <T>(id: ServiceIdentifier<T>): T => seeds.get(id) as T,
-        contributeSeed: (id, value) => {
-          seeds.set(id, value);
+      const environment = Object.assign(
+        new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'] }),
+        { process: new HostProcessService() },
+      );
+      const envLease = { environment, track: <T,>(resource: T): T => resource, dispose: () => {} };
+      const service = new SessionMcpService(
+        makeSessionContext({ sessionId: cwd, workspaceId: 'wd', sessionDir: cwd, sessionScope: cwd, cwd }),
+        { eph: stdioServer('eph', { environment_id: 'local' }) },
+        lease.service.sources(),
+        [],
+        { ready: Promise.resolve(), get: () => undefined } as never,
+        oauth,
+        {
+          inspect: () => environment,
+          acquire: () => envLease,
+          acquireWhenReady: async () => envLease,
+        } as unknown as IEnvironmentService,
+        stubAgentIdentity(),
+        stubLog(),
+      );
+      await service.ready;
+      return {
+        view: service.connectionManager,
+        close: () => {
+          service.dispose();
+          lease.dispose();
         },
-        onSessionDispose: (dispose) => {
-          disposers.push(dispose);
-        },
-      });
-      const handle = seeds.get(ISessionMcpHandle) as ISessionMcpHandle;
-      await handle.ready;
-      return { view: handle.connectionManager, close: () => { for (const dispose of disposers) dispose(); } };
+      };
     };
 
     const atPrimary = await openSession(checkout);

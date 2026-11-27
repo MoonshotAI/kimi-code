@@ -1,8 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { ContextAppendMessage, ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
@@ -46,22 +44,5 @@ export const swarmKey = defineState('swarm', (): SwarmModeTrigger | null => null
   .on(SwarmModeExit, (_s, e, ctx) => {
     ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, swarmMode: false }));
     return null;
-  });
-
-function isActiveSwarmReminder(message: ContextMessage): boolean {
-  const origin = message.origin;
-  if (origin?.kind !== 'injection' || origin.variant !== 'swarm_mode') return false;
-  const disclosure = origin.disclosure as { readonly state?: string } | undefined;
-  return disclosure?.state !== 'inactive';
-}
-
-export const swarmReminderDeliveredKey = defineState('swarmReminderDelivered', () => false)
-  .replayable({ schema: z.boolean() })
-  .on(SwarmModeEnter, (s, e) => e.trigger === 'tool' ? s : false)
-  .on(SwarmModeExit, () => false)
-  .on(ContextAppendMessage, (s, e) => isActiveSwarmReminder(e.message) || s)
-  .on(ContextSpliced, (s, e) => {
-    if (e.deleteCount !== 0) return s;
-    return e.messages.some(isActiveSwarmReminder) || s;
   });
 

@@ -378,9 +378,6 @@ function removalError(path: string, error: unknown): WorktreeError {
   if (error.code === ErrorCodes.WORKTREE_NOT_FOUND) {
     return new WorktreeError(ErrorCode.WORKTREE_NOT_FOUND, error.message);
   }
-  if (error.code === ErrorCodes.WORKTREE_DISABLED) {
-    return new WorktreeError(ErrorCode.WORKTREE_UNSUPPORTED, error.message);
-  }
   const stderr = error.details?.['stderr'];
   const output = typeof stderr === 'string' && stderr.length > 0 ? stderr : error.message;
   return removeFailed(path, IN_USE_OUTPUT.test(output) ? 'in_use' : 'unknown', output);

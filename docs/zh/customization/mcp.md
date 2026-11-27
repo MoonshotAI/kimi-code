@@ -25,7 +25,9 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 - **用户级**：`~/.kimi-code/mcp.json`（或 `$KIMI_CODE_HOME/mcp.json`），跨项目共享
 - **项目级**：项目根目录下的 `.kimi-code/mcp.json`，只对当前仓库生效。在 Git 仓库的子目录里启动时，读的也是仓库根目录下的这个文件，每个 worktree 读它自己的
 
-同名条目以项目级为准，覆盖用户级。
+同名条目以项目级为准，覆盖用户级。不含 `transport` 的项目级条目只能设置 `enabled`、`deferred`、`enabledTools` 或 `disabledTools`，用于在不重复填写连接配置的情况下调整或禁用用户级的同名 server；例如写入 `{ "enabled": false }` 即可在当前项目中禁用该 server。这类局部条目如果带有 `command`、`url`、`env`、`headers` 等连接或凭证字段，会被判定为非法配置并报错。
+
+被禁用的 server，以及被更高优先级同名条目覆盖的低优先级 server，都不会拉起子进程或建立连接。同一项目下的多个会话会共享底层 MCP 连接，直到最后一个仍在使用该连接的会话退出时才真正关闭。
 
 在 TUI 中运行 `/mcp-config` 可以交互式地新增、编辑或删除 server，无需手动编辑 JSON 文件。运行 `/mcp` 可查看当前所有 server 的连接状态。
 
@@ -75,7 +77,7 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 
 连接超时和单次工具调用超时的默认值都不必逐个 server 设置：`config.toml` 的 `[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms` 或环境变量 `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` 可以调整全局默认值，优先级为 server 字段 > 环境变量 > `config.toml` > 内置默认。详见 [配置文件](../configuration/config-files.md#mcp)。
 
-会话初始化时最多等待 `[mcp] startup_wait_ms`（默认 `2000` 毫秒，可在 `config.toml` 中配置或用环境变量 `KIMI_MCP_STARTUP_WAIT_MS` 覆盖，`0` 表示不等待）首轮 MCP 工具发现，到点即带着已就绪的工具开始对话。仍在启动中的 server 会在后台继续连接，直到各自的 `startupTimeoutMs`（默认 30 秒）才判定超时，不会在 2 秒时被提前终止；因此启动超过 2 秒的 stdio server 仍能正常连上，其工具会在后续模型步骤中可用。
+会话初始化时最多等待 `[mcp] startup_wait_ms`（默认 `2000` 毫秒，可在 `config.toml` 中配置或用环境变量 `KIMI_MCP_STARTUP_WAIT_MS` 覆盖，`0` 表示不等待）首轮 MCP 工具发现，到点即以当时已就绪的工具冻结本会话的工具基线并开始对话。仍在启动中的 server 会在后台继续连接，直到各自的 `startupTimeoutMs`（默认 30 秒）才判定超时，不会在 2 秒时被提前终止。慢 server 连上后，其工具会通过提醒告知模型：支持动态加载的模型可在后续步骤中按需加载并调用；不支持动态加载的模型在当前会话的顶层工具列表中不会包含这些工具，如需在首个请求就使用慢 server 的工具，请调大 `[mcp] startup_wait_ms`。
 
 HTTP/SSE server 启动时连不上，以及任意 server 在已建立连接后意外断连时，会自动按指数退避（每次尝试后等待时间翻倍）重连：首次重试等待 `[mcp] reconnect_initial_delay_ms`（默认 `5000`），等待上限为 `[mcp] reconnect_max_delay_ms`（默认 `300000`），可在 `config.toml` 或环境变量 `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` / `KIMI_MCP_RECONNECT_MAX_DELAY_MS` 调整。stdio server 首次启动失败（含启动超时）会保持 `failed`，不做后台自动重试，因为每次尝试都会重新拉起一个全新的子进程；排除故障后可在 `/mcp` 中手动重连。命令不存在、配置非法、静态凭据被拒绝等永久性失败同样不会自动重试。
 
@@ -135,7 +137,7 @@ defaultCwd = "/srv/work"
 
 ## 按需加载工具
 
-默认情况下，所有 MCP server 的工具都按 deferred（按需加载）处理：在支持动态加载的模型上，工具名称先通过公告披露，模型按需加载后才进入顶层工具列表，避免大量工具定义持续占用上下文。支持动态加载时，ToolSelect Resolver 会从解析后的顶层工具列表中移除 deferred 项，将 baseline 中的 deferred 名称转换为初始 reminder，后续新增和移除（包括会话启动后才连接完成的 server 所发现的工具）通过 delta 公告。内置的 `select_tools` 再把选中的 schema 加载到 system message。不支持动态加载的模型不区分 deferred 与 inline，会将当前已连接的所有 MCP 工具按普通顶层声明发送（启动后才发现的工具会在后续请求中一并带上）。最终编码器自身不会仅凭这个标记删除工具；重复声明优先保留顶层列表。
+默认情况下，所有 MCP server 的工具都按 deferred（按需加载）处理：在支持动态加载的模型上，工具名称先通过公告披露，模型按需加载后才进入顶层工具列表，避免大量工具定义持续占用上下文。支持动态加载时，ToolSelect Resolver 会从解析后的顶层工具列表中移除 deferred 项，将 baseline 中的 deferred 名称转换为初始 reminder，后续新增和移除（包括会话启动后才连接完成的 server 所发现的工具）通过 delta 公告。内置的 `select_tools` 再把选中的 schema 加载到 system message。不支持动态加载的模型不区分基线内工具的 deferred 与 inline，会将冻结基线中的 MCP 工具按普通顶层声明发送。基线冻结之后发现的工具（无论是超过 `startup_wait_ms` 才连上的 server，还是已连接 server 发出的 `tools/list_changed` 通知）只通过提醒告知模型，不会加入顶层工具列表，以免提示词缓存前缀失效；如需在这类模型上直接调用这些工具，请新开会话或调大 `[mcp] startup_wait_ms`。最终编码器自身不会仅凭这个标记删除工具；重复声明优先保留顶层列表。
 
 如果同名 deferred 工具的 schema 发生更新，会话会在同一条公告中声明移除旧版本并加入新版本。模型必须再次调用 `select_tools` 加载当前 schema，然后才能调用该工具；重新加载前的调用会被拒绝，并提示重新选择。对于 Kimi Chat Completions，供应商会按旧声明、卸载消息、新声明的顺序发送请求，避免后端因无法解析的同名重复声明而拒绝请求。同名 inline 工具的更新仍在当前会话中固定使用原 schema，不进入上述重新加载流程。
 

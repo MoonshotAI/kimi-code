@@ -56,12 +56,6 @@ export class OptionConflictError extends Error {
   }
 }
 
-export function worktreeFlagOffError(): OptionConflictError {
-  return new OptionConflictError(
-    '-w/--worktree is experimental. Turn it on with KIMI_CODE_EXPERIMENTAL_WORKTREE=1, with worktree = true under [experimental] in config.toml, or from /experiments.',
-  );
-}
-
 export function validateOptions(
   opts: CLIOptions,
   env: Readonly<Record<string, string | undefined>> = process.env,

@@ -451,13 +451,7 @@ interface WireInteractionBase<K extends string, Req, Res> {
 export type WireInteraction =
   | WireInteractionBase<
       'approval',
-      {
-        tool_name: string;
-        action: string;
-        tool_input_display?: unknown;
-        approval_detail?: { outcome: 'denied' | 'failed'; risk?: 'low' | 'medium' | 'high'; reason: string };
-        expires_at: string;
-      },
+      { tool_name: string; action: string; tool_input_display?: unknown; expires_at: string },
       WireApprovalResponse
     >
   | WireInteractionBase<

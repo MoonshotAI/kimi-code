@@ -548,12 +548,6 @@ export interface ApprovalResponse {
   selectedLabel?: string;
 }
 
-export interface ApprovalReviewDetail {
-  outcome: 'denied' | 'failed';
-  risk?: 'low' | 'medium' | 'high';
-  reason: string;
-}
-
 export interface AppApprovalRequest {
   approvalId: string;
   sessionId: string;
@@ -563,7 +557,6 @@ export interface AppApprovalRequest {
   toolName: string;
   action: string;
   display: unknown;
-  approvalDetail?: ApprovalReviewDetail;
 }
 
 export interface QuestionOption {

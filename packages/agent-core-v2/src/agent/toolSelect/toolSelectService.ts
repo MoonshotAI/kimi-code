@@ -148,6 +148,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     base: readonly Tool[] | undefined,
     disclosure = this.enabled(),
   ): readonly Tool[] {
+    // Non-negotiable product decision: top-level tools come only from shaping the frozen loop
+    // baseline, never from the live registry. Tools outside the baseline (late-connected MCP
+    // servers or mid-session list_changed additions) are announced in reminders only: models
+    // with dynamically_loaded_tools load them via select_tools; other models cannot call them
+    // in this session. Appending them would invalidate the provider prompt cache prefix.
     const tools = base ?? [];
     let shaped: Tool[] | undefined;
     for (let index = 0; index < tools.length; index += 1) {
@@ -168,31 +173,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       }
       shaped?.push(tool);
     }
-    const result = shaped ?? tools;
-    if (disclosure) return result;
-    const baseline = this.profile.baselineTools();
-    if (
-      baseline.length !== tools.length ||
-      baseline.some((tool, index) => tool.name !== tools[index]?.name)
-    ) {
-      return result;
-    }
-    const present = new Set(result.map((tool) => tool.name));
-    const lateMcp = this.currentTools().filter(
-      (info) =>
-        info.source === 'mcp' &&
-        !present.has(info.name) &&
-        this.toolPolicy.isToolActive(info.name, info.source),
-    );
-    if (lateMcp.length === 0) return result;
-    return [
-      ...result,
-      ...lateMcp.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      })),
-    ];
+    return shaped ?? tools;
   }
 
   shapeTools(

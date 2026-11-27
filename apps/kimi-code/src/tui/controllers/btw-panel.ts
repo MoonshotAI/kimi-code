@@ -62,6 +62,10 @@ export class BtwPanelController {
       markdownTheme: createMarkdownTheme(),
       canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
       terminalRows: () => this.host.state.terminal.rows,
+      fullscreen: this.host.state.dockContainer !== undefined,
+      onClose: () => {
+        this.closeOrCancel();
+      },
       onPrompt: (prompt, inlineSkillActivations) => {
         this.promptAgent(agentId, prompt, panel, inlineSkillActivations);
       },

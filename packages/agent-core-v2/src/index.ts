@@ -467,6 +467,8 @@ export * from '#/session/agentLifecycle/getOrRestoreAgent';
 export * from '#/session/agentLifecycle/forked';
 export * from '#/session/agentLifecycle/mainAgent';
 export * from '#/session/mcp/sessionMcpHandle';
+export * from '#/session/mcp/mcpSource';
+export * from '#/session/mcp/sessionMcpService';
 import '#/app/mcpConfig/configSection';
 export {
   MCP_SECTION,
@@ -523,7 +525,6 @@ export * from '#/session/sessionContext/sessionContext';
 
 export * from '#/agent/interaction/question';
 export {
-  formatApprovalReviewTitle,
   type ApprovalDecision,
   type ApprovalRequest as SessionApprovalRequest,
   type ApprovalResponse as SessionApprovalResponse,
@@ -549,7 +550,6 @@ export * from '#/app/projectSessions/projectSessions';
 import '#/app/projectSessions/projectSessionsService';
 import '#/app/git/gitService';
 export * from '#/app/worktree/worktree';
-export * from '#/app/worktree/flag';
 import '#/app/worktree/worktreeService';
 export * from '#/app/sessionAdmission/sessionAdmission';
 import '#/app/sessionAdmission/sessionAdmissionService';
@@ -675,6 +675,10 @@ export * from '#/agent/plugin/agentPluginService';
 export * from '#/agent/changeNotifier/changeNotifier';
 export * from '#/agent/changeNotifier/changeNotifierOps';
 export * from '#/agent/changeNotifier/changeNotifierService';
+export * from '#/agent/workdirMove/workdirMove';
+export * from '#/agent/workdirMove/workdirMoveOps';
+export * from '#/agent/workdirMove/workdirMoveReminder';
+export * from '#/agent/workdirMove/workdirMoveService';
 export * from '#/agent/fullCompaction/strategy';
 export * from '#/agent/fullCompaction/fullCompaction';
 export * from '#/agent/fullCompaction/fullCompactionService';
@@ -698,6 +702,7 @@ export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';
 export * from '#/agent/mcp/mcpFailureOps';
 export * from '#/mcpCore/config-schema';
+export * from '#/mcpCore/config-override';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
@@ -758,9 +763,6 @@ export * from '#/features/todo/todoListReminder';
 export * from '#/features/todo/todoService';
 export * from '#/features/todo/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
-export * from '#/features/autoReview/flag';
-export * from '#/features/autoReview/autoReviewEvents';
-import '#/features/autoReview/autoReviewFeature';
 export * from '#/features/notify/flag';
 export * from '#/features/notify/notifyUserAvailability';
 export * from '#/features/notify/tools/notify-user/notify-user';

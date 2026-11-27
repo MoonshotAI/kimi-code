@@ -14,7 +14,6 @@ import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { buildPromptContent, buildPromptMetadata } from '../src/lib/browserReferenceSubmission';
 import { createWorkspaceRig, type WorkspaceRig } from '../src/testing/workspaceRig';
 import { appSession, sessionWorktree as worktree } from '../src/testing/worktreeFixtures';
-import { configStore } from '../src/stores/config';
 import { modelsStore } from '../src/stores/models';
 import { modeStore } from '../src/stores/mode';
 import { useNewSessionEnvironment } from '../src/composables/useNewSessionEnvironment';
@@ -206,7 +205,6 @@ async function createRig(options: { worktree?: boolean } = {}) {
 describe('worktree first-prompt hold', () => {
   beforeEach(() => {
     resetStores();
-    configStore().experimentalFlags = { worktree: true };
     modelsStore().setModels([{ id: 'kimi-k3', provider: 'managed:kimi-code', model: 'kimi-k3', maxContextSize: 0 }]);
     modelsStore().setDraftModel(null);
     modelsStore().setDefaultModel(null);

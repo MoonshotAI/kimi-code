@@ -6,7 +6,7 @@ import { IconResolverKey, type ToastOptions } from '@moonshot-ai/app-ui';
 import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { onToast, resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { registerWorktreeSettingsOpener, useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
-import { configStore, workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores';
+import { workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores';
 import { memoryStorage } from '@moonshot-ai/app-client/testing';
 import CreateEnvironmentPicker from '../src/worktree/CreateEnvironmentPicker.vue';
 import CreateSourceBranchPicker from '../src/worktree/CreateSourceBranchPicker.vue';
@@ -86,7 +86,6 @@ beforeEach(() => {
   api.getWorkspaceGitBranches.mockResolvedValue(repo);
   api.listWorktrees.mockResolvedValue({ items: [], totalSizeBytes: 0 });
   setKimiClientDeps({ api: () => api as never, t: (key, params) => i18n.global.t(key, params ?? {}) });
-  configStore().experimentalFlags = { worktree: true };
   workspacesStore().workspaces = [workspace('ws1'), workspace('ws2'), workspace('remote', { hostId: 'h1' })];
   useNewSessionEnvironment().reset();
   worktreesStore().reset();

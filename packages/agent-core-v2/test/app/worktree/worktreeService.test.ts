@@ -26,7 +26,6 @@ import { encodeWorkDirKey, toAbsoluteDir } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEnvironmentService } from '#/app/environment/environment';
 import { ILogService } from '#/_base/log/log';
-import { IFlagService } from '#/app/flag/flag';
 import { locateCheckout } from '#/app/git/workTree';
 import { IProjectService } from '#/app/project/project';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
@@ -46,8 +45,6 @@ import type { Environment } from '#/environment/environment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-
-import { stubFlag } from '../flag/stubs';
 
 const isWindows = process.platform === 'win32';
 
@@ -142,7 +139,6 @@ describe('WorktreeService', () => {
   let home: string;
   let repo: string;
   let realRepo: string;
-  let flagEnabled: boolean;
   let disposables: DisposableStore;
   let service: IWorktreeService;
   let presence: ISessionPresence;
@@ -156,7 +152,6 @@ describe('WorktreeService', () => {
     initRepo(repo);
     commitFile(repo, 'README.md', 'hello\n');
     realRepo = realpathSync(repo);
-    flagEnabled = true;
     indexed = [];
     peekImplicitError = undefined;
 
@@ -190,7 +185,6 @@ describe('WorktreeService', () => {
         reg.definePartialInstance(ISessionIndex, { listRecent: async () => ({ items: indexed }) });
         reg.definePartialInstance(ILogService, { warn: () => {} });
         reg.define(ISessionPresence, SessionPresenceService);
-        reg.defineInstance(IFlagService, stubFlag((id) => id === 'worktree' && flagEnabled));
         reg.define(IWorktreeService, WorktreeService);
       },
     });
@@ -318,13 +312,6 @@ describe('WorktreeService', () => {
       expect(error.code).toBe('worktree.invalid_name');
       expect(error.details?.['reason']).toBe('slash');
       expect(existsSync(join(home, 'worktrees'))).toBe(false);
-    });
-
-    it('is refused while the flag is off', async () => {
-      flagEnabled = false;
-      const error = await failure(create({ name: 'off' }));
-      expect(error.code).toBe('worktree.disabled');
-      expect(error.message).toContain('KIMI_CODE_EXPERIMENTAL_WORKTREE');
     });
 
     describe('refuses sources without a usable repository', () => {
@@ -832,19 +819,12 @@ describe('WorktreeService', () => {
       });
     });
 
-    it('omits worktree metadata outside Kimi worktrees or while the flag is off', async () => {
-      const created = await create({ name: 'flagged' });
+    it('omits worktree metadata outside Kimi worktrees', async () => {
       const plain = join(root, 'plain');
       mkdirSync(plain);
 
       expect(await service.locate(repo)).toEqual({ cwd: repo, projectRoot: realRepo, isGitRepo: true });
       expect(await service.locate(plain)).toEqual({ cwd: plain, projectRoot: plain, isGitRepo: false });
-      flagEnabled = false;
-      expect(await service.locate(created.worktree.path)).toEqual({
-        cwd: created.worktree.path,
-        projectRoot: realRepo,
-        isGitRepo: true,
-      });
     });
 
     it('propagates project catalog lookup failures instead of falling back to cwd', async () => {
@@ -979,15 +959,6 @@ describe('WorktreeService', () => {
 
       await service.remove(removal(wt, { discard: { uncommittedFiles: expectedCount, uniqueCommits: 0 } }));
       expect(existsSync(wt)).toBe(false);
-    });
-
-    it('refuses removal while the worktree flag is off', async () => {
-      const created = await create({ name: 'flag-off-remove' });
-      flagEnabled = false;
-
-      const error = await failure(service.remove(removal(created.worktree.path)));
-      expect(error.code).toBe('worktree.disabled');
-      expect(existsSync(created.worktree.path)).toBe(true);
     });
 
     it('rejects non-finite or negative discard thresholds instead of bypassing removal guards', async () => {
@@ -1432,17 +1403,15 @@ describe('WorktreeService', () => {
       own.dispose();
     });
 
-    it('persists presence markers even when the worktree flag is off so another flag-enabled client sees the open session', async () => {
-      const created = await create({ name: 'flag-off-open' });
+    it('persists presence markers on disk so inspectRemoval and remove see the open session', async () => {
+      const created = await create({ name: 'open-marker' });
       const wt = created.worktree.path;
       const sessionDir = indexSession('early', wt);
       const markers = join(sessionDir, SESSION_PRESENCE_DIR);
 
-      flagEnabled = false;
       const open = presence.markOpen(sessionDir);
       expect(readdirSync(markers)).toHaveLength(1);
 
-      flagEnabled = true;
       expect(await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false })).toMatchObject({
         openSessionIds: ['early'],
         closedSessionCount: 0,
@@ -1482,7 +1451,6 @@ describe('WorktreeService', () => {
           reg.definePartialInstance(ISessionIndex, { listRecent: async () => ({ items: [] }) });
           reg.definePartialInstance(ILogService, { warn: () => {} });
           reg.define(ISessionPresence, SessionPresenceService);
-          reg.defineInstance(IFlagService, stubFlag(true));
           reg.define(IWorktreeService, WorktreeService);
         },
       });

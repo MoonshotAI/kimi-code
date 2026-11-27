@@ -2,12 +2,9 @@ import { realpath, stat } from 'node:fs/promises';
 
 import {
   IBootstrapService,
-  IFlagService,
   ISessionIndex,
   IProjectService,
   IWorktreeService,
-  WORKTREE_FLAG_ENV,
-  WORKTREE_FLAG_ID,
   isError2,
   patchSessionMetadata,
   type Scope,
@@ -255,12 +252,6 @@ export class SessionWorktreeService {
     workspace: Pick<Project, 'id' | 'root' | 'name'>,
     request: WorktreeSetupRequest,
   ): Promise<PlannedWorktreeSetup> {
-    if (!this.core.accessor.get(IFlagService).enabled(WORKTREE_FLAG_ID)) {
-      throw new WorktreeError(
-        ErrorCode.WORKTREE_UNSUPPORTED,
-        `worktrees are experimental; set ${WORKTREE_FLAG_ENV}=1 or enable "${WORKTREE_FLAG_ID}" under [experimental] in config.toml`,
-      );
-    }
     const worktreeService = this.core.accessor.get(IWorktreeService);
     if ((await worktreeService.resolveCheckout(workspace.root))?.relativePath !== '') {
       throw new WorktreeError(

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore } from '#/_base/di/lifecycle';
 import type { ISessionScopeHandle, IAgentScopeHandle } from '#/_base/di/scope';
 import {
   createServices,
@@ -271,7 +271,7 @@ function registerHookTestServices(reg: ServiceRegistration, cwd = '/tmp'): void 
   reg.definePartialInstance(ISessionExternalHooksService, {
     takeSessionStartContext: () => undefined,
   });
-  reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
+  reg.definePartialInstance(IAgentPermissionGate, {});
   reg.definePartialInstance(IAgentTaskService, {});
 }
 
@@ -521,7 +521,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionExternalHooksService, {
             takeSessionStartContext: () => undefined,
           });
-          reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
+          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -733,7 +733,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionExternalHooksService, {
             takeSessionStartContext: () => undefined,
           });
-          reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
+          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -1420,7 +1420,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionExternalHooksService, {
             takeSessionStartContext: () => undefined,
           });
-          reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
+          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });

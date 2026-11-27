@@ -1,14 +1,32 @@
 import { escapeXml } from '#/_base/utils/xml-escape';
-import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
+import {
+  promptMetadataTextFromContentParts,
+  promptMetadataTextFromText,
+} from '#/agent/prompt/promptMetadataText';
 import type { SkillSource } from '#/features/skill/catalog/types';
 
-import type { SkillActivationInput } from './skill';
+import type { PromptWithSkillsInput, SkillActivationInput } from './skill';
+
+export function skillCommandLabel(skillName: string, skillArgs?: string): string {
+  const args = skillArgs?.trim();
+  return args === undefined || args.length === 0 ? `/${skillName}` : `/${skillName} ${args}`;
+}
 
 export function promptMetadataTextFromSkill(input: SkillActivationInput): string | undefined {
-  const args = input.args?.trim();
-  return promptMetadataTextFromContentParts(
-    [{ type: 'text', text: args === undefined || args.length === 0 ? `/${input.name}` : `/${input.name} ${args}` }],
-    input.clientMetadata,
+  return (
+    promptMetadataTextFromContentParts([], input.clientMetadata) ??
+    promptMetadataTextFromText(skillCommandLabel(input.name, input.args))
+  );
+}
+
+export function promptMetadataTextFromBundledSkills(
+  input: PromptWithSkillsInput,
+): string | undefined {
+  return (
+    promptMetadataTextFromContentParts(input.input, input.clientMetadata) ??
+    promptMetadataTextFromText(
+      input.skills.map((skill) => skillCommandLabel(skill.name, skill.args)).join(' '),
+    )
   );
 }
 

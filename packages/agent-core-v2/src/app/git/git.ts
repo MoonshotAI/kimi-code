@@ -58,7 +58,6 @@ export interface GitStatusOptions {
   scopeToCwd?: boolean;
   includePullRequest?: boolean;
   includeUntracked?: boolean;
-  includeStats?: boolean;
 }
 
 export const fsGitStatusResponseSchema = z.object({

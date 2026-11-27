@@ -17,7 +17,8 @@ import { Markdown } from '#/tui/components/markdown/markdown';
 import {
   finishDialogLines,
   focusOnUnfocusedMouse,
-  handleSelectableListMouse,
+  handleSearchableListMouse,
+  handleSearchableListWheel,
   type MouseRowRegion,
 } from '#/tui/utils/dialog-mouse';
 import { printableChar } from '#/tui/utils/printable-key';
@@ -138,32 +139,17 @@ export class ChoicePickerComponent implements Component, Focusable {
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (!this.focused) return focusOnUnfocusedMouse(event);
     if (event.type === 'wheel') {
-      const view = this.list.view();
-      if (view.page.pageCount > 1 && event.wheelDelta !== undefined) {
-        const before = view.selectedIndex;
-        if (event.wheelDelta < 0) this.list.pageUp();
-        else if (event.wheelDelta > 0) this.list.pageDown();
-        return { handled: true, render: this.list.view().selectedIndex !== before };
-      }
-      return { handled: true };
+      return handleSearchableListWheel(this.list, event);
     }
-    return handleSelectableListMouse({
+    return handleSearchableListMouse(this.list, {
       event,
       focused: this.focused,
       shownAt: this.shownAt,
       regions: this.choiceRegions,
-      select: (index) => this.selectIndex(index),
-      activate: (index) => {
-        const chosen = this.list.view().items[index];
-        if (chosen !== undefined) this.opts.onSelect(chosen.value);
+      activate: (chosen) => {
+        this.opts.onSelect(chosen.value);
       },
     });
-  }
-
-  private selectIndex(index: number): boolean {
-    const changed = this.list.view().selectedIndex !== index;
-    this.list.moveTo(index);
-    return changed;
   }
 
   selectedValue(): string | undefined {

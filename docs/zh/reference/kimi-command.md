@@ -27,7 +27,7 @@ kimi <subcommand> [options]
 | `--agent <name>` | | 以指定 Agent 作为 main agent 启动新会话。不能与 `--session`/`--continue` 同时使用 |
 | `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent 并为新会话选中它。不可重复传入，也不能与 `--agent`、`--session` 或 `--continue` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
-| `--worktree [name]` | `-w` | 在新建的 [Git worktree](../guides/worktrees.md) 中启动会话（实验功能）。省略名称时自动生成 |
+| `--worktree [name]` | `-w` | 在新建的 [Git worktree](../guides/worktrees.md) 中启动会话。省略名称时自动生成 |
 | `--worktree-base <ref>` | | 指定新工作树的起始提交、分支或标签。须与 `--worktree` 一起使用 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--environment <id>` 让新会话绑定到已配置的远程环境，`--environment-cwd <path>` 覆盖该环境的工作目录（详见 [远程环境](../guides/remote-environment.md#kimi-environment-与-environment-cwd)）。

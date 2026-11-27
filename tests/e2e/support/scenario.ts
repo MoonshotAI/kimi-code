@@ -30,7 +30,7 @@ import { startDesktop } from '../surfaces/desktop';
 import { clockFileOf } from '../surfaces/environment';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { CLOCK_TITLE, DISK_TITLES, GIT_TITLE, MCP_TITLES, STEP_TITLES } from './steps';
+import { CLOCK_TITLE, CONFIG_TITLE, DISK_TITLES, GIT_TITLE, MCP_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
   StartupFailure,
@@ -68,6 +68,7 @@ export type ScenarioProvider = Pick<FakeProviderOptions, 'type' | 'capabilities'
 
 export interface ScenarioMcpServer {
   readonly tools: readonly FakeMcpTool[];
+  readonly startupDelayMs?: number;
   readonly deferred?: boolean;
   readonly from?: 'config' | 'editor';
 }
@@ -112,6 +113,7 @@ export interface ScenarioContext<S extends Surface> {
   readonly workspace: Workspace;
   readonly mcp: (name: string) => McpServerHandle;
   readonly clock: (time: string) => Promise<void>;
+  readonly configure: (edit: (config: KimiConfig) => KimiConfig) => Promise<void>;
 }
 
 export type ScenarioBody<S extends Surface> = (context: ScenarioContext<S>) => Promise<void>;
@@ -122,6 +124,7 @@ interface RunningContext {
   readonly workspace: Workspace;
   readonly mcp: (name: string) => McpServerHandle;
   readonly clock: (time: string) => Promise<void>;
+  readonly configure: (edit: (config: KimiConfig) => KimiConfig) => Promise<void>;
 }
 
 type RunningBody = (context: RunningContext) => Promise<void>;
@@ -363,7 +366,8 @@ class ScenarioSession {
     this.gitWorkspace = options.git !== undefined;
     const model = await startFakeModel();
     this.model = model;
-    await writeKimiConfig(home.dataDir, mergeKimiConfig(fakeModelConfig(model, options.provider), options.config ?? {}));
+    let config = mergeKimiConfig(fakeModelConfig(model, options.provider), options.config ?? {});
+    await writeKimiConfig(home.dataDir, config);
     await this.startMcpServers(home, options.mcp);
     if (options.clock !== undefined) await writeFile(clockFileOf(home), timeOf(options.clock));
     const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
@@ -382,14 +386,19 @@ class ScenarioSession {
           if (options.clock === undefined) throw new Error('clock() moves the clock of the machine; give the scenario a starting time with the clock option.');
           await writeFile(clockFileOf(home), timeOf(time));
         }),
+      configure: (edit) =>
+        base.step(CONFIG_TITLE, async () => {
+          config = edit(config);
+          await writeKimiConfig(home.dataDir, config);
+        }),
     };
   }
 
   private async startMcpServers(home: TestHome, servers: ScenarioOptions['mcp']): Promise<void> {
     if (servers === undefined) return;
     const entries: Record<string, McpRemoteServerEntry> = {};
-    for (const [name, { tools, deferred, from }] of Object.entries(servers)) {
-      const server = await startFakeMcpHttpServer({ name, tools });
+    for (const [name, { tools, startupDelayMs, deferred, from }] of Object.entries(servers)) {
+      const server = await startFakeMcpHttpServer(startupDelayMs === undefined ? { name, tools } : { name, tools, initializeDelayMs: startupDelayMs });
       this.mcpServers.set(name, server);
       if (from === 'editor') this.editorMcpServers.push({ name, url: server.url });
       else entries[name] = deferred === undefined ? { transport: 'http', url: server.url } : { transport: 'http', url: server.url, deferred };

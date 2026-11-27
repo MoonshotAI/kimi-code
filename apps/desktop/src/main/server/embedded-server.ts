@@ -64,7 +64,7 @@ export async function startDesktopServer(
       port: 0,
       logger: opts.logger ?? createDesktopServerLogger(),
       webAssetsDir: opts.webAssetsDir,
-      env: { ...process.env, KIMI_CODE_EXPERIMENTAL_WORKTREE: '1' },
+      env: { ...process.env },
       serverVersion: __KIMI_CORE_VERSION__,
       hostIdentity: {
         ...host.identity,

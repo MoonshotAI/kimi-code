@@ -74,7 +74,6 @@ export function useWorktreeServer(name: string, options: { extraConfig?: string 
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      env: { ...process.env, KIMI_CODE_EXPERIMENTAL_WORKTREE: '1' },
     });
     base = `http://127.0.0.1:${server.port}`;
   });

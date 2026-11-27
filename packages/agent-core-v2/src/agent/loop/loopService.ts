@@ -584,6 +584,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             deadline.clear();
           }
         }
+        // Non-negotiable product decision: a new loop freezes its top-level tool baseline once,
+        // after waiting at most startup_wait_ms for initial MCP discovery. Tools of servers that
+        // are still connecting at the deadline stay out of the baseline (without cancelling the
+        // connection); they are only announced later and are never appended to top-level tools.
         tools = this.toolSelect.initialTools();
       } else {
         tools = [...initialTools];

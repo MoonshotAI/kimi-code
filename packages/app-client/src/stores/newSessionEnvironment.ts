@@ -62,13 +62,11 @@ function acceptSource(value: unknown): WorktreeSourcePreference | undefined {
 }
 
 export interface NewSessionEnvironmentHost {
-  readonly worktreeEnabled: () => boolean;
   readonly workspace: (workspaceId: string) => { readonly hostId?: string } | undefined;
   readonly activeWorkspaceId: () => string | null;
 }
 
 const detachedHost: NewSessionEnvironmentHost = {
-  worktreeEnabled: () => false,
   workspace: () => undefined,
   activeWorkspaceId: () => null,
 };
@@ -94,13 +92,9 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     return host.value.workspace(workspaceId);
   }
 
-  function worktreeEnabled(): boolean {
-    return host.value.worktreeEnabled();
-  }
-
   function supportsWorktree(workspaceId: string): boolean {
     const workspace = workspaceOf(workspaceId);
-    return worktreeEnabled() && workspace !== undefined && workspace.hostId === undefined;
+    return workspace !== undefined && workspace.hostId === undefined;
   }
 
   function selectEnvironment(environment: NewSessionEnvironment): void {
@@ -149,7 +143,6 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
   }
 
   function availability(workspaceId: string | null | undefined): WorktreeAvailability {
-    if (!worktreeEnabled()) return 'disabled';
     if (workspaceId === null || workspaceId === undefined) return 'loading';
     const workspace = workspaceOf(workspaceId);
     if (workspace === undefined) return 'loading';

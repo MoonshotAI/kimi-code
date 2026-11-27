@@ -1,7 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-export const WORKTREE_FLAG_ID = 'worktree';
-
 export type WorktreeCheckoutKind = 'main' | 'managed' | 'linked';
 
 export interface WorktreeCheckout {

@@ -29,11 +29,17 @@ export type WorktreeProgressRow =
 export type WorktreeProgress =
   | { readonly phase: 'creating' | 'stopped'; readonly name?: string; readonly rows: readonly WorktreeProgressRow[] }
   | {
-      readonly phase: 'entered';
+      readonly phase: 'entered' | 'moved';
       readonly name: string;
       readonly sourceDir: string;
       readonly sourceDirty: boolean;
       readonly missingSubdir?: string;
+    }
+  | {
+      readonly phase: 'move_failed';
+      readonly name: string;
+      readonly sourceDir: string;
+      readonly reason: string;
     }
   | { readonly phase: 'cancelled'; readonly sourceDir: string };
 
@@ -70,9 +76,32 @@ export class WorktreeProgressComponent implements Component {
     const progress = this.progress;
     switch (progress.phase) {
       case 'entered':
+      case 'moved': {
+        const headline =
+          progress.phase === 'moved'
+            ? `Moved session to worktree ${progress.name}`
+            : `Entered worktree ${progress.name}`;
         return [
-          ...wrapped(currentTheme.fg('success', SUCCESS_MARK), currentTheme.fg('text', `Entered worktree ${progress.name}`), width),
-          ...enteredNotes(progress).flatMap((note) => wrapped(MESSAGE_INDENT, currentTheme.fg('warning', note), width)),
+          ...wrapped(currentTheme.fg('success', SUCCESS_MARK), currentTheme.fg('text', headline), width),
+          ...arrivalNotes(progress).flatMap((note) => wrapped(MESSAGE_INDENT, currentTheme.fg('warning', note), width)),
+        ];
+      }
+      case 'move_failed':
+        return [
+          ...wrapped(
+            currentTheme.fg('error', FAILURE_MARK),
+            currentTheme.fg('text', `Created worktree ${progress.name}, couldn't move session`),
+            width,
+          ),
+          ...wrapped(MESSAGE_INDENT, currentTheme.fg('error', progress.reason), width),
+          ...wrapped(
+            MESSAGE_INDENT,
+            currentTheme.fg(
+              'textMuted',
+              `Session stays in ${abbreviateHome(progress.sourceDir)}. Run /worktree to open ${progress.name}.`,
+            ),
+            width,
+          ),
         ];
       case 'cancelled':
         return wrapped(
@@ -136,13 +165,14 @@ function rowLabel(row: WorktreeProgressRow): string {
   }
 }
 
-function enteredNotes(progress: Extract<WorktreeProgress, { phase: 'entered' }>): string[] {
+function arrivalNotes(progress: Extract<WorktreeProgress, { phase: 'entered' | 'moved' }>): string[] {
   const notes: string[] = [];
   if (progress.sourceDirty) {
     notes.push(`Uncommitted changes in ${abbreviateHome(progress.sourceDir)} stay there.`);
   }
   if (progress.missingSubdir !== undefined) {
-    notes.push(`${progress.missingSubdir} doesn't exist at this commit, so the session starts at the worktree root.`);
+    const verb = progress.phase === 'moved' ? 'continues' : 'starts';
+    notes.push(`${progress.missingSubdir} doesn't exist at this commit, so the session ${verb} at the worktree root.`);
   }
   return notes;
 }

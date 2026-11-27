@@ -31,7 +31,7 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
-import { worktreeFlagOffError, type CLIOptions } from './options';
+import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
 import { resolveAdditionalDirs, resolveLaunchPaths } from './launch-paths';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
@@ -130,13 +130,6 @@ export async function runShell(
   }
   const config = await harness.getConfig();
   startupTrace('config:loaded');
-  if (
-    opts.worktree !== undefined &&
-    !(await harness.getExperimentalFeatures()).some((feature) => feature.id === 'worktree' && feature.enabled)
-  ) {
-    await harness.close();
-    throw worktreeFlagOffError();
-  }
   const workLocation = await harness.resolveWorkLocation(workDir);
   const configMs = Date.now() - configStartedAt;
   const agentProfile = await resolveAgentProfileSelection(opts, workDir);

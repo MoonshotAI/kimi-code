@@ -5,10 +5,10 @@ import {
   normalizeBashCommandName,
 } from '#/app/bashParser/bashParser';
 import { IConfigService } from '#/app/config/config';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { isDangerousCommandGuardEnabled } from '#/agent/permissionRules/configSection';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type {
-  PermissionMode,
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
@@ -123,12 +123,13 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
 
   constructor(
     @IBashParserService private readonly bashParser: IBashParserService,
+    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
   ) {}
 
-  evaluate(context: ResolvedToolExecutionHookContext, mode: PermissionMode): PermissionPolicyResult | undefined {
+  evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
     if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
-    if (mode === 'auto') return undefined;
+    if (this.modeService.mode === 'auto') return undefined;
     if (context.toolCall.name !== 'Bash') return undefined;
     const command = bashCommandText(context.args);
     const verdict =
@@ -141,7 +142,7 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
     if (verdict.kind === 'dangerous') {
       return { kind: 'ask', reason: { dangerous_command: verdict.command } };
     }
-    if (mode === 'yolo') return undefined;
+    if (this.modeService.mode === 'yolo') return undefined;
     return { kind: 'ask', reason: { unanalyzable_command: true } };
   }
 }
