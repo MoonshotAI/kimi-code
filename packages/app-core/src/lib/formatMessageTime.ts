@@ -1,3 +1,20 @@
+export function formatQuotaResumeTime(locale: string, iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const isZh = locale.toLowerCase().startsWith('zh');
+  const timeOptions: Intl.DateTimeFormatOptions = isZh
+    ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+    : { hour: 'numeric', minute: '2-digit' };
+  const options: Intl.DateTimeFormatOptions = sameDay
+    ? timeOptions
+    : { month: 'short', day: 'numeric', ...timeOptions };
+  return new Intl.DateTimeFormat(locale, options).format(date);
+}
+
 export function formatMessageTime(iso: string, yesterdayLabel: string): string {
   try {
     const d = new Date(iso);

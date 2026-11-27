@@ -42,10 +42,10 @@ import MediaRail from './MediaRail.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import SelectionActionBubble from './SelectionActionBubble.vue';
 import TableSelectionContextMenu from './TableSelectionContextMenu.vue';
-import { Icon, IconButton, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Spinner, Button, Checkbox, Tooltip } from '@moonshot-ai/app-ui';
 import { useActivityRunFolding, useConfirmDialog, useIsMobile, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { copyTextToClipboard, formatMessageTime, formatTokens } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatMessageTime, formatQuotaResumeTime, formatTokens } from '@moonshot-ai/app-core/lib';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { SELECTION_QUOTE_ENABLED, isContextClick, selectionHitByPointer, selectionOwnedByRoot, selectionQuoteAnchor, type SelectionActionPayload, type SelectionQuoteAnchor } from '@moonshot-ai/app-client/lib';
 import { parseAttachmentLinks, serializeMention, stripAttachmentLinks } from '@moonshot-ai/app-composer/model';
@@ -74,7 +74,7 @@ import {
   type AssistantRenderBlock,
 } from '../chatTurnRendering';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const mediaLabels = computed(() => ({
   image: t('composer.attachmentImage'),
   video: t('composer.attachmentVideo'),
@@ -137,6 +137,7 @@ const props = withDefaults(
     turnFailed?: boolean;
     turnError?: { code?: string; message?: string; statusCode?: number; requestId?: string; endReason?: string } | null;
     turnRetry?: { nextAttempt: number; maxAttempts: number } | null;
+    quotaAutoContinue?: { enabled: boolean; resetAt: string | null } | null;
   }>(),
   {
     approvals: () => [],
@@ -162,6 +163,7 @@ const props = withDefaults(
     turnFailed: false,
     turnError: null,
     turnRetry: null,
+    quotaAutoContinue: null,
   },
 );
 
@@ -482,6 +484,11 @@ const turnErrorDisplayMessage = computed(() => {
   return message === undefined ? '' : formatProviderErrorMessage(message);
 });
 
+const quotaResumeTimeLabel = computed(() => {
+  const resetAt = props.quotaAutoContinue?.resetAt;
+  return resetAt === null || resetAt === undefined ? '' : formatQuotaResumeTime(locale.value, resetAt);
+});
+
 provide(BrowserToolContextKey, computed(() => browserToolContexts(props.turns)));
 provide(CronToolContextKey, computed(() => cronToolContexts(props.turns)));
 provide(LatestNotifyToolCallIdKey, computed(() => latestNotifyToolCallId(props.turns)));
@@ -497,6 +504,7 @@ const emit = defineEmits<{
   reorderQueue: [payload: { from: number; to: number }];
   steerQueued: [index: number];
   resumeTurn: [];
+  setQuotaAutoContinue: [enabled: boolean];
   forkTurn: [payload: { turnIndex: number }];
   quoteAction: [payload: SelectionActionPayload];
 }>();
@@ -1687,12 +1695,30 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     <!-- Model-request failure (e.g. provider 429 after retry exhaustion): the
          turn died and nothing resumes it on its own — a persistent card, since
          the transient error toast alone leaves a silently dead session. -->
-    <div v-if="turnFailed" :ref="transcriptAux('failed')" class="turn-failed" role="alert">
+    <div
+      v-if="turnFailed"
+      :ref="transcriptAux('failed')"
+      class="turn-failed"
+      :class="{ 'turn-failed--auto-continue': quotaAutoContinue !== null }"
+      role="alert"
+    >
       <span class="tf-chip" aria-hidden="true"><Icon name="alert-triangle" size="sm" /></span>
       <div class="tf-main">
         <span class="tf-title">{{ turnFailedTitle }}</span>
         <span v-if="turnErrorDisplayMessage" class="tf-sub">{{ turnErrorDisplayMessage }}</span>
         <span v-if="turnErrorMeta" class="tf-meta" :title="turnErrorMeta">{{ turnErrorMeta }}</span>
+        <span v-if="quotaResumeTimeLabel" class="tf-resume-at" role="status">
+          {{ t('conversation.quotaAutoResumeScheduled', { time: quotaResumeTimeLabel }) }}
+        </span>
+        <Checkbox
+          v-if="quotaAutoContinue"
+          class="tf-auto-continue"
+          :model-value="quotaAutoContinue.enabled"
+          :label="t('conversation.quotaAutoContinueLabel')"
+          @update:model-value="emit('setQuotaAutoContinue', $event)"
+        >
+          {{ t('conversation.quotaAutoContinueLabel') }}
+        </Checkbox>
       </div>
       <Button v-if="!readOnly" variant="secondary" size="sm" @click="emit('resumeTurn')">
         {{ t('conversation.turnFailedResume') }}
@@ -2240,6 +2266,28 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.turn-failed--auto-continue {
+  align-items: flex-start;
+  padding-block: var(--space-3);
+}
+.turn-failed--auto-continue .tf-main {
+  gap: 3px;
+}
+.tf-resume-at {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+.tf-auto-continue {
+  margin-top: var(--space-1);
+  align-self: flex-start;
+}
+.tf-auto-continue :deep(.ui-check__label) {
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  line-height: var(--leading-normal);
 }
 .a-msg {
   align-self: flex-start;

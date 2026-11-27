@@ -1,3 +1,4 @@
+import { shallowRef } from 'vue';
 import { isDaemonApiError, type ManagedQuotaResult, type QuotaEntry } from '@moonshot-ai/app-core/api';
 import type { ConversationError } from '@moonshot-ai/app-core/conversation';
 import { STORAGE_KEYS, safeGetJson, safeSetJson } from '@moonshot-ai/app-core/lib';
@@ -46,10 +47,26 @@ interface PendingResume {
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-export function isManagedQuotaError(error: ConversationError | undefined): boolean {
-  if (error === undefined) return false;
+export interface QuotaAutoResumePendingView {
+  readonly sessionId: string;
+  readonly failedTurnId: string;
+  readonly resetAt: string | null;
+  readonly dueAtMs: number | null;
+}
+
+export interface ManagedQuotaErrorLike {
+  readonly name?: string;
+  readonly code?: string;
+  readonly message?: string;
+  readonly status_code?: number;
+  readonly statusCode?: number;
+}
+
+export function isManagedQuotaError(error: ManagedQuotaErrorLike | null | undefined): boolean {
+  if (error === undefined || error === null) return false;
   if (error.name === 'APIProviderQuotaExhaustedError' || error.code === 'quota_exhausted') return true;
-  return error.status_code === 403 && MANAGED_QUOTA_MESSAGE_PATTERN.test(error.message);
+  const status = error.status_code ?? error.statusCode;
+  return status === 403 && error.message !== undefined && MANAGED_QUOTA_MESSAGE_PATTERN.test(error.message);
 }
 
 function knownWindows(usage: ManagedQuotaResult): readonly QuotaEntry[] | null {
@@ -80,9 +97,23 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
   const withLock = host.withLock ?? withSchedulerLock;
   let pending: PendingResume | undefined;
   let running: PendingResume | undefined;
+  const pendingView = shallowRef<QuotaAutoResumePendingView | null>(null);
   let ticker: ReturnType<typeof setInterval> | undefined;
   let consumedResetAtMs: number[] = [];
   let lastNullResetAtMs: number | undefined;
+
+  function syncPendingView(): void {
+    if (pending === undefined || !host.enabled()) {
+      pendingView.value = null;
+      return;
+    }
+    pendingView.value = {
+      sessionId: pending.sessionId,
+      failedTurnId: pending.failedTurnId,
+      resetAt: pending.resetAt,
+      dueAtMs: pending.dueAtMs,
+    };
+  }
 
   function jitterMs(): number {
     return QUOTA_AUTO_RESUME_MIN_JITTER_MS + Math.floor(random() * QUOTA_AUTO_RESUME_JITTER_SPAN_MS);
@@ -143,6 +174,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     clearTaskTimer(task);
     if (pending === task) pending = undefined;
     if (pending === undefined) stopWatchdog();
+    syncPendingView();
   }
 
   function scheduleFallbackPoll(task: PendingResume): void {
@@ -160,6 +192,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
       task.timer = undefined;
       if (isCurrent(task)) void refreshSchedule(task);
     }, delay);
+    syncPendingView();
   }
 
   function scheduleAt(task: PendingResume, resetAt: string | null, resetAtMs: number | null, dueAtMs: number): void {
@@ -172,6 +205,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
       task.timer = undefined;
       if (isCurrent(task)) void fire(task);
     }, Math.max(0, dueAtMs - now()));
+    syncPendingView();
   }
 
   async function refreshSchedule(task: PendingResume): Promise<void> {
@@ -229,6 +263,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     const currentNow = now();
     const delay = QUOTA_AUTO_RESUME_RETRY_DELAYS_MS[task.retryAttempt];
     if (delay === undefined || isExpired(task, currentNow) || isExpired(task, currentNow + delay)) {
+      syncPendingView();
       host.onGiveUp?.(task.sessionId, error);
       return;
     }
@@ -253,6 +288,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     pending = undefined;
     running = task;
     stopWatchdog();
+    syncPendingView();
     let failure: { error: unknown } | undefined;
     try {
       await withLock(async () => {
@@ -329,6 +365,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     };
     pending = task;
     startWatchdog();
+    syncPendingView();
     void refreshSchedule(task);
   }
 
@@ -341,12 +378,21 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     if (pending !== undefined) dropPending(pending);
     if (running !== undefined) running.cancelled = true;
     stopWatchdog();
+    syncPendingView();
+  }
+
+  function pendingFor(sessionId: string, failedTurnId?: string): QuotaAutoResumePendingView | null {
+    const view = pendingView.value;
+    if (view === null || view.sessionId !== sessionId) return null;
+    if (failedTurnId !== undefined && view.failedTurnId !== failedTurnId) return null;
+    return view;
   }
 
   return {
     handleTurnFailed,
     cancelSession,
     clearAll,
+    pendingFor,
     hasPending: () => pending !== undefined || running !== undefined,
   };
 }

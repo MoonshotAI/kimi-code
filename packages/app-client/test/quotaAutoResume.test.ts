@@ -546,6 +546,7 @@ const clientApiMock: Record<string, unknown> = {};
 
 async function bootClient(opts: {
   enabled: boolean;
+  autoContinue?: boolean;
   historyFailed?: boolean;
   usage: ManagedQuotaResult;
   trusted?: boolean;
@@ -553,7 +554,10 @@ async function bootClient(opts: {
   deferTurns?: boolean;
   failSubmits?: number;
 }) {
-  stubStorage(opts.enabled ? { 'kimi-web.quota-auto-resume': 'true' } : {});
+  stubStorage({
+    ...(opts.enabled ? { [STORAGE_KEYS.quotaAutoResume]: 'true' } : {}),
+    ...(opts.autoContinue === undefined ? {} : { [STORAGE_KEYS.quotaAutoContinue]: String(opts.autoContinue) }),
+  });
   vi.stubGlobal('WebSocket', function () {});
   vi.resetModules();
 
@@ -1072,5 +1076,160 @@ describe('useKimiWebClient quota auto-resume edge cases', () => {
     expect(
       h.warningsStore.warnings.some((notice) => notice.title === 'conversation.quotaAutoResumeFailedTitle'),
     ).toBe(true);
+  });
+});
+
+describe('quotaAutoContinue card view and preference wiring', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE_MS);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    resetKimiClientDeps();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('hides the inline toggle when the lab gate is off, the model is custom, or the failure is not a quota error', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const labOff = await bootClient({
+      enabled: false,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    labOff.startLiveTurn('s1', 't1');
+    labOff.failLiveTurn('s1', 't1');
+    await flushAsync();
+    expect(labOff.client.quotaAutoContinueFor('s1', labOff.client.activeTurnError.value)).toBeNull();
+
+    vi.resetModules();
+    const custom = await bootClient({
+      enabled: true,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    custom.modelsStore.setModels([
+      { id: 'local-custom', provider: 'custom-openai', model: 'local-custom', maxContextSize: 128000 },
+    ]);
+    custom.sessionsStore.updateSession('s1', (s) => ({ ...s, model: 'local-custom' }));
+    custom.startLiveTurn('s1', 't1');
+    custom.failLiveTurn('s1', 't1');
+    await flushAsync();
+    expect(custom.client.quotaAutoContinueFor('s1', custom.client.activeTurnError.value)).toBeNull();
+
+    vi.resetModules();
+    const nonQuota = await bootClient({
+      enabled: true,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    nonQuota.startLiveTurn('s1', 't1');
+    nonQuota.failLiveTurn('s1', 't1', { code: 'provider.api_error', status_code: 500, message: 'Internal error' });
+    await flushAsync();
+    expect(nonQuota.client.quotaAutoContinueFor('s1', nonQuota.client.activeTurnError.value)).toBeNull();
+    expect(
+      nonQuota.client.quotaAutoContinueFor('s1', {
+        code: 'provider.auth_error',
+        statusCode: 403,
+        message: QUOTA_403.message,
+        endReason: 'user_cancelled',
+      }),
+    ).toBeNull();
+  });
+
+  it('arms an already-failed quota card and shows resetAt when turned on, and cancels pending immediately when turned off', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const h = await bootClient({
+      enabled: true,
+      autoContinue: false,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    h.startLiveTurn('s1', 't1');
+    h.failLiveTurn('s1', 't1');
+    await flushAsync();
+    expect(h.getUsage).not.toHaveBeenCalled();
+    expect(h.client.quotaAutoContinueFor('s1', h.client.activeTurnError.value)).toEqual({
+      enabled: false,
+      resetAt: null,
+    });
+
+    h.client.setQuotaAutoContinuePreference(true, 's1');
+    await flushAsync();
+    expect(h.getUsage).toHaveBeenCalledTimes(1);
+    expect(h.client.quotaAutoContinueFor('s1', h.client.activeTurnError.value)).toEqual({
+      enabled: true,
+      resetAt,
+    });
+
+    h.client.setQuotaAutoContinuePreference(false, 's1');
+    await flushAsync();
+    expect(h.client.quotaAutoContinueFor('s1', h.client.activeTurnError.value)).toEqual({
+      enabled: false,
+      resetAt: null,
+    });
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    expect(h.submitPrompt).not.toHaveBeenCalled();
+  });
+
+  it('prioritizes the session whose card enabled auto-continue under the global keep-first guard', async () => {
+    const resetAt = new Date(BASE_MS + 60 * 60 * 1000).toISOString();
+    const h = await bootClient({
+      enabled: true,
+      autoContinue: false,
+      usage: quotaOk({ limit5h: { usedRatio: 1, resetAt } }),
+    });
+    h.startLiveTurn('s1', 't1');
+    h.failLiveTurn('s1', 't1');
+    await h.client.selectSession('s2');
+    await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
+    h.startLiveTurn('s2', 't2');
+    h.failLiveTurn('s2', 't2');
+    await flushAsync();
+
+    h.client.setQuotaAutoContinuePreference(true, 's1');
+    await flushAsync();
+    expect(h.getUsage).toHaveBeenCalledTimes(1);
+    expect(h.client.quotaAutoContinueFor('s1', h.client.activeTurnError.value)?.resetAt).toBe(resetAt);
+    expect(h.client.quotaAutoContinueFor('s2', h.client.activeTurnError.value)?.resetAt).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 15_000);
+    expect(h.submitPrompt).toHaveBeenCalledTimes(1);
+    expect(h.submitPrompt.mock.calls[0]![0]).toBe('s1');
+  });
+});
+
+describe('useQuotaAutoResume auto-continue preference storage sync', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('defaults auto-continue to on and syncs cross-tab opt-out, opt-in, and key removal', async () => {
+    stubStorage();
+    const listeners = new Set<(event: { key: string | null; newValue: string | null }) => void>();
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn((type: string, listener: (event: { key: string | null; newValue: string | null }) => void) => {
+        if (type === 'storage') listeners.add(listener);
+      }),
+      removeEventListener: vi.fn(),
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    });
+    vi.resetModules();
+    const { useQuotaAutoResume } = await import('@moonshot-ai/app-core/composables');
+    const { quotaAutoResumeEnabled, quotaAutoContinueEnabled } = useQuotaAutoResume();
+    expect(quotaAutoResumeEnabled.value).toBe(false);
+    expect(quotaAutoContinueEnabled.value).toBe(true);
+
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoContinue, newValue: 'false' });
+    expect(quotaAutoContinueEnabled.value).toBe(false);
+
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoContinue, newValue: 'true' });
+    expect(quotaAutoContinueEnabled.value).toBe(true);
+
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoContinue, newValue: 'false' });
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoContinue, newValue: null });
+    expect(quotaAutoContinueEnabled.value).toBe(true);
+
+    for (const listener of listeners) listener({ key: STORAGE_KEYS.quotaAutoContinue, newValue: 'not-json' });
+    expect(quotaAutoContinueEnabled.value).toBe(true);
   });
 });

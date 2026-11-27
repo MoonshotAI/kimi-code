@@ -311,6 +311,8 @@ export default {
   defaultThinkingHint: '新会话默认是否开启思考',
   defaultPlanMode: '默认计划模式',
   defaultPlanModeHint: '新会话默认进入计划模式',
+  quotaAutoContinue: '额度恢复后自动继续',
+  quotaAutoContinueHint: '在额度耗尽的报错卡片中默认勾选，对所有会话同步生效',
   secondaryModelSection: '子智能体',
   secondaryModel: '子智能体模型',
   secondaryModelHint: '子智能体默认使用的模型与思考强度',

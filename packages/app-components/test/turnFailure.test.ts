@@ -153,6 +153,83 @@ describe('ChatPane turn failure', () => {
   });
 });
 
+describe('ChatPane quota auto-continue card', () => {
+  const quotaError = {
+    code: 'provider.auth_error',
+    message: "You've reached your 5-hour usage limit.",
+    statusCode: 403,
+  };
+
+  function mountQuotaCard(
+    quotaAutoContinue: { enabled: boolean; resetAt: string | null } | null,
+    locale: 'en' | 'zh' = 'en',
+  ) {
+    app?.unmount();
+    const onSetQuotaAutoContinue = vi.fn();
+    app = createApp({
+      setup() {
+        provide(SessionRatingKey, ratingBinding);
+        return () =>
+          h(ChatPane, {
+            turns: [userTurn],
+            sessionId: 's1',
+            turnFailed: true,
+            turnError: quotaError,
+            quotaAutoContinue,
+            onSetQuotaAutoContinue,
+          } as never);
+      },
+    });
+    app.use(createKimiI18n({ locale }));
+    app.mount(host);
+    return onSetQuotaAutoContinue;
+  }
+
+  it('renders no inline toggle when quotaAutoContinue is null', async () => {
+    mountQuotaCard(null);
+    await nextTick();
+    expect(host.querySelector('.tf-auto-continue')).toBeNull();
+    expect(host.querySelector('.tf-resume-at')).toBeNull();
+  });
+
+  it('renders checked toggle with localized same-day resume time and emits changes', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-27T11:00:00.000Z'));
+      const resetAt = new Date('2026-11-27T19:34:00.000Z').toISOString();
+      const onSetQuotaAutoContinue = mountQuotaCard({ enabled: true, resetAt }, 'en');
+      await nextTick();
+      const checkbox = host.querySelector<HTMLInputElement>('.tf-auto-continue input[type="checkbox"]');
+      expect(checkbox?.checked).toBe(true);
+      expect(host.querySelector('.tf-auto-continue')?.textContent?.trim()).toBe('Auto-continue when limits reset');
+      expect(host.querySelector('.tf-resume-at')?.textContent?.trim()).toBe('Auto-resuming at 7:34 PM');
+
+      checkbox!.click();
+      await nextTick();
+      expect(onSetQuotaAutoContinue).toHaveBeenCalledExactlyOnceWith(false);
+
+      mountQuotaCard({ enabled: true, resetAt }, 'zh');
+      await nextTick();
+      expect(host.querySelector('.tf-auto-continue')?.textContent?.trim()).toBe('额度恢复后自动继续');
+      expect(host.querySelector('.tf-resume-at')?.textContent?.trim()).toBe('将于 19:34 自动继续');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('renders unchecked toggle without a resume time when unscheduled', async () => {
+    const onSetQuotaAutoContinue = mountQuotaCard({ enabled: false, resetAt: null });
+    await nextTick();
+    const checkbox = host.querySelector<HTMLInputElement>('.tf-auto-continue input[type="checkbox"]');
+    expect(checkbox?.checked).toBe(false);
+    expect(host.querySelector('.tf-resume-at')).toBeNull();
+
+    checkbox!.click();
+    await nextTick();
+    expect(onSetQuotaAutoContinue).toHaveBeenCalledExactlyOnceWith(true);
+  });
+});
+
 describe('ChatPane compaction checkpoint card', () => {
   it('renders a borderless-line checkpoint card with chevron-only indicator and toggles open state', async () => {
     const state = reactive({ openTurnId: null as string | null });
