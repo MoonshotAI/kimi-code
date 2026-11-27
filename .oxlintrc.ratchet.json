@@ -6,40 +6,40 @@
     "reportUnusedDisableDirectives": "error"
   },
   "rules": {
-    "eslint/array-callback-return": "error",
+    "eslint/array-callback-return": "warn",
     "eslint/no-empty": [
-      "error",
+      "warn",
       {
         "allowEmptyCatch": true
       }
     ],
-    "eslint/no-fallthrough": "error",
-    "eslint/no-regex-spaces": "error",
-    "eslint/no-sequences": "error",
-    "eslint/no-useless-constructor": "error",
-    "eslint/prefer-const": "error",
-    "import/no-named-as-default": "error",
-    "import/no-named-as-default-member": "error",
-    "oxc/bad-comparison-sequence": "error",
-    "oxc/no-accumulating-spread": "error",
-    "promise/no-callback-in-promise": "error",
-    "promise/no-promise-in-callback": "error",
-    "typescript/no-deprecated": "error",
-    "typescript/no-explicit-any": "error",
-    "typescript/no-namespace": "error",
-    "typescript/no-require-imports": "error",
-    "typescript/no-unnecessary-boolean-literal-compare": "error",
-    "typescript/no-unnecessary-template-expression": "error",
-    "typescript/no-unnecessary-type-conversion": "error",
-    "typescript/no-unsafe-enum-comparison": "error",
-    "typescript/no-unsafe-function-type": "error",
-    "typescript/no-useless-default-assignment": "error",
-    "typescript/prefer-promise-reject-errors": "error",
-    "typescript/related-getter-setter-pairs": "error",
-    "typescript/switch-exhaustiveness-check": "error",
-    "typescript/use-unknown-in-catch-callback-variable": "error",
-    "unicorn/no-array-reverse": "error",
-    "unicorn/no-array-sort": "error"
+    "eslint/no-fallthrough": "warn",
+    "eslint/no-regex-spaces": "warn",
+    "eslint/no-sequences": "warn",
+    "eslint/no-useless-constructor": "warn",
+    "eslint/prefer-const": "warn",
+    "import/no-named-as-default": "warn",
+    "import/no-named-as-default-member": "warn",
+    "oxc/bad-comparison-sequence": "warn",
+    "oxc/no-accumulating-spread": "warn",
+    "promise/no-callback-in-promise": "warn",
+    "promise/no-promise-in-callback": "warn",
+    "typescript/no-deprecated": "warn",
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-namespace": "warn",
+    "typescript/no-require-imports": "warn",
+    "typescript/no-unnecessary-boolean-literal-compare": "warn",
+    "typescript/no-unnecessary-template-expression": "warn",
+    "typescript/no-unnecessary-type-conversion": "warn",
+    "typescript/no-unsafe-enum-comparison": "warn",
+    "typescript/no-unsafe-function-type": "warn",
+    "typescript/no-useless-default-assignment": "warn",
+    "typescript/prefer-promise-reject-errors": "warn",
+    "typescript/related-getter-setter-pairs": "warn",
+    "typescript/switch-exhaustiveness-check": "warn",
+    "typescript/use-unknown-in-catch-callback-variable": "warn",
+    "unicorn/no-array-reverse": "warn",
+    "unicorn/no-array-sort": "warn"
   },
   "overrides": [
     {
@@ -48,7 +48,7 @@
         "apps/*/src/**"
       ],
       "rules": {
-        "eslint/no-console": "error"
+        "eslint/no-console": "warn"
       }
     },
     {
@@ -63,12 +63,12 @@
         "apps/vscode/webview-ui/src/**/*.tsx"
       ],
       "rules": {
-        "typescript/no-unnecessary-type-parameters": "error",
-        "typescript/no-unsafe-argument": "error",
-        "typescript/no-unsafe-assignment": "error",
-        "typescript/no-unsafe-call": "error",
-        "typescript/no-unsafe-member-access": "error",
-        "typescript/no-unsafe-return": "error"
+        "typescript/no-unnecessary-type-parameters": "warn",
+        "typescript/no-unsafe-argument": "warn",
+        "typescript/no-unsafe-assignment": "warn",
+        "typescript/no-unsafe-call": "warn",
+        "typescript/no-unsafe-member-access": "warn",
+        "typescript/no-unsafe-return": "warn"
       }
     },
     {
@@ -80,7 +80,7 @@
         "react"
       ],
       "rules": {
-        "react/exhaustive-deps": "error"
+        "react/exhaustive-deps": "warn"
       }
     },
     {
@@ -96,11 +96,11 @@
         "vitest"
       ],
       "rules": {
-        "vitest/no-conditional-expect": "error",
-        "vitest/no-disabled-tests": "error",
-        "vitest/valid-title": "error",
-        "eslint/no-unused-vars": "error",
-        "eslint/no-unsafe-optional-chaining": "error",
+        "vitest/no-conditional-expect": "warn",
+        "vitest/no-disabled-tests": "warn",
+        "vitest/valid-title": "warn",
+        "eslint/no-unused-vars": "warn",
+        "eslint/no-unsafe-optional-chaining": "warn",
         "eslint/no-console": "off",
         "typescript/no-unnecessary-type-parameters": "off",
         "typescript/no-unsafe-argument": "off",
@@ -126,37 +126,37 @@
         "scripts/**/*.mjs"
       ],
       "rules": {
-        "eslint/accessor-pairs": "error",
-        "eslint/eqeqeq": "error",
-        "eslint/no-setter-return": "error",
-        "eslint/no-unneeded-ternary": "error",
-        "eslint/no-unused-vars": "error",
-        "eslint/no-var": "error",
-        "eslint/prefer-spread": "error",
-        "import/default": "error",
-        "import/extensions": "error",
-        "import/namespace": "error",
-        "import/no-cycle": "error",
-        "import/no-duplicates": "error",
-        "import/no-empty-named-blocks": "error",
-        "promise/no-return-in-finally": "error",
-        "typescript/await-thenable": "error",
-        "typescript/no-base-to-string": "error",
-        "typescript/no-confusing-non-null-assertion": "error",
-        "typescript/no-extraneous-class": "error",
-        "typescript/no-floating-promises": "error",
-        "typescript/no-implied-eval": "error",
-        "typescript/no-misused-promises": "error",
-        "typescript/no-misused-spread": "error",
-        "typescript/no-this-alias": "error",
-        "typescript/only-throw-error": "error",
-        "typescript/return-await": "error",
-        "typescript/restrict-template-expressions": "error",
-        "unicorn/no-new-array": "error",
-        "unicorn/no-this-assignment": "error",
-        "unicorn/no-useless-spread": "error",
-        "unicorn/require-module-specifiers": "error",
-        "vitest/no-standalone-expect": "error"
+        "eslint/accessor-pairs": "warn",
+        "eslint/eqeqeq": "warn",
+        "eslint/no-setter-return": "warn",
+        "eslint/no-unneeded-ternary": "warn",
+        "eslint/no-unused-vars": "warn",
+        "eslint/no-var": "warn",
+        "eslint/prefer-spread": "warn",
+        "import/default": "warn",
+        "import/extensions": "warn",
+        "import/namespace": "warn",
+        "import/no-cycle": "warn",
+        "import/no-duplicates": "warn",
+        "import/no-empty-named-blocks": "warn",
+        "promise/no-return-in-finally": "warn",
+        "typescript/await-thenable": "warn",
+        "typescript/no-base-to-string": "warn",
+        "typescript/no-confusing-non-null-assertion": "warn",
+        "typescript/no-extraneous-class": "warn",
+        "typescript/no-floating-promises": "warn",
+        "typescript/no-implied-eval": "warn",
+        "typescript/no-misused-promises": "warn",
+        "typescript/no-misused-spread": "warn",
+        "typescript/no-this-alias": "warn",
+        "typescript/only-throw-error": "warn",
+        "typescript/return-await": "warn",
+        "typescript/restrict-template-expressions": "warn",
+        "unicorn/no-new-array": "warn",
+        "unicorn/no-this-assignment": "warn",
+        "unicorn/no-useless-spread": "warn",
+        "unicorn/require-module-specifiers": "warn",
+        "vitest/no-standalone-expect": "warn"
       }
     }
   ],

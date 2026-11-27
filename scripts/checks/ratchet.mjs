@@ -11,30 +11,129 @@ const RATCHET_CONFIG = '.oxlintrc.ratchet.json';
 const BASELINE_FILE = 'scripts/checks/baselines/oxlint-ratchet.json';
 const UNUSED_DIRECTIVE = /^Unused (?:eslint|oxlint)-disable directive/;
 const DIAGNOSTIC_SCOPES = new Map([['react-hooks', 'react']]);
+const SHARED_FIELDS = ['plugins', 'jsPlugins', 'categories', 'settings', 'env', 'globals'];
+const SHOWN_LEVELS = new Map([['deny', 'error'], ['allow', 'off']]);
 
 export function ruleOf(code) {
   const match = /^([\w-]+)\((.+)\)$/.exec(code ?? '');
   return match === null ? undefined : `${DIAGNOSTIC_SCOPES.get(match[1]) ?? match[1]}/${match[2]}`;
 }
 
+function levelOf(setting) {
+  return Array.isArray(setting) ? setting[0] : setting;
+}
+
+function isOff(setting) {
+  return ['off', 'allow'].includes(levelOf(setting));
+}
+
+function isEnforced(setting) {
+  return ['error', 'deny'].includes(levelOf(setting));
+}
+
+function isFrozenOrOff(setting) {
+  return levelOf(setting) === 'warn' || isOff(setting);
+}
+
+function shownLevel(setting) {
+  return SHOWN_LEVELS.get(levelOf(setting)) ?? levelOf(setting);
+}
+
+function sameJson(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function ratchetRules(config) {
   const rules = new Set();
   for (const entries of [config.rules, ...(config.overrides ?? []).map((override) => override.rules)]) {
     for (const [rule, setting] of Object.entries(entries ?? {})) {
-      const level = Array.isArray(setting) ? setting[0] : setting;
-      if (level !== 'off' && level !== 'allow') rules.add(rule);
+      if (!isOff(setting)) rules.add(rule);
     }
   }
   return rules;
+}
+
+export function layeringFindings(main, ratchet) {
+  const inherited = main.overrides ?? [];
+  const overrides = ratchet.overrides ?? [];
+  return [
+    ...(sameJson((main.ignorePatterns ?? []).toSorted(), (ratchet.ignorePatterns ?? []).toSorted())
+      ? []
+      : [`ignorePatterns differ from ${MAIN_CONFIG}. extends does not carry them over, so copy the list from ${MAIN_CONFIG}.`]),
+    ...SHARED_FIELDS.filter((field) => !sameJson(main[field], ratchet[field])).map((field) => `${field} differ from ${MAIN_CONFIG}.`),
+    ...Object.keys(main.options ?? {})
+      .filter((option) => !sameJson(main.options[option], ratchet.options?.[option]))
+      .map((option) => `options.${option} differs from ${MAIN_CONFIG}.`),
+    ...warnedInMain(main),
+    ...(sameJson(overrides.slice(0, inherited.length), inherited)
+      ? []
+      : [`the overrides of ${MAIN_CONFIG} are not applied first and unchanged.`]),
+    ...rootFindings(main, ratchet),
+    ...overrides.slice(inherited.length).flatMap((override) => overrideFindings(main, override)),
+  ];
+}
+
+function warnedInMain(main) {
+  const warned = [main.rules ?? {}, ...(main.overrides ?? []).map((override) => override.rules ?? {})]
+    .flatMap((rules) => Object.entries(rules))
+    .filter(([, setting]) => levelOf(setting) === 'warn')
+    .map(([rule]) => rule);
+  return [...new Set(warned)].map(
+    (rule) => `${MAIN_CONFIG} sets ${rule} to "warn". It may only use "error" or "off", because a warning marks a frozen finding.`,
+  );
+}
+
+function rootFindings(main, ratchet) {
+  const findings = [];
+  for (const [rule, setting] of Object.entries(ratchet.rules ?? {})) {
+    if (Object.hasOwn(main.rules ?? {}, rule)) {
+      if (!sameJson(setting, main.rules[rule])) findings.push(`${rule} at the root changes the setting ${MAIN_CONFIG} gives it.`);
+    } else if (!isFrozenOrOff(setting)) {
+      findings.push(`${rule} at the root is set to "${shownLevel(setting)}". Only "warn" (frozen) and "off" belong in ${RATCHET_CONFIG}.`);
+    }
+  }
+  return findings;
+}
+
+function overrideFindings(main, override) {
+  const scope = `the override for ${override.files.join(', ')}`;
+  const findings = [];
+  if ((override.env ?? null) !== null || (override.globals ?? null) !== null) findings.push(`${scope} sets env or globals.`);
+  const pluginsMirrored = (main.overrides ?? []).some(
+    (inherited) => sameJson(inherited.files, override.files) && sameJson(inherited.plugins, override.plugins),
+  );
+  if ((override.plugins ?? null) !== null && !pluginsMirrored) {
+    findings.push(`${scope} sets plugins that no ${MAIN_CONFIG} override with the same files sets.`);
+  }
+  for (const [rule, setting] of Object.entries(override.rules ?? {})) {
+    if (!isFrozenOrOff(setting)) {
+      findings.push(`${scope} sets ${rule} to "${shownLevel(setting)}". Only "warn" (frozen) and "off" belong in ${RATCHET_CONFIG}.`);
+    } else if (enforcedOn(main, rule, override.files)) {
+      findings.push(`${scope} sets ${rule} to "${shownLevel(setting)}", but ${MAIN_CONFIG} enforces ${rule} on those files.`);
+    }
+  }
+  return findings;
+}
+
+function enforcedOn(main, rule, files) {
+  const overrides = main.overrides ?? [];
+  if (![main.rules?.[rule], ...overrides.map((override) => override.rules?.[rule])].some(isEnforced)) return false;
+  const off = overrides.findLastIndex((override) => sameJson(override.files, files) && isOff(override.rules?.[rule]));
+  return off === -1 || overrides.slice(off + 1).some((override) => isEnforced(override.rules?.[rule]));
 }
 
 export function countFindings(diagnostics, rules) {
   const counts = {};
   const unused = [];
   const unmatched = [];
+  const enforced = [];
   for (const diagnostic of diagnostics) {
     if (UNUSED_DIRECTIVE.test(diagnostic.message)) {
       unused.push(diagnostic);
+      continue;
+    }
+    if (diagnostic.severity !== 'warning') {
+      enforced.push(diagnostic);
       continue;
     }
     const rule = ruleOf(diagnostic.code);
@@ -45,7 +144,7 @@ export function countFindings(diagnostics, rules) {
     counts[rule] ??= {};
     counts[rule][diagnostic.filename] = (counts[rule][diagnostic.filename] ?? 0) + 1;
   }
-  return { counts, unused, unmatched };
+  return { counts, unused, unmatched, enforced };
 }
 
 export function compareCounts(baseline, current) {
@@ -158,14 +257,35 @@ function describeLocation(diagnostic) {
   return `    ${diagnostic.filename}:${span?.line}:${span?.column}  ${diagnostic.message}${help}`;
 }
 
+function describeWithRule(diagnostic) {
+  return [`  ${diagnostic.code ?? 'no rule code'}`, describeLocation(diagnostic)];
+}
+
+function formatEnforced(enforced) {
+  return [
+    `✗ oxlint: ${enforced.length} finding(s) from rules that must have none`,
+    ...enforced.flatMap(describeWithRule),
+    `  What to do: fix them. \`pnpm exec oxlint --type-aware <file>\` shows each one in its surrounding code.`,
+  ];
+}
+
 function formatUnmatched(unmatched) {
   const shown = unmatched.slice(0, 20);
   return [
-    `✗ ratchet: ${unmatched.length} finding(s) match no rule in ${RATCHET_CONFIG}`,
-    ...shown.flatMap((diagnostic) => [`  ${diagnostic.code ?? 'no rule code'}`, describeLocation(diagnostic)]),
+    `✗ ratchet: ${unmatched.length} frozen finding(s) match no rule in ${RATCHET_CONFIG}`,
+    ...shown.flatMap(describeWithRule),
     ...(unmatched.length > shown.length ? [`  … and ${unmatched.length - shown.length} more`] : []),
     '  Why: the ratchet counts a finding only under a rule it can find in its config, so it would drop these without a word.',
-    `  What to do: if oxlint reports a frozen rule under another plugin name (it reports the react hooks rules as react-hooks), map that name in DIAGNOSTIC_SCOPES in ${RATCHET_FILE}. Otherwise fix the findings: they come from rules that must have none.`,
+    `  What to do: oxlint reports some rules under another plugin name (it reports the react hooks rules as react-hooks); map that name in DIAGNOSTIC_SCOPES in ${RATCHET_FILE}.`,
+  ];
+}
+
+function formatLayering(findings) {
+  return [
+    `✗ ratchet: ${RATCHET_CONFIG} does more than freeze rules on top of ${MAIN_CONFIG}`,
+    ...findings.map((finding) => `  ${finding}`),
+    `  Why: lint runs oxlint once, with ${RATCHET_CONFIG}. A setting there that loosens a rule ${MAIN_CONFIG} enforces would stop enforcing it without a word.`,
+    `  What to do: enforce or switch off rules in ${MAIN_CONFIG}, and set frozen rules to "warn" in ${RATCHET_CONFIG}. To freeze a rule for some files only, switch it off for them in a ${MAIN_CONFIG} override, then set it to "warn" in a ${RATCHET_CONFIG} override with the same files.`,
   ];
 }
 
@@ -216,33 +336,30 @@ export function main(args) {
     );
     return 2;
   }
-  let mainConfig;
-  let ratchetConfig;
+  let layering;
   let diagnostics;
   try {
-    mainConfig = runOxlint(['--type-aware', '--print-config']);
-    ratchetConfig = runOxlint(['-c', RATCHET_CONFIG, '--type-aware', '--print-config']);
-    diagnostics = runOxlint(['-c', RATCHET_CONFIG, '--type-aware', '--format', 'json']).diagnostics;
+    layering = layeringFindings(
+      runOxlint(['--type-aware', '--print-config']),
+      runOxlint(['-c', RATCHET_CONFIG, '--type-aware', '--print-config']),
+    );
+    diagnostics = layering.length === 0 ? runOxlint(['-c', RATCHET_CONFIG, '--type-aware', '--format', 'json']).diagnostics : [];
   } catch (error) {
     process.stderr.write(`✗ ratchet: could not run oxlint. ${error.message}\n`);
     return 1;
   }
-  const mainIgnores = JSON.stringify((mainConfig.ignorePatterns ?? []).toSorted());
-  const ratchetIgnores = JSON.stringify((ratchetConfig.ignorePatterns ?? []).toSorted());
-  if (mainIgnores !== ratchetIgnores) {
-    process.stderr.write(
-      [
-        `✗ ratchet: ignorePatterns in ${RATCHET_CONFIG} differ from ${MAIN_CONFIG}`,
-        '  Why: extends does not carry ignorePatterns over, so the ratchet would lint a different set of files than lint does.',
-        `  What to do: copy the ignorePatterns list from ${MAIN_CONFIG} into ${RATCHET_CONFIG}.`,
-      ].join('\n') + '\n',
-    );
+  if (layering.length > 0) {
+    process.stderr.write(`${formatLayering(layering).join('\n')}\n`);
     return 1;
   }
   const rules = ratchetRules(JSON.parse(readFileSync(join(ROOT, RATCHET_CONFIG), 'utf8')));
-  const { counts, unused, unmatched } = countFindings(diagnostics, rules);
-  if (unmatched.length > 0) {
-    process.stderr.write(`${formatUnmatched(unmatched).join('\n')}\n`);
+  const { counts, unused, unmatched, enforced } = countFindings(diagnostics, rules);
+  const blocking = [
+    ...(enforced.length > 0 ? formatEnforced(enforced) : []),
+    ...(unmatched.length > 0 ? formatUnmatched(unmatched) : []),
+  ];
+  if (blocking.length > 0) {
+    process.stderr.write(`${blocking.join('\n')}\n`);
     return 1;
   }
   const outcome = ratchetBaseline(join(ROOT, BASELINE_FILE), counts, args);
@@ -258,7 +375,7 @@ export function main(args) {
   }
   const { findings, files } = totals(counts);
   process.stdout.write(
-    `✓ ratchet: ${rules.size} rules frozen at ${findings} findings in ${files} files; nothing new, no unused suppressions\n`,
+    `✓ oxlint: no findings from enforced rules; ${rules.size} rules frozen at ${findings} findings in ${files} files; nothing new, no unused suppressions\n`,
   );
   return 0;
 }

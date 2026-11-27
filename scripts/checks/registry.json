@@ -11,11 +11,6 @@
       "why": "AGENTS.md forbids comments in JS/TS code, and this check is what enforces it."
     },
     {
-      "run": "oxlint --type-aware --deny-warnings",
-      "in": "package.json#scripts.lint",
-      "why": "This is the lint gate itself. Without it nothing in .oxlintrc.json is enforced, and any extra path argument would narrow what gets linted."
-    },
-    {
       "run": "node packages/agent-core-v2/scripts/check-import-boundaries.mjs",
       "in": "package.json#scripts.lint",
       "why": "AGENTS.md states that the agent-core-v2 layering, including the light remote executor, is enforced by this check."
@@ -28,7 +23,7 @@
     {
       "run": "node scripts/checks/ratchet.mjs",
       "in": "package.json#scripts.lint",
-      "why": "It freezes rules that already have findings at their current count per file and reports suppressions that no longer suppress anything; without it new code could add to that debt unnoticed."
+      "why": "This is the lint gate itself. It runs type-aware oxlint once over the whole repository with .oxlintrc.ratchet.json, which extends .oxlintrc.json: any finding from a rule .oxlintrc.json enforces fails it, rules that already have findings stay frozen at their current count per file, and suppressions that no longer suppress anything are reported. It also refuses a ratchet config that does more than freeze rules, so freezing cannot loosen an enforced rule. Without it nothing in .oxlintrc.json is enforced and new code could add to the frozen debt unnoticed."
     },
     {
       "run": "node scripts/checks/app-boundaries.mjs",

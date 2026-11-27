@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { compareCounts, countFindings, ratchetBaseline, ratchetRules, reportChanges, ruleOf, runCountCheck, trackedFiles } from './ratchet.mjs';
+import { compareCounts, countFindings, layeringFindings, ratchetBaseline, ratchetRules, reportChanges, ruleOf, runCountCheck, trackedFiles } from './ratchet.mjs';
 
 await test('ruleOf turns an oxlint diagnostic code into the config rule name', () => {
   assert.equal(ruleOf('typescript(no-explicit-any)'), 'typescript/no-explicit-any');
@@ -31,19 +31,22 @@ await test('ratchetRules collects the rules that a config turns on at the root a
 
 const UNUSED = {
   message: 'Unused oxlint-disable directive (no problems were reported).',
+  severity: 'error',
   filename: 'packages/core/src/a.ts',
 };
 
-await test('countFindings counts frozen rules per file and keeps unused directives and unmatched findings apart', () => {
-  const NOT_FROZEN = { code: 'eslint(eqeqeq)', message: 'Expected ===.', filename: 'packages/core/src/a.ts' };
-  const NO_CODE = { message: 'Expected a semicolon.', filename: 'packages/core/src/c.ts' };
-  const { counts, unused, unmatched } = countFindings(
+await test('countFindings counts frozen warnings per file and keeps unused directives, unmatched warnings and enforced findings apart', () => {
+  const NOT_FROZEN = { code: 'eslint(eqeqeq)', severity: 'warning', message: 'Expected ===.', filename: 'packages/core/src/a.ts' };
+  const ENFORCED = { code: 'eslint(no-empty)', severity: 'error', message: 'Unexpected empty block.', filename: 'packages/core/src/d.ts' };
+  const NO_CODE = { severity: 'error', message: 'Expected a semicolon.', filename: 'packages/core/src/c.ts' };
+  const { counts, unused, unmatched, enforced } = countFindings(
     [
-      { code: 'eslint(no-empty)', message: 'Unexpected empty block.', filename: 'packages/core/src/a.ts' },
-      { code: 'eslint(no-empty)', message: 'Unexpected empty block.', filename: 'packages/core/src/a.ts' },
-      { code: 'eslint(no-empty)', message: 'Unexpected empty block.', filename: 'packages/core/src/b.ts' },
-      { code: 'react-hooks(exhaustive-deps)', message: 'Missing dependency.', filename: 'apps/vis/web/src/a.tsx' },
+      { code: 'eslint(no-empty)', severity: 'warning', message: 'Unexpected empty block.', filename: 'packages/core/src/a.ts' },
+      { code: 'eslint(no-empty)', severity: 'warning', message: 'Unexpected empty block.', filename: 'packages/core/src/a.ts' },
+      { code: 'eslint(no-empty)', severity: 'warning', message: 'Unexpected empty block.', filename: 'packages/core/src/b.ts' },
+      { code: 'react-hooks(exhaustive-deps)', severity: 'warning', message: 'Missing dependency.', filename: 'apps/vis/web/src/a.tsx' },
       NOT_FROZEN,
+      ENFORCED,
       NO_CODE,
       UNUSED,
     ],
@@ -54,7 +57,95 @@ await test('countFindings counts frozen rules per file and keeps unused directiv
     'react/exhaustive-deps': { 'apps/vis/web/src/a.tsx': 1 },
   });
   assert.deepEqual(unused, [UNUSED]);
-  assert.deepEqual(unmatched, [NOT_FROZEN, NO_CODE]);
+  assert.deepEqual(unmatched, [NOT_FROZEN]);
+  assert.deepEqual(enforced, [ENFORCED, NO_CODE]);
+});
+
+const override = (files, rules, extra) => ({ files, env: null, globals: null, plugins: null, rules, ...extra });
+
+const MAIN = {
+  plugins: ['typescript', 'oxc'],
+  jsPlugins: [],
+  categories: {},
+  settings: {},
+  env: { builtin: true },
+  globals: {},
+  options: { typeAware: true },
+  ignorePatterns: ['dist/', 'node_modules/'],
+  rules: { eqeqeq: 'deny', 'typescript/no-floating-promises': 'deny' },
+  overrides: [
+    override(['apps/desktop/**/*'], { eqeqeq: 'allow' }),
+    override(['**/*.test.ts'], { 'vitest/valid-title': 'deny' }, { plugins: ['vitest'] }),
+  ],
+};
+
+function ratchetOver(main, { rules = {}, overrides = [], ...fields } = {}) {
+  return {
+    ...structuredClone(main),
+    options: { ...main.options, reportUnusedDisableDirectives: 'deny' },
+    rules: { ...main.rules, ...rules },
+    overrides: [...structuredClone(main.overrides), ...overrides],
+    ...fields,
+  };
+}
+
+const findingsOf = (main, ratchet) => layeringFindings(main, ratchet).join('\n');
+
+await test('layeringFindings accepts a ratchet config that only freezes rules on top of the main config', () => {
+  const frozen = {
+    rules: { 'no-empty': 'warn' },
+    overrides: [
+      override(['apps/desktop/**/*'], { eqeqeq: ['warn', { null: 'ignore' }] }),
+      override(['**/*.test.ts'], { 'no-console': 'allow' }, { plugins: ['vitest'] }),
+    ],
+  };
+  assert.deepEqual(layeringFindings(MAIN, ratchetOver(MAIN, frozen)), []);
+  assert.deepEqual(layeringFindings(MAIN, ratchetOver(MAIN, { ...frozen, ignorePatterns: ['node_modules/', 'dist/'] })), []);
+});
+
+await test('layeringFindings refuses a ratchet setting that freezes or switches off a rule the main config enforces on those files', () => {
+  assert.match(
+    findingsOf(MAIN, ratchetOver(MAIN, { overrides: [override(['packages/core/**'], { eqeqeq: 'warn' })] })),
+    /override for packages\/core\/\*\* sets eqeqeq to "warn", but \.oxlintrc\.json enforces eqeqeq on those files/,
+  );
+  assert.match(
+    findingsOf(MAIN, ratchetOver(MAIN, { overrides: [override(['packages/core/**'], { 'typescript/no-floating-promises': 'allow' })] })),
+    /sets typescript\/no-floating-promises to "off", but \.oxlintrc\.json enforces/,
+  );
+  const reenabled = { ...MAIN, overrides: [...MAIN.overrides, override(['apps/desktop/src/**'], { eqeqeq: 'deny' })] };
+  assert.match(
+    findingsOf(reenabled, ratchetOver(reenabled, { overrides: [override(['apps/desktop/**/*'], { eqeqeq: 'warn' })] })),
+    /override for apps\/desktop\/\*\*\/\* sets eqeqeq to "warn", but \.oxlintrc\.json enforces eqeqeq/,
+  );
+  assert.match(findingsOf(MAIN, ratchetOver(MAIN, { rules: { eqeqeq: 'warn' } })), /eqeqeq at the root changes the setting \.oxlintrc\.json gives it/);
+});
+
+await test('layeringFindings refuses ratchet settings that enforce rules and a main config that uses warn', () => {
+  assert.match(findingsOf(MAIN, ratchetOver(MAIN, { rules: { 'no-empty': 'deny' } })), /no-empty at the root is set to "error"\. Only "warn"/);
+  assert.match(
+    findingsOf(MAIN, ratchetOver(MAIN, { overrides: [override(['apps/desktop/**/*'], { eqeqeq: 'deny' })] })),
+    /sets eqeqeq to "error"\. Only "warn" \(frozen\) and "off" belong/,
+  );
+  const warnedMain = { ...MAIN, rules: { ...MAIN.rules, 'no-var': 'warn' } };
+  assert.match(findingsOf(warnedMain, ratchetOver(warnedMain)), /\.oxlintrc\.json sets no-var to "warn"/);
+});
+
+await test('layeringFindings refuses a ratchet config that changes what it shares with the main config', () => {
+  assert.match(findingsOf(MAIN, ratchetOver(MAIN, { ignorePatterns: ['dist/'] })), /^ignorePatterns differ from \.oxlintrc\.json/m);
+  assert.match(findingsOf(MAIN, ratchetOver(MAIN, { plugins: ['typescript'] })), /^plugins differ from \.oxlintrc\.json/m);
+  assert.match(findingsOf(MAIN, ratchetOver(MAIN, { options: { typeAware: false } })), /^options\.typeAware differs from \.oxlintrc\.json/m);
+  assert.match(
+    findingsOf(MAIN, { ...ratchetOver(MAIN), overrides: [override(['apps/desktop/**/*'], { eqeqeq: 'warn' })] }),
+    /the overrides of \.oxlintrc\.json are not applied first and unchanged/,
+  );
+  assert.match(
+    findingsOf(MAIN, ratchetOver(MAIN, { overrides: [override(['apps/desktop/**/*'], { eqeqeq: 'warn' }, { plugins: ['react'] })] })),
+    /sets plugins that no \.oxlintrc\.json override with the same files sets/,
+  );
+  assert.match(
+    findingsOf(MAIN, ratchetOver(MAIN, { overrides: [override(['apps/desktop/**/*'], { eqeqeq: 'warn' }, { env: { browser: true } })] })),
+    /sets env or globals/,
+  );
 });
 
 const describeChange = (change) => `${change.kind} ${change.rule} ${change.file} ${change.from}→${change.to}`;
