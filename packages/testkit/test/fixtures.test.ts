@@ -83,6 +83,7 @@ describe('createGitRepository', () => {
       await createGitRepository(dir, { files: { 'notes.txt': 'alpha\n' }, branches: { feature: { 'notes.txt': 'beta\n' } } });
 
       expect((await runGit(dir, ['symbolic-ref', '--short', 'HEAD'])).trim()).toBe('main');
+      expect((await runGit(dir, ['config', '--local', '--get', 'core.autocrlf'])).trim()).toBe('false');
       expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('alpha\n');
       await runGit(dir, ['checkout', '-q', 'feature']);
       expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('beta\n');

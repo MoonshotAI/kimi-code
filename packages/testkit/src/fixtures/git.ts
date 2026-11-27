@@ -28,6 +28,7 @@ export async function createGitRepository(dir: string, options: GitRepositoryOpt
   await mkdir(dir, { recursive: true });
   await writeFiles(dir, options.files ?? {});
   await git(dir, 'init', '-q', '-b', 'main');
+  await git(dir, 'config', 'core.autocrlf', 'false');
   await git(dir, 'add', '-A');
   await git(dir, ...COMMIT_SETTINGS, 'commit', '-q', '--allow-empty', '-m', 'initial');
   for (const [branch, files] of Object.entries(options.branches ?? {})) {
