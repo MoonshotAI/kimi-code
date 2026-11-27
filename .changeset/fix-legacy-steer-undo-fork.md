@@ -1,6 +1,7 @@
 ---
 '@moonshot-ai/kimi-code': patch
 'kimi-code-app': patch
+'kimi-code': patch
 ---
 
-Preserve follow-up turns correctly when forking older sessions after undoing a prompt.
+Prevent undone prompts from reappearing and keep follow-up turns correctly assigned when forking older sessions.
