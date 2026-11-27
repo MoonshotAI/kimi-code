@@ -3,24 +3,20 @@ import { edit, say } from '@moonshot-ai/testkit/model';
 import { expect, scenario } from '../../support/scenario';
 
 scenario(
-  'applies a new default permission mode to new sessions, and leaves the open session as it was',
+  'starts a new session in the permission mode the user picked last',
   {
-    onlyOn: ['desktop', 'web'],
-    reason: 'Only the Desktop and Web settings change the default for new sessions; the terminal UI changes the current session only, and an editor sets the mode of each session over ACP.',
+    except: {
+      acp: 'An editor sets the mode of each session with session/set_mode: a session it opens with session/new starts in the default mode, not in the mode of the session before it.',
+    },
     workspace: { 'a.txt': 'one\n', 'b.txt': 'one\n' },
   },
   async ({ product, model, workspace }) => {
     model.script(
-      say('Hello.'),
       edit({ path: 'a.txt', old_string: 'one', new_string: 'two' }),
       say('Changed a.txt.'),
       edit({ path: 'b.txt', old_string: 'one', new_string: 'two' }),
       say('Changed b.txt.'),
     );
-
-    await product.send('Say hello.');
-    await product.waitIdle();
-    await product.setDefaultPermissionMode('yolo');
 
     await product.send('Change a.txt.');
     await product.expectApproval({ name: 'Edit', target: 'a.txt' });
@@ -28,6 +24,7 @@ scenario(
     await product.waitIdle();
     await product.expectReply('Changed a.txt.');
 
+    await product.setPermissionMode('yolo');
     await product.newSession();
     await product.send('Change b.txt.');
     await product.waitIdle();
@@ -36,6 +33,7 @@ scenario(
 
     await workspace.expectFile('a.txt', 'two\n');
     await workspace.expectFile('b.txt', 'two\n');
-    expect(model.requests('main')).toHaveLength(5);
+    expect(model.requests('main')).toHaveLength(4);
+    expect(model.requests('main')[2]?.texts('user').some((text) => text.includes('Change a.txt.'))).toBe(false);
   },
 );
