@@ -248,6 +248,12 @@ function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' |
   };
 }
 
+function assertSkillName(name: string): void {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+    throw new Error(`useSkill() takes the name of a skill in lowercase letters, digits and dashes, like "release-notes", got ${JSON.stringify(name)}`);
+  }
+}
+
 function assertApprovalExpectation({ name, target }: ApprovalExpectation): void {
   if (!/^[ -~]+$/.test(target) || target !== target.trim()) {
     throw new Error(`expectApproval() takes the target as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(target)}`);
@@ -269,6 +275,7 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   expectError: lineCheck('expectError'),
   expectAbsent: lineCheck('expectAbsent'),
   openSession: promptCheck('openSession'),
+  useSkill: assertSkillName,
 };
 
 

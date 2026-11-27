@@ -33,6 +33,13 @@ const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
 };
+const NO_RELOAD_OVER_ACP =
+  'ACP has no request to reload a session, and kimi acp does not publish /reload among its commands, so an editor that sends it gets "Unknown ACP command".';
+const ONLY_THE_TERMINAL_UI_INITS = {
+  acp: 'kimi acp does not publish /init among its commands, so an editor that sends it gets "Unknown ACP command".',
+  desktop: 'The Desktop slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+  web: 'The Web slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+};
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
@@ -78,6 +85,9 @@ export const VERBS = {
     checksInterface: true,
   },
   openSession: { on: SURFACES, checksInterface: false },
+  reload: { on: ['tui', 'desktop', 'web'], absentBecause: NO_RELOAD_OVER_ACP, checksInterface: false },
+  init: { on: ['tui'], absentBecause: ONLY_THE_TERMINAL_UI_INITS, checksInterface: false },
+  useSkill: { on: SURFACES, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -226,6 +236,9 @@ interface VerbSignatures {
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
   openSession(title: string): Promise<void>;
+  reload(): Promise<void>;
+  init(): Promise<void>;
+  useSkill(name: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

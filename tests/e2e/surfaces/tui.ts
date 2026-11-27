@@ -163,6 +163,12 @@ const SESSION_CURRENT = '← current';
 const SESSION_TITLE_END = '  ';
 const SESSION_RESUMED = 'Resumed session (';
 const SESSION_RESUME_FAILURES = ['Failed to resume session', 'Failed to replay session history', 'Cannot switch sessions'] as const;
+const RELOAD_COMMAND = '/reload';
+const SESSION_RELOADED = 'Session reloaded.';
+const INIT_COMMAND = '/init';
+const INIT_RUN = 'Initialize AGENTS.md';
+const SKILL_COMMAND = '/skill:';
+const COMMAND_FAILED = 'Error: ';
 
 interface Screen {
   readonly text: string;
@@ -326,6 +332,17 @@ function resumedSession(screen: Screen, id: string): boolean {
 
 function resumeFailures(screen: Screen): number {
   return screen.text.split('\n').filter((row) => SESSION_RESUME_FAILURES.some((failure) => row.includes(failure))).length;
+}
+
+function rowsShowing(screen: Screen, text: string, whole: boolean): number {
+  return screen.text.split('\n').filter((row) => (whole ? row.trim() === text : row.includes(text))).length;
+}
+
+function commandFailures(screen: Screen): number {
+  return screen.text.split('\n').filter((row) => {
+    const line = row.trimStart();
+    return line.startsWith(COMMAND_FAILED) && !line.startsWith(TURN_FAILED);
+  }).length;
 }
 
 function drawnWidth(screen: Screen): number | undefined {
@@ -804,6 +821,57 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.turn = undefined;
     this.queued = [];
     this.recalled = undefined;
+  }
+
+  async reload(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) {
+      throw this.failure('reload() needs an idle product: the terminal UI refuses /reload while a turn runs, a message is queued or an approval is pending.', before);
+    }
+    this.assertEmptyInput('reload()', before);
+    if (!blocksOf(before).some((block) => block.mark === USER_MARK)) {
+      throw this.failure('reload() reloads the conversation on screen, but it shows no message yet; send one first.', before);
+    }
+    const reloaded = rowsShowing(before, SESSION_RELOADED, true);
+    const failures = commandFailures(before);
+    this.queued = [];
+    this.turn = undefined;
+    this.write(paste(RELOAD_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait('the CLI to report the session reloaded', (screen) => {
+      if (commandFailures(screen) > failures) return 'failed' as const;
+      return rowsShowing(screen, SESSION_RELOADED, true) > reloaded && this.turnOver(screen) ? ('reloaded' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('reload() saw the CLI fail to reload the session.', await this.read());
+  }
+
+  async init(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('init() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('init()', before);
+    const runs = rowsShowing(before, INIT_RUN, false);
+    const failures = commandFailures(before);
+    this.turn = { stopped: statusLines(before, TURN_STOPPED), failed: statusLines(before, TURN_FAILED) };
+    this.queued = [];
+    this.recalled = undefined;
+    this.write(paste(INIT_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the CLI to start the subagent that runs ${JSON.stringify(INIT_RUN)}`, (screen) => {
+      if (commandFailures(screen) > failures) return 'failed' as const;
+      return rowsShowing(screen, INIT_RUN, false) > runs ? ('started' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('init() saw the CLI fail to run /init.', await this.read());
+  }
+
+  async useSkill(name: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('useSkill() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('useSkill()', screen);
+    const command = `${SKILL_COMMAND}${name}`;
+    this.write(paste(command));
+    await this.enter(command, screen);
   }
 
   async resize(size: WindowSize): Promise<void> {

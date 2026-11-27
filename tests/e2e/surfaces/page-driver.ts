@@ -173,6 +173,14 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().openSession(title);
   }
 
+  reload(): Promise<void> {
+    return this.window().reload();
+  }
+
+  useSkill(name: string): Promise<void> {
+    return this.window().useSkill(name);
+  }
+
   idle(): Promise<boolean> {
     return this.window().idle();
   }

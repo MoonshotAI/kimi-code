@@ -39,6 +39,11 @@ const NEW_SESSION = 'New Session';
 const COMPACT_COMMAND = '/compact';
 const COMPACTED = /^Context compacted/;
 const COMPACTION_FAILED = 'Context compaction failed';
+const RELOAD_COMMAND = '/reload';
+const RELOAD_LABEL = 'reload';
+const SESSION_RELOADED = 'Session reloaded.';
+const REQUEST_FAILED = /^(?:Request failed|Operation failed|Cannot connect|Response timed out)/;
+const SKILL_COMMAND = '/skill:';
 const APPROVAL_TITLES: Readonly<Record<string, ApprovalToolName>> = { 'Run command?': 'Bash', 'Apply changes?': 'Edit', 'Write file?': 'Write' };
 const COMMAND_PROMPT = '$ ';
 const FEEDBACK_BOX = 'Explain why you are rejecting…';
@@ -464,6 +469,36 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     if (outcome === 'failed') throw new Error(`compact() saw the compaction fail.\n${await this.describe()}`);
   }
 
+  async reload(): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`reload() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.assertEmptyInput('reload()');
+    const size = await this.conversationSize();
+    if (size === 0) throw new Error(`reload() reloads the open conversation, but it shows no message yet; send one first.\n${await this.describe()}`);
+    const reloaded = this.notices(SESSION_RELOADED);
+    const failed = this.notices(REQUEST_FAILED);
+    const before = await reloaded.count();
+    const failedBefore = await failed.count();
+    await this.pickCommand('reload()', RELOAD_COMMAND, RELOAD_LABEL);
+    const outcome = await this.wait(`a ${SESSION_RELOADED} notice, with the conversation still there`, async () => {
+      if ((await failed.count()) > failedBefore) return 'failed' as const;
+      return (await reloaded.count()) > before && (await this.idle()) && (await this.conversationSize()) >= size ? ('reloaded' as const) : undefined;
+    });
+    if (outcome === 'failed') throw new Error(`reload() saw the session fail to reload.\n${await this.describe()}`);
+  }
+
+  async useSkill(name: string): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`useSkill() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.assertEmptyInput('useSkill()');
+    const before = await this.conversationSize();
+    await this.pickCommand('useSkill()', `${SKILL_COMMAND}${name}`, name);
+    await this.wait(`the message input to hold the skill ${JSON.stringify(name)}`, async () => ((await this.composerText()) === name ? true : undefined));
+    await this.enter(name, before);
+  }
+
   async newSession(): Promise<void> {
     if (!(await this.idle())) {
       throw new Error(`newSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
@@ -519,6 +554,21 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       previous = reading;
       return settled ? true : undefined;
     });
+  }
+
+  private async pickCommand(verb: string, typed: string, label: string): Promise<void> {
+    await this.press(verb, 'the message input', this.composer());
+    await this.page.keyboard.type(typed);
+    const option = this.page
+      .getByRole('option')
+      .and(this.page.locator(SHOWN))
+      .filter({ has: this.page.getByText(label, { exact: true }) });
+    await this.wait(`the slash menu to offer ${typed}`, async () => ((await option.count()) > 0 ? true : undefined));
+    await this.press(verb, `${typed} in the slash menu`, option.first());
+  }
+
+  private notices(text: string | RegExp): Locator {
+    return this.page.getByRole('status').and(this.page.locator(SHOWN)).filter({ hasText: text });
   }
 
   private async inputArea(): Promise<Locator> {

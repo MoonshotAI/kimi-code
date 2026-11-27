@@ -52,6 +52,9 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   exit: () => '用户退出，回到原来的 shell',
   expectTerminalRestored: () => '检查终端回到了正常的输入模式',
   openSession: (title) => `用户回到之前标题为${quote(title)}的会话`,
+  reload: () => '用户重新加载会话（/reload）',
+  init: () => '用户用 /init 生成 AGENTS.md',
+  useSkill: (name) => `用户使用技能${quote(name)}`,
 };
 
 export const DISK_TITLES = {

@@ -133,7 +133,9 @@ entries:
   - id: B8
     operation: Run /reload without changing the configuration
     promise: keeps
-    gap: Needs a reload action.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/reload-keeps-the-prefix.spec.ts
 
   - id: B9
     operation: Turn an experimental feature on or off with /experiments in the middle of a session
@@ -167,7 +169,9 @@ entries:
   - id: C4
     operation: Use a skill or a slash command between two turns
     promise: keeps
-    gap: Needs a slash command action.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/skill-keeps-the-prefix.spec.ts
 
   - id: C5
     operation: Turn the Desktop built-in browser control off and on again
@@ -316,7 +320,9 @@ entries:
   - id: E6
     operation: Generate AGENTS.md with /init, then continue
     promise: keeps
-    gap: Needs a slash command action.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/init-keeps-the-prefix.spec.ts
 
   - id: F1
     operation: Two clients follow the same session

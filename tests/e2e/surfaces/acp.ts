@@ -76,6 +76,7 @@ const INVALID_PARAMS = -32602;
 const COMPACT_COMMAND = '/compact';
 const COMPACTION_DONE = 'Compaction completed.';
 const COMPACTION_FAILURES = ['Compaction cancelled.', 'Compaction is blocked'];
+const SKILL_COMMAND = 'skill:';
 
 const SESSION_METHODS = [methods.client.session.update, methods.client.session.requestPermission];
 
@@ -493,6 +494,18 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     });
     this.assertPromptValid();
     if (outcome === 'failed') throw new Error(`compact() saw the compaction cancelled or blocked.\n${this.describe()}`);
+  }
+
+  async useSkill(name: string): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`useSkill() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    const command = `${SKILL_COMMAND}${name}`;
+    const offered = await this.wait('the agent to publish its commands with available_commands_update', () => this.availableCommands());
+    if (!offered.includes(command)) {
+      throw new Error(`useSkill() found no /${command} among the commands the agent offers the editor: ${offered.map((offer) => `/${offer}`).join(', ')}.\n${this.describe()}`);
+    }
+    await this.send(`/${command}`);
   }
 
   async newSession(): Promise<void> {
@@ -1023,6 +1036,11 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private sessionMode(): string | undefined {
     const reported = this.sessionUpdates().findLast((update) => update.sessionUpdate === 'current_mode_update');
     return reported?.sessionUpdate === 'current_mode_update' ? reported.currentModeId : this.openedMode;
+  }
+
+  private availableCommands(): readonly string[] | undefined {
+    const published = this.sessionUpdates().findLast((update) => update.sessionUpdate === 'available_commands_update');
+    return published?.sessionUpdate === 'available_commands_update' ? published.availableCommands.map((command) => command.name) : undefined;
   }
 
   private turnUpdates(): readonly SessionUpdate[] {
