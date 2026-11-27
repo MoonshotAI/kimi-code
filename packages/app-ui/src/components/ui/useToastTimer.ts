@@ -41,7 +41,7 @@ export function useToastTimer(options: { duration: () => number; onExpire: () =>
 
   const duration = options.duration();
   if (duration > 0) {
-    const touch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches === true;
+    const touch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches;
     run(duration + (touch ? 5000 : 0));
   }
   onUnmounted(dispose);
