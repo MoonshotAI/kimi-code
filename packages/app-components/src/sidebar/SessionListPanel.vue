@@ -5,6 +5,7 @@ import '../lib/anchored-menu.css';
 import type { PinnedEntry, WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import {
   copyTextToClipboard,
+  followUiPreferences,
   loadCollapsedWorkspaces,
   loadSessionsSectionCollapsed,
   loadSidebarViewMode,
@@ -14,6 +15,7 @@ import {
   savePinnedCollapsed,
   saveSessionsSectionCollapsed,
   saveSidebarViewMode,
+  UI_PREFERENCE_KEYS,
   visibleOpenGroups,
   type DropPosition,
   type PinnedInsertTarget,
@@ -304,6 +306,20 @@ function onDropPinnedSession(id: string): void {
 }
 
 const listMode = ref<SidebarViewMode>(loadSidebarViewMode());
+onBeforeUnmount(
+  followUiPreferences(
+    [
+      UI_PREFERENCE_KEYS.sidebarSessionsSectionCollapsed,
+      UI_PREFERENCE_KEYS.sidebarCollapsedWorkspaces,
+      UI_PREFERENCE_KEYS.sidebarViewMode,
+    ],
+    () => {
+      sessionsCollapsed.value = loadSessionsSectionCollapsed();
+      collapsedIds.value = new Set(loadCollapsedWorkspaces());
+      listMode.value = loadSidebarViewMode();
+    },
+  ),
+);
 
 const sectionHeaderTitle = computed(() =>
   props.statusTab === 'workspaces'

@@ -1,8 +1,10 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
 import {
+  followUiPreferences,
   insertPinnedOrderKey,
   loadPinnedOrder,
+  UI_PREFERENCE_KEYS,
   moveInOrder,
   reconcilePinnedOrder,
   savePinnedOrder,
@@ -22,6 +24,9 @@ function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
 
 export const usePinnedOrderStore = defineStore('kimi.pinnedOrder', () => {
   const pinnedOrder = ref<string[]>(loadPinnedOrder());
+  followUiPreferences([UI_PREFERENCE_KEYS.sidebarPinnedOrder], () => {
+    pinnedOrder.value = loadPinnedOrder();
+  });
 
   function commitOrder(
     nextOrder: string[],

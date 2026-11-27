@@ -7,6 +7,7 @@ import { openDialogCount } from '@moonshot-ai/app-ui';
 import { resolveUpgradeRegion } from '@moonshot-ai/app-core/lib';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
 import { hostsStore } from '../stores/hosts';
+import { uiPreferencesStore } from '../stores/uiPreferences';
 
 export type PendingWorkspaceSubmit = {
   prompt: PromptEnvelope;
@@ -125,7 +126,18 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
   const isMobile = useIsMobile();
   if (!stateInitialized) {
     stateInitialized = true;
-    showOnboarding.value = client.onboarded?.value === false;
+    const preferences = uiPreferencesStore();
+    let decided = false;
+    const stop = watch(
+      () => preferences.synced,
+      (synced) => {
+        if (!synced || decided) return;
+        decided = true;
+        showOnboarding.value = client.onboarded?.value === false;
+      },
+      { immediate: true },
+    );
+    if (decided) stop();
   }
   if (dialogDeps !== undefined) deps = dialogDeps;
 
