@@ -23,6 +23,7 @@ function stubDocument(): {
 }
 
 function escapeKey(init: { isComposing?: boolean; keyCode?: number } = {}): KeyboardEvent {
+  // oxlint-disable-next-line typescript/no-deprecated -- exercises the legacy keyCode 229 IME fallback
   return { isComposing: false, keyCode: 27, ...init } as KeyboardEvent;
 }
 
@@ -39,14 +40,14 @@ afterEach(() => {
 describe('installImeCompositionLatch / isImeKeyEvent', () => {
   it('lets a plain Escape through when no IME composition is active', async () => {
     stubDocument();
-    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/lib/imeComposition');
+    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/composables/imeComposition');
     installImeCompositionLatch();
     expect(isImeKeyEvent(escapeKey())).toBe(false);
   });
 
   it('is idempotent — a second install adds no more listeners', async () => {
     const doc = stubDocument();
-    const { installImeCompositionLatch } = await import('../src/lib/imeComposition');
+    const { installImeCompositionLatch } = await import('../src/composables/imeComposition');
     installImeCompositionLatch();
     installImeCompositionLatch();
     expect(doc.listenerCount('compositionstart')).toBe(1);
@@ -57,7 +58,7 @@ describe('installImeCompositionLatch / isImeKeyEvent', () => {
 
   it('claims Escape while a composition is active, even when the browser leaves it unflagged', async () => {
     const doc = stubDocument();
-    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/lib/imeComposition');
+    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/composables/imeComposition');
     installImeCompositionLatch();
     doc.fire('compositionstart');
     expect(isImeKeyEvent(escapeKey())).toBe(true);
@@ -65,7 +66,7 @@ describe('installImeCompositionLatch / isImeKeyEvent', () => {
 
   it('keeps claiming the trailing Escape within a 100ms window after compositionend', async () => {
     const doc = stubDocument();
-    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/lib/imeComposition');
+    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/composables/imeComposition');
     installImeCompositionLatch();
     doc.fire('compositionstart');
     doc.fire('compositionend');
@@ -78,7 +79,7 @@ describe('installImeCompositionLatch / isImeKeyEvent', () => {
 
   it('self-heals on any focus change when compositionend never arrives', async () => {
     const doc = stubDocument();
-    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/lib/imeComposition');
+    const { installImeCompositionLatch, isImeKeyEvent } = await import('../src/composables/imeComposition');
     installImeCompositionLatch();
     doc.fire('compositionstart');
     expect(isImeKeyEvent(escapeKey())).toBe(true);
@@ -88,7 +89,7 @@ describe('installImeCompositionLatch / isImeKeyEvent', () => {
 
   it('claims Escape on the event flags alone (isComposing / legacy keyCode 229)', async () => {
     stubDocument();
-    const { isImeKeyEvent } = await import('../src/lib/imeComposition');
+    const { isImeKeyEvent } = await import('../src/composables/imeComposition');
     expect(isImeKeyEvent(escapeKey({ isComposing: true }))).toBe(true);
     expect(isImeKeyEvent(escapeKey({ keyCode: 229 }))).toBe(true);
   });

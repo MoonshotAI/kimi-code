@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { isImeKeyEvent } from '@moonshot-ai/app-client/lib';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, isImeKeyEvent } from '@moonshot-ai/app-ui';
 import { SettingsSubpageHostKey } from './useSettingsSubpage';
 
 const props = defineProps<{ parentTitle: string; title: string; description?: string; fit?: boolean }>();

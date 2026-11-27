@@ -20,36 +20,7 @@
     "packages/app-client/src/stores/prompt.ts": 6,
     "packages/app-client/src/stores/sessions.ts": 6,
     "packages/app-client/src/stores/warnings.ts": 6,
-    "packages/app-client/src/stores/workspaces.ts": 6,
-    "packages/app-components/src/admin/FilterSelect.vue": 15,
-    "packages/app-components/src/admin/MultiSelectMenu.vue": 15,
-    "packages/app-components/src/admin/SessionAdminMenu.vue": 15,
-    "packages/app-components/src/admin/SessionAdminPagination.vue": 15,
-    "packages/app-components/src/admin/SessionAdminTable.vue": 15,
-    "packages/app-components/src/admin/SessionAdminView.vue": 15,
-    "packages/app-components/src/chat/ActivityRun.vue": 15,
-    "packages/app-components/src/chat/AgentDetailPanel.vue": 15,
-    "packages/app-components/src/chat/AgentPanel.vue": 15,
-    "packages/app-components/src/chat/ChatPane.vue": 15,
-    "packages/app-components/src/chat/SideChatPanel.vue": 15,
-    "packages/app-components/src/chat/ThinkingBlock.vue": 15,
-    "packages/app-components/src/chat/TurnFold.vue": 15,
-    "packages/app-components/src/chat/tool-calls/browser/BrowserRetryRun.vue": 15,
-    "packages/app-components/src/index.ts": 15
-  },
-  "self-package-import": {
-    "packages/app-components/src/admin/FilterSelect.vue": 1,
-    "packages/app-components/src/admin/MultiSelectMenu.vue": 1,
-    "packages/app-components/src/admin/SessionAdminMenu.vue": 1,
-    "packages/app-components/src/admin/SessionAdminPagination.vue": 1,
-    "packages/app-components/src/admin/SessionAdminTable.vue": 2,
-    "packages/app-components/src/admin/SessionAdminView.vue": 5,
-    "packages/app-components/src/chat/ActivityRun.vue": 4,
-    "packages/app-components/src/chat/ChatPane.vue": 2,
-    "packages/app-components/src/chat/ThinkingBlock.vue": 1,
-    "packages/app-components/src/chat/TurnDiffPanel.vue": 1,
-    "packages/app-components/src/chat/TurnFilesSummary.vue": 1,
-    "packages/app-components/src/chat/TurnFold.vue": 2
+    "packages/app-client/src/stores/workspaces.ts": 6
   },
   "store-cross-import": {
     "packages/app-client/src/stores/approvals.ts": 1,
@@ -74,10 +45,8 @@
     "packages/app-client/src/stores/workspaces.ts": 6
   },
   "upward-package-import": {
-    "packages/app-markdown/src/Markdown.vue": 1,
-    "packages/app-markdown/src/lib/codeScrollbars.ts": 1,
     "packages/app-markdown/src/lib/codeWrap.ts": 1,
-    "packages/app-markdown/src/lib/linkTooltip.ts": 2,
+    "packages/app-markdown/src/lib/linkTooltip.ts": 1,
     "packages/app-markdown/src/lib/tableWide.ts": 1,
     "packages/app-ui/src/components/ui/toastTypes.ts": 1
   },

@@ -2,7 +2,6 @@ export * from './useIsMobile';
 export * from './chatMcpAuthorization';
 export * from './useViewportWidth';
 export * from './useResizable';
-export * from './useOverlayScrollbar';
 export * from './useConfirmDialog';
 export * from './useComposerDraft';
 export * from './useComposerAutoFocus';

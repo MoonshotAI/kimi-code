@@ -2,6 +2,7 @@
 import type { InjectionKey, Ref, ShallowRef } from 'vue';
 import type { AnchorPath, AuxKind, LayoutModel, NavigateOptions, ScrollController } from './lib/transcriptScroll';
 export const HistoryStateKey: InjectionKey<Map<string, unknown>> = Symbol('history-state');
+export const PinScrollKey: InjectionKey<(el: HTMLElement, ms?: number) => void> = Symbol('pinScroll');
 
 export type TranscriptRefreshSource = 'scroll' | 'model';
 
