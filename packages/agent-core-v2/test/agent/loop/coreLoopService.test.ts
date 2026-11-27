@@ -1,12 +1,15 @@
 import { createControlledPromise } from '@antfu/utils';
-import { batch, call, say } from '@moonshot-ai/testkit/model';
+import { batch, call, httpError, say, streamError, withUsage } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/message';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
+import { CoreLoopEvent, onCoreLoopEvent } from '#/agent/loop/coreLoopEvent';
+import { LoopJournal, restoreLoopJournal } from '#/agent/loop/journal';
 import { IConfigService } from '#/app/config/config';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -17,10 +20,15 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
-import { IEventBus } from '#/app/event/eventBus';
-import { restoreLoopJournal } from '#/agent/loop/journal';
 import { IWireService } from '#/wire/wire';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import {
+  TurnStarted,
+  TurnStepCompleted,
+  TurnStepRetrying,
+  TurnStepStarted,
+  TurnStepStreamReset,
+} from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptCompleted, PromptStarted, PromptSubmitted } from '#/agent/prompt/promptEvents';
 import type { ExecutableTool } from '#/tool/toolContract';
@@ -1355,5 +1363,164 @@ pairedTestkitTest(
     expect(historyAfter?.role === 'assistant' ? historyAfter.toolCalls.map((entry) => entry.id) : []).toEqual([
       'call_pair_ok',
     ]);
+  },
+);
+
+testkitTest(
+  'publishes enriched core loop events synchronously on the agent bus before journal append and wire writes',
+  async ({ agent, model }) => {
+    const bus = agent.get(IEventBus);
+    const sessionBus = agent.get(ISessionEventBus);
+    const wire = agent.get(IWireService);
+    const agentId = agent.get(IAgentScopeContext).agentId;
+    const originalAppend = LoopJournal.prototype.append;
+    const journalSpy = vi.spyOn(LoopJournal.prototype, 'append').mockImplementation(function (
+      this: LoopJournal,
+      event: LoopEmitted,
+    ) {
+      originalAppend.call(this, event);
+    });
+    const wireAppendSpy = vi.spyOn(wire, 'append');
+    const wireAppendRecordSpy = vi.spyOn(wire, 'appendRecord');
+    const observed: Array<{
+      readonly type: LoopEmitted['type'];
+      readonly journalCalls: number;
+      readonly wireCalls: number;
+      readonly journaledTypes: readonly LoopEmitted['type'][];
+      readonly wireJson: string;
+    }> = [];
+    const sessionObserved: CoreLoopEvent[] = [];
+    const ended: Array<Extract<LoopEmitted, { type: 'turn.ended' }>> = [];
+    const turnStarted: Array<Extract<LoopEmitted, { type: 'turn.started' }>> = [];
+    const stepStarted: Array<Extract<LoopEmitted, { type: 'step.started' }>> = [];
+    try {
+      bus.subscribe(CoreLoopEvent, (envelope) => {
+        expect(envelope.agentId).toBe(agentId);
+        observed.push({
+          type: envelope.event.type,
+          journalCalls: journalSpy.mock.calls.length,
+          wireCalls: wireAppendSpy.mock.calls.length + wireAppendRecordSpy.mock.calls.length,
+          journaledTypes: journalSpy.mock.calls.map(([event]) => event.type),
+          wireJson: JSON.stringify([
+            ...wireAppendSpy.mock.calls.map(([record]) => record),
+            ...wireAppendRecordSpy.mock.calls.map(([record]) => record),
+          ]),
+        });
+        if (envelope.event.type === 'turn.started') turnStarted.push(envelope.event);
+        if (envelope.event.type === 'step.started') stepStarted.push(envelope.event);
+      });
+      sessionBus.onAgent(agent.agentContext, CoreLoopEvent, (envelope) => {
+        sessionObserved.push(envelope);
+      });
+      onCoreLoopEvent(bus, 'turn.ended', (event, envelope) => {
+        expect(envelope.agentId).toBe(agentId);
+        ended.push(event);
+      });
+
+      model.script(withUsage({ input: 12, output: 4 }, say(['hello', ' world'])));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'hi core bus' }] });
+      await agent.untilTurnEnd();
+
+      const types = observed.map((entry) => entry.type);
+      expect(types).toEqual(sessionObserved.map((envelope) => envelope.event.type));
+      const backbone = types.filter((type) =>
+        type === 'turn.started' ||
+        type === 'step.started' ||
+        type === 'llm.started' ||
+        type === 'llm.requested' ||
+        type === 'llm.ended' ||
+        type === 'step.ended' ||
+        type === 'turn.ended',
+      );
+      expect(backbone).toEqual([
+        'turn.started',
+        'step.started',
+        'llm.started',
+        'llm.requested',
+        'llm.ended',
+        'step.ended',
+        'turn.ended',
+      ]);
+
+      for (const [index, entry] of observed.entries()) {
+        expect(entry.journaledTypes).toEqual(types.slice(0, index));
+      }
+      expect(observed[0]).toMatchObject({ type: 'prompt.submitted', journalCalls: 0, wireCalls: 0 });
+      const stepObservation = observed.find((entry) => entry.type === 'step.started')!;
+      expect(stepObservation.wireJson).not.toContain('"step.begin"');
+      const endedObservation = observed.find((entry) => entry.type === 'turn.ended')!;
+      expect(endedObservation.journaledTypes).not.toContain('turn.ended');
+      expect(endedObservation.wireJson).not.toContain('"turn.ended"');
+
+      expect(turnStarted).toHaveLength(1);
+      expect(turnStarted[0]!.message?.content).toEqual([{ type: 'text', text: 'hi core bus' }]);
+      expect(stepStarted).toHaveLength(1);
+      expect(ended).toHaveLength(1);
+      expect(ended[0]).toMatchObject({
+        turnId: 0,
+        outcome: { type: 'done' },
+        durationMs: expect.any(Number),
+      });
+      expect(Object.hasOwn(ended[0]!, 'requestId')).toBe(true);
+      expect(Object.hasOwn(ended[0]!, 'stopReason')).toBe(true);
+    } finally {
+      journalSpy.mockRestore();
+      wireAppendSpy.mockRestore();
+      wireAppendRecordSpy.mockRestore();
+    }
+  },
+);
+
+testkitTest(
+  'unifies step.started stepId across projection and first wire attempt while keeping retry attempt isolation',
+  async ({ agent, model }) => {
+    const bus = agent.get(IEventBus);
+    const coreSteps: Array<Extract<LoopEmitted, { type: 'step.started' }>> = [];
+    const projectionSteps: TurnStepStarted[] = [];
+    const resets: TurnStepStreamReset[] = [];
+    const retries: TurnStepRetrying[] = [];
+    const completed: TurnStepCompleted[] = [];
+    onCoreLoopEvent(bus, 'step.started', (event) => coreSteps.push(event));
+    bus.subscribe(TurnStepStarted, (event) => projectionSteps.push(event));
+    bus.subscribe(TurnStepStreamReset, (event) => resets.push(event));
+    bus.subscribe(TurnStepRetrying, (event) => retries.push(event));
+    bus.subscribe(TurnStepCompleted, (event) => completed.push(event));
+
+    model.script(
+      streamError(say('partial-429'), { status: 429, message: 'rate limited', retryAfterMs: 1 }),
+      httpError(503, { message: 'unavailable', retryAfterMs: 1 }),
+      say('recovered after retries'),
+    );
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'retry please' }] });
+    await agent.untilTurnEnd();
+    await agent.get(IWireService).flush();
+
+    expect(coreSteps).toHaveLength(1);
+    const stepId = coreSteps[0]!.stepId;
+    expect(stepId).toEqual(expect.any(String));
+    expect(projectionSteps.map((event) => event.stepId)).toEqual([stepId, stepId, stepId]);
+    expect(resets.map((event) => event.stepId)).toEqual([stepId, stepId]);
+    expect(retries.map((event) => event.stepId)).toEqual([stepId, stepId]);
+    expect(completed.map((event) => event.stepId)).toEqual([stepId]);
+
+    const records = await agent.persistedWireRecords();
+    const loopEvents = records
+      .filter((record) => record.type === 'context.append_loop_event')
+      .map((record) => record['event'] as LoopRecordedEvent);
+    const begins = loopEvents.filter((event) => event.type === 'step.begin');
+    const ends = loopEvents.filter((event) => event.type === 'step.end');
+    const parts = loopEvents.filter((event) => event.type === 'content.part');
+
+    expect(begins).toHaveLength(3);
+    expect(begins[0]!.uuid).toBe(stepId);
+    expect(begins[1]!.uuid).not.toBe(stepId);
+    expect(begins[2]!.uuid).not.toBe(stepId);
+    expect(new Set(begins.map((event) => event.uuid)).size).toBe(3);
+    expect(ends).toMatchObject([
+      { uuid: stepId, finishReason: 'error' },
+      { uuid: begins[1]!.uuid, finishReason: 'error' },
+      { uuid: begins[2]!.uuid, finishReason: 'end_turn' },
+    ]);
+    expect(parts).toMatchObject([{ stepUuid: begins[2]!.uuid }]);
   },
 );

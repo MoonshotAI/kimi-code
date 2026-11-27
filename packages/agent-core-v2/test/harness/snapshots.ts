@@ -79,6 +79,24 @@ export function eventSnapshot(
     ) {
       stableEvent = { ...event, args: { ...event.args, toolsHash: '<tools-hash>' } };
     }
+    if (event.type === '[rpc]' && event.event === 'core.loop.event') {
+      const args = event.args as {
+        readonly event: {
+          readonly type: string;
+          readonly tools?: readonly { readonly name: string }[];
+          readonly toolsHash?: string;
+          readonly taskId?: string;
+        };
+      };
+      const inner = args.event;
+      const nextInner: Record<string, unknown> = { ...inner };
+      if (inner.type === 'tools.settled' && Array.isArray(inner.tools)) {
+        nextInner['tools'] = inner.tools.map((tool) => tool.name);
+      }
+      if (typeof inner.toolsHash === 'string') nextInner['toolsHash'] = '<tools-hash>';
+      if (typeof inner.taskId === 'string') nextInner['taskId'] = '<taskId>';
+      stableEvent = { ...event, args: { ...args, event: nextInner } };
+    }
     return normalizeValue(stableEvent, labels);
   });
   (normalized as unknown as Record<symbol, true>)[IS_EVENT_ARRAY] = true;
@@ -441,6 +459,14 @@ function isVolatileDurationKey(key: string): boolean {
     key === 'llmServerDecodeMs' ||
     key === 'llmClientConsumeMs' ||
     key === 'llmClientBlockedMs' ||
+    key === 'firstTokenLatencyMs' ||
+    key === 'streamDurationMs' ||
+    key === 'requestBuildMs' ||
+    key === 'serverFirstTokenMs' ||
+    key === 'serverDecodeMs' ||
+    key === 'clientConsumeMs' ||
+    key === 'clientBlockedMs' ||
+    key === 'delayMs' ||
     key === 'durationMs'
   );
 }

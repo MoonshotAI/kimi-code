@@ -134,6 +134,7 @@ import {
   type TurnStartingEvent,
 } from '@moonshot-ai/core/loop/index';
 import { createLoopHookRegistry } from '@moonshot-ai/core/hook/loop/registry';
+import { CoreLoopEvent } from './coreLoopEvent';
 import { LoopJournal, type LoopJournalSnapshot } from './journal';
 import { AgentPromptProjection } from './promptProjection';
 import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
@@ -193,7 +194,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolRegistryService _toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IEventBus events: IEventBus,
+    @IEventBus private readonly eventBus: IEventBus,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -238,7 +239,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.turns = new AgentTurnProjection({
       attribution,
       dispatcher,
-      events,
+      events: eventBus,
       scopeContext,
       telemetry,
       plugins,
@@ -678,6 +679,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.syncRequester();
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
+      this.eventBus.publish(new CoreLoopEvent({ agentId: this.scopeContext.agentId, event: enriched }));
       this.notifications.project(event);
       if (event.type === 'llm.retry') this.journal.append(enriched);
       this.turns.project(enriched, loop);

@@ -26,6 +26,7 @@ import {
 } from '#/agent/contextMemory/loopEventFold';
 import type { AssistantMessage, Message, ToolDescription, UserMessage } from '@moonshot-ai/core/llm/message';
 
+import { turnOutcomeReason } from './coreLoopEvent';
 import { contextFromHistoryEntry, historyFromContext } from './history';
 import { ToolsSettled, TurnCancel, TurnPrompt } from './turnOps';
 import type {
@@ -33,7 +34,6 @@ import type {
   LoopInput,
   RemindMessage,
   StepOutcome,
-  TurnOutcome,
 } from '@moonshot-ai/core/loop/index';
 
 export interface LoopJournalSnapshot {
@@ -296,19 +296,6 @@ function stepFinishReason(outcome: StepOutcome, assistant: AssistantMessage | un
   }
 }
 
-function turnReason(outcome: TurnOutcome): 'completed' | 'cancelled' | 'failed' | 'blocked' {
-  switch (outcome.type) {
-    case 'done':
-      return 'completed';
-    case 'aborted':
-      return 'cancelled';
-    case 'failed':
-      return 'failed';
-    case 'blocked':
-      return 'blocked';
-  }
-}
-
 function toolArguments(entry: AssistantMessage, toolCallId: string): { args: unknown; argsRaw?: string } {
   const args = entry.toolCalls.find((call) => call.id === toolCallId)?.arguments;
   if (args === undefined || args === null) return { args: undefined };
@@ -406,7 +393,7 @@ export class LoopJournal {
       case 'step.started':
         this.writeTurnPrompt();
         this.steps.set(stepKey(event.turnId, event.step), {
-          uuid: randomUUID(),
+          uuid: event.stepId,
           streamedBlocks: new Map(),
           started: false,
         });
@@ -528,7 +515,7 @@ export class LoopJournal {
           type: 'turn.ended',
           agentId: this.agentId,
           turnId: event.turnId,
-          reason: turnReason(event.outcome),
+          reason: turnOutcomeReason(event.outcome),
           error: event.outcome.type === 'failed' && event.outcome.error !== undefined
             ? toKimiErrorPayload(event.outcome.error)
             : undefined,

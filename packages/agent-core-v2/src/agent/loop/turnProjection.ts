@@ -487,7 +487,7 @@ export class AgentTurnProjection {
         }
         const turn = this.active;
         if (turn === undefined) return;
-        const step = createStepState(event.step, turn.controller.signal);
+        const step = createStepState(event.step, turn.controller.signal, event.stepId);
         turn.current = step;
         turn.stepIds.set(step.number, step.uuid);
         turn.streamPartCount = 0;
