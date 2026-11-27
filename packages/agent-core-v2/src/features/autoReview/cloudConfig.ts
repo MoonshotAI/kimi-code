@@ -21,27 +21,15 @@ const MAX_TIMEOUT_MS = 120000;
 const CLOUD_FETCH_TIMEOUT_MS = 2000;
 const CLOUD_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
 
-export interface AutoReviewCloudConfig {
-  readonly model?: string;
-  readonly effort?: string;
-  readonly timeoutMs?: number;
-}
+export const autoReviewCloudConfigSchema = z
+  .object({
+    model: z.string().trim().min(1).optional().catch(undefined),
+    effort: z.string().trim().min(1).optional().catch(undefined),
+    timeout_ms: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional().catch(undefined),
+  })
+  .catch({});
 
-const nonEmptyStringSchema = z.string().trim().min(1);
-const timeoutMsSchema = z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS);
-
-export const autoReviewCloudConfigSchema = z.unknown().transform((raw): AutoReviewCloudConfig => {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
-  const record = raw as Record<string, unknown>;
-  const model = nonEmptyStringSchema.safeParse(record['model']);
-  const effort = nonEmptyStringSchema.safeParse(record['effort']);
-  const timeoutMs = timeoutMsSchema.safeParse(record['timeout_ms'] ?? record['timeoutMs']);
-  return {
-    ...(model.success ? { model: model.data } : {}),
-    ...(effort.success ? { effort: effort.data } : {}),
-    ...(timeoutMs.success ? { timeoutMs: timeoutMs.data } : {}),
-  };
-});
+export type AutoReviewCloudConfig = z.infer<typeof autoReviewCloudConfigSchema>;
 
 export interface IAutoReviewCloudConfigService {
   readonly _serviceBrand: undefined;

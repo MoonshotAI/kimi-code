@@ -150,16 +150,12 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   }
 
   async resolveTimeoutMs(mainModelAlias: string, signal?: AbortSignal): Promise<number> {
-    const inspected = this.configService.inspect<Partial<AutoReviewConfig>>(AUTO_REVIEW_SECTION);
-    const explicit = inspected.memoryValue?.timeoutMs ?? inspected.userValue?.timeoutMs;
-    const effective = this.configService.get<AutoReviewConfig | undefined>(AUTO_REVIEW_SECTION);
-    if (explicit !== undefined && effective?.timeoutMs !== undefined) {
-      return effective.timeoutMs;
-    }
+    const configured = this.configService.get<AutoReviewConfig | undefined>(AUTO_REVIEW_SECTION)?.timeoutMs;
+    if (configured !== undefined) return configured;
     const mainModel = this.tryGetModel(mainModelAlias);
     if (mainModel !== undefined && isManagedKimiModel(mainModel)) {
       const cloud = this.cloudConfig.peek() ?? (await this.cloudConfig.load(signal));
-      if (cloud?.timeoutMs !== undefined) return cloud.timeoutMs;
+      if (cloud?.timeout_ms !== undefined) return cloud.timeout_ms;
     }
     return DEFAULT_AUTO_REVIEW_TIMEOUT_MS;
   }

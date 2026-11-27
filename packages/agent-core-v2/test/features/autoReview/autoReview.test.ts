@@ -529,7 +529,7 @@ describe('SessionAutoReviewService', () => {
     const cloudConfig: AutoReviewCloudConfig = {
       model: 'kimi-fast',
       effort: 'low',
-      timeoutMs: 45_000,
+      timeout_ms: 45_000,
     };
 
     const viaCloud = makeSessionService({
@@ -546,7 +546,7 @@ describe('SessionAutoReviewService', () => {
     const viaHighspeed = makeSessionService({
       configured: false,
       catalogModels,
-      cloudConfig: { model: 'kimi-for-coding-highspeed', timeoutMs: 25_000 },
+      cloudConfig: { model: 'kimi-for-coding-highspeed', timeout_ms: 25_000 },
     });
     expect((await execute(viaHighspeed, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-for-coding-highspeed');
     expect(requestedEfforts.at(-1)).toBe('on');
@@ -556,7 +556,7 @@ describe('SessionAutoReviewService', () => {
     const viaExplicit = makeSessionService({
       model: 'kimi-code/kimi-fast',
       catalogModels,
-      cloudConfig: { model: 'kimi-for-coding-highspeed', timeoutMs: 25_000 },
+      cloudConfig: { model: 'kimi-for-coding-highspeed', timeout_ms: 25_000 },
     });
     expect((await execute(viaExplicit, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-fast');
     expect(requestedEfforts.at(-1)).toBe('high');
@@ -640,33 +640,6 @@ describe('SessionAutoReviewService', () => {
       cloudService: { _serviceBrand: undefined, warm: warmOther, peek: () => undefined, load: async () => undefined },
     });
     expect(warmOther).not.toHaveBeenCalled();
-  });
-
-  it('ignores unvalidated raw timeout_ms when effective auto_review config is absent', async () => {
-    const configWithInvalidRaw = new StubConfigService();
-    vi.spyOn(configWithInvalidRaw, 'inspect').mockReturnValue({
-      value: undefined,
-      defaultValue: undefined,
-      envValue: undefined,
-      userValue: { timeoutMs: 50 },
-      memoryValue: undefined,
-    });
-    const svc = disposables.add(new SessionAutoReviewService(
-      stubFlag(true),
-      configWithInvalidRaw,
-      { get: () => baseModel, findByName: () => [] } as unknown as IModelCatalog,
-      new ProtocolAdapterRegistry(),
-      { record: async () => {} } as unknown as ISessionUsageService,
-      { sessionId: 'session-1' } as ISessionContext,
-      {
-        ready: Promise.resolve(),
-        agentsMd: undefined,
-        agentsMdPaths: undefined,
-        onDidChange: instructionsChange.event,
-      } as unknown as ISessionInstructionsProvider,
-      { _serviceBrand: undefined, warm: () => {}, peek: () => undefined, load: async () => undefined },
-    ));
-    expect(await svc.resolveTimeoutMs('main-model')).toBe(30_000);
   });
 
   it.each([
@@ -1023,18 +996,9 @@ describe('AutoReviewService', () => {
 });
 
 describe('autoReview cloud config', () => {
-  it('parses fields defensively and stays idempotent across cache round-trips', () => {
-    const parsed = autoReviewCloudConfigSchema.parse({
-      model: 'kimi-fast',
-      effort: 'low',
-      timeout_ms: 45_000,
-    });
-    expect(parsed).toEqual({
-      model: 'kimi-fast',
-      effort: 'low',
-      timeoutMs: 45_000,
-    });
-    expect(autoReviewCloudConfigSchema.parse(parsed)).toEqual(parsed);
+  it('keeps valid cloud fields and drops invalid ones', () => {
+    const valid = { model: 'kimi-fast', effort: 'low', timeout_ms: 45_000 };
+    expect(autoReviewCloudConfigSchema.parse(valid)).toEqual(valid);
     expect(autoReviewCloudConfigSchema.parse({ model: '', effort: '  ', timeout_ms: 500 })).toEqual({});
     expect(autoReviewCloudConfigSchema.parse(null)).toEqual({});
   });
@@ -1068,7 +1032,7 @@ describe('autoReview cloud config', () => {
     });
     expect(await svc.load()).toEqual({
       model: 'kimi-for-coding-highspeed',
-      timeoutMs: 20_000,
+      timeout_ms: 20_000,
     });
     expect(getCachedAccessToken).toHaveBeenCalledWith('managed:kimi-code');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -1082,7 +1046,7 @@ describe('autoReview cloud config', () => {
     );
     expect(svc.peek()).toEqual({
       model: 'kimi-for-coding-highspeed',
-      timeoutMs: 20_000,
+      timeout_ms: 20_000,
     });
 
     activeRegion = 'mainland-cn';
