@@ -13,7 +13,8 @@ scenario(
     const summary = 'The user asked about the docs server, which has a search tool.';
     const next = 'What tools does the docs server have now?';
     const nextReply = 'It has search and lookup.';
-    model.script(say(firstReply), say(nextReply));
+    const lastReply = 'Yes, lookup reads one page.';
+    model.script(say(firstReply), say(nextReply), say(lastReply));
     model.lane('compaction').script(say(summary));
 
     await product.send('What does the docs server offer?');
@@ -27,12 +28,18 @@ scenario(
     await product.waitIdle();
     await product.expectReply(nextReply);
 
+    await product.send('Can it read a single page?');
+    await product.waitIdle();
+    await product.expectReply(lastReply);
+
     const requests = model.requests('main');
-    const request = requests.at(-1);
-    expect(requests).toHaveLength(2);
+    const request = requests[1];
+    expect(requests).toHaveLength(3);
     expect(request?.texts('assistant').some((text) => text.includes(firstReply))).toBe(false);
     expect(request?.texts('user').some((text) => text.includes(summary))).toBe(true);
     expect(request?.userTextsSinceReply.at(-1)).toBe(next);
-    expect(request?.rawBody).toContain('mcp__docs__lookup');
+    const announced = requests.map((each) => each.remindersSinceReply.join('\n').includes('mcp__docs__lookup'));
+    expect(announced[0]).toBe(false);
+    expect(announced.slice(1).filter(Boolean)).toHaveLength(1);
   },
 );
