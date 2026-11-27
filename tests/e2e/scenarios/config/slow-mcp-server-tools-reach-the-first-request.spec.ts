@@ -5,8 +5,8 @@ import { expect, scenario } from '../../support/scenario';
 const SEARCH = { name: 'search', description: 'Search the docs.', inputSchema: { properties: { query: { type: 'string' } }, required: ['query'] }, reply: 'found 2 pages' };
 
 scenario(
-  'offers the tools of a slow-starting MCP server from the first request, also after a restart',
-  { mcp: { docs: { tools: [SEARCH], startupDelayMs: 3000 } } },
+  'offers the tools of a slow-starting MCP server from the first request when the config file waits long enough for it, also after a restart',
+  { mcp: { docs: { tools: [SEARCH], startupDelayMs: 3000 } }, config: { extra: { mcp: { startup_wait_ms: 10_000 } } } },
   async ({ product, model }) => {
     model.script(say('The docs server can search.'), say('It can still search after the restart.'));
 

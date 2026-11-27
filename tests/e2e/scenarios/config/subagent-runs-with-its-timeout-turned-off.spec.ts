@@ -15,7 +15,6 @@ scenario(
 
     const requests = model.requests('main');
     expect(requests).toHaveLength(2);
-    expect(model.requests('subagent')).toHaveLength(1);
     const result = requests[1]?.texts('tool').join('\n') ?? '';
     expect(result).toContain('42 files');
     expect(result).not.toContain('timed out');

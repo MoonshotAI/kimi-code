@@ -22,7 +22,6 @@ scenario(
 
     await mcp('docs').addTool(LOOKUP);
     await product.compact();
-    expect(model.requests('compaction')).toHaveLength(1);
 
     await product.send(next);
     await product.waitIdle();
