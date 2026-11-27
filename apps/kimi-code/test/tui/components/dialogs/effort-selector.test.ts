@@ -1,4 +1,4 @@
-import { TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { ScrollView, Text, TuiAltScreen, VStack } from '@moonshot-ai/pi-tui';
 import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -140,6 +140,7 @@ describe('EffortSelectorComponent', () => {
     });
 
     expect(text(picker)).toContain('Light reasoning.');
+    const initialLineCount = picker.render(120).length;
     expect(text(picker)).not.toContain('Deeper reasoning.');
     picker.handleInput(RIGHT);
     expect(text(picker)).toContain('Deeper reasoning.');
@@ -151,6 +152,7 @@ describe('EffortSelectorComponent', () => {
     expect(text(picker)).not.toContain('Light reasoning.');
     expect(text(picker)).not.toContain('Deeper reasoning.');
     expect(text(picker)).not.toContain('Maximum reasoning.');
+    expect(picker.render(120).length).toBe(initialLineCount);
   });
 
   it('wraps a warning longer than the width instead of truncating it', () => {
@@ -180,7 +182,6 @@ describe('EffortSelectorComponent', () => {
       efforts: ['off', 'low', 'high', 'max'],
       currentValue: 'high',
       descriptions: {
-        off: 'No extra thinking.',
         low: 'Light reasoning.',
         high: 'Deeper reasoning.',
         max: 'Maximum reasoning.',
@@ -189,9 +190,18 @@ describe('EffortSelectorComponent', () => {
       onSessionOnlySelect,
       onCancel: vi.fn(),
     });
-    const vt = new VirtualTerminal(80, 10);
+    const transcript = new ScrollView(new Text('line-1\nline-2', 0, 0), {
+      follow: 'end',
+      primary: true,
+    });
+    const vt = new VirtualTerminal(80, 14);
     const ui = new TuiAltScreen(vt);
-    ui.setLayoutRoot(picker);
+    ui.setLayoutRoot(
+      new VStack([
+        { component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+        { component: picker, shrink: 0 },
+      ]),
+    );
     ui.start();
     await vt.waitForRender();
     try {
@@ -217,7 +227,7 @@ describe('EffortSelectorComponent', () => {
       vt.sendInput(`\u001B[<35;${String(offCol)};${String(segRow + 1)}M`);
       await vt.waitForRender();
       expect(vt.getViewport().map(strip)[segRow]).toContain('[ Off ]');
-      expect(vt.getViewport().map(strip).join('\n')).toContain('No extra thinking.');
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('Deeper reasoning.');
       expect(onSelect).not.toHaveBeenCalled();
 
       vt.sendInput(`\u001B[<35;${String(offCol)};1M`);

@@ -427,11 +427,17 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
       this.thinkingRow = canSwitch ? lines.length : -1;
       this.thinkingRegions = canSwitch ? regions : [];
       lines.push(controlLine);
-      const description =
-        selected.model.provider === DEFAULT_OAUTH_PROVIDER_NAME
-          ? this.opts.effortDescriptions?.[this.effectiveEffort(selected)]
-          : undefined;
-      if (description !== undefined) lines.push(currentTheme.fg('textMuted', ` ${description}`));
+      if (this.hasEffortDescriptions()) {
+        const description =
+          selected.model.provider === DEFAULT_OAUTH_PROVIDER_NAME
+            ? this.opts.effortDescriptions?.[this.effectiveEffort(selected)]
+            : undefined;
+        lines.push(
+          description !== undefined && description.length > 0
+            ? currentTheme.fg('textMuted', ` ${description}`)
+            : '',
+        );
+      }
       lines.push('');
     } else {
       this.thinkingRow = -1;
@@ -439,6 +445,13 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
     }
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
+  }
+
+  private hasEffortDescriptions(): boolean {
+    return (
+      this.opts.effortDescriptions !== undefined &&
+      Object.keys(this.opts.effortDescriptions).length > 0
+    );
   }
 
   private commitChoice(choice: ModelChoice, sessionOnly: boolean): void {
