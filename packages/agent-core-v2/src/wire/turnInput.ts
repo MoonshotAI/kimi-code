@@ -171,14 +171,24 @@ function wireTurnInputMatches(
       : undefined;
   if (promptId !== undefined && messageId !== undefined) return promptId === messageId;
   if (anyOrigin) {
-    const inputKind = wireRecordObject(inputRecord['origin'])?.['kind'] ?? 'user';
-    const messageKind = wireRecordObject(message['origin'])?.['kind'] ?? 'user';
+    const inputKind = wireTurnInputOriginKind(inputRecord['origin']);
+    const messageKind = wireTurnInputOriginKind(message['origin']);
     if (inputKind !== messageKind) return false;
   }
   return (
     !compareContent ||
     JSON.stringify(inputRecord['input']) === JSON.stringify(message['content'])
   );
+}
+
+function wireTurnInputOriginKind(value: unknown): unknown {
+  const origin = wireRecordObject(value);
+  const kind = origin?.['kind'];
+  if ((kind === 'skill_activation' || kind === 'plugin_command') && typeof origin?.['trigger'] !== 'string') {
+    return 'user';
+  }
+  if (kind === 'shell_command' && typeof origin?.['phase'] !== 'string') return 'user';
+  return kind ?? 'user';
 }
 
 export function wireRecordObject(value: unknown): Record<string, unknown> | undefined {
