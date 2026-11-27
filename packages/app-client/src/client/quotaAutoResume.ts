@@ -1,6 +1,7 @@
+import { shallowRef } from 'vue';
 import { isDaemonApiError, type ManagedQuotaResult, type QuotaEntry } from '@moonshot-ai/app-core/api';
 import type { ConversationError } from '@moonshot-ai/app-core/conversation';
-import { STORAGE_KEYS, safeGetJson, safeSetJson } from '@moonshot-ai/app-core/lib';
+import { STORAGE_KEYS, safeGetJson, safeGetString, safeRemove, safeSetJson } from '@moonshot-ai/app-core/lib';
 import { stablePromptId } from './promptId';
 
 export const QUOTA_AUTO_RESUME_MAX_WAIT_MS = 24 * 60 * 60 * 1000;
@@ -30,6 +31,13 @@ export interface QuotaAutoResumeHost {
   random?: () => number;
 }
 
+export interface QuotaAutoResumePendingRecord {
+  readonly sessionId: string;
+  readonly failedTurnId: string;
+  readonly resetAt: string | null;
+  readonly updatedAt: number;
+}
+
 interface PendingResume {
   readonly sessionId: string;
   readonly failedTurnId: string;
@@ -46,10 +54,25 @@ interface PendingResume {
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-export function isManagedQuotaError(error: ConversationError | undefined): boolean {
-  if (error === undefined) return false;
+export interface QuotaAutoResumePendingView {
+  readonly sessionId: string;
+  readonly failedTurnId: string;
+  readonly resetAt: string | null;
+}
+
+export interface ManagedQuotaErrorLike {
+  readonly name?: string;
+  readonly code?: string;
+  readonly message?: string;
+  readonly status_code?: number;
+  readonly statusCode?: number;
+}
+
+export function isManagedQuotaError(error: ManagedQuotaErrorLike | null | undefined): boolean {
+  if (error === undefined || error === null) return false;
   if (error.name === 'APIProviderQuotaExhaustedError' || error.code === 'quota_exhausted') return true;
-  return error.status_code === 403 && MANAGED_QUOTA_MESSAGE_PATTERN.test(error.message);
+  const status = error.status_code ?? error.statusCode;
+  return status === 403 && error.message !== undefined && MANAGED_QUOTA_MESSAGE_PATTERN.test(error.message);
 }
 
 function knownWindows(usage: ManagedQuotaResult): readonly QuotaEntry[] | null {
@@ -84,6 +107,132 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
   let consumedResetAtMs: number[] = [];
   let lastNullResetAtMs: number | undefined;
 
+  function isSameReservation(record: QuotaAutoResumePendingRecord, sessionId: string, failedTurnId: string): boolean {
+    return record.sessionId === sessionId && record.failedTurnId === failedTurnId;
+  }
+
+  function isExpiredReservation(record: QuotaAutoResumePendingRecord, currentNow: number): boolean {
+    if (currentNow - record.updatedAt > QUOTA_AUTO_RESUME_MAX_WAIT_MS) return true;
+    if (record.resetAt === null) {
+      return currentNow - record.updatedAt > 2 * QUOTA_AUTO_RESUME_MAX_POLL_MS;
+    }
+    const resetAtMs = parseResetMs(record.resetAt);
+    if (resetAtMs === null) return true;
+    return resetAtMs - currentNow > QUOTA_AUTO_RESUME_MAX_WAIT_MS || currentNow - resetAtMs > QUOTA_AUTO_RESUME_GRACE_MS;
+  }
+
+  function parseStoredReservation(raw: string | null): QuotaAutoResumePendingRecord | null {
+    if (raw === null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    if (parsed === null || typeof parsed !== 'object') return null;
+    const record = parsed as Partial<QuotaAutoResumePendingRecord>;
+    if (
+      typeof record.sessionId !== 'string' ||
+      record.sessionId === '' ||
+      typeof record.failedTurnId !== 'string' ||
+      record.failedTurnId === '' ||
+      (record.resetAt !== null && typeof record.resetAt !== 'string') ||
+      typeof record.updatedAt !== 'number' ||
+      !Number.isFinite(record.updatedAt)
+    ) {
+      return null;
+    }
+    return {
+      sessionId: record.sessionId,
+      failedTurnId: record.failedTurnId,
+      resetAt: record.resetAt ?? null,
+      updatedAt: record.updatedAt,
+    };
+  }
+
+  function readActiveReservation(): QuotaAutoResumePendingRecord | null {
+    const record = parseStoredReservation(safeGetString(STORAGE_KEYS.quotaAutoResumePending));
+    if (record !== null && isExpiredReservation(record, now())) {
+      safeRemove(STORAGE_KEYS.quotaAutoResumePending);
+      return null;
+    }
+    return record;
+  }
+
+  const sharedPending = shallowRef<QuotaAutoResumePendingRecord | null>(readActiveReservation());
+  const pendingView = shallowRef<QuotaAutoResumePendingView | null>(null);
+
+  function syncPendingView(): void {
+    const shared = sharedPending.value;
+    if (!host.enabled() || shared === null) {
+      pendingView.value = null;
+      return;
+    }
+    const local =
+      pending !== undefined && isSameReservation(shared, pending.sessionId, pending.failedTurnId) ? pending : undefined;
+    const resetAt = local?.resetAt ?? shared.resetAt;
+    pendingView.value =
+      resetAt === null ? null : { sessionId: shared.sessionId, failedTurnId: shared.failedTurnId, resetAt };
+  }
+
+  function writeStoredReservation(task: PendingResume): void {
+    const record: QuotaAutoResumePendingRecord = {
+      sessionId: task.sessionId,
+      failedTurnId: task.failedTurnId,
+      resetAt: task.resetAt,
+      updatedAt: now(),
+    };
+    safeSetJson(STORAGE_KEYS.quotaAutoResumePending, record);
+    sharedPending.value = record;
+  }
+
+  function refreshStoredReservation(task: PendingResume): void {
+    const active = readActiveReservation();
+    if (active !== null && isSameReservation(active, task.sessionId, task.failedTurnId)) {
+      writeStoredReservation(task);
+    }
+  }
+
+  function releaseStoredReservation(task: PendingResume): void {
+    const stored = parseStoredReservation(safeGetString(STORAGE_KEYS.quotaAutoResumePending));
+    if (stored === null || !isSameReservation(stored, task.sessionId, task.failedTurnId)) return;
+    safeRemove(STORAGE_KEYS.quotaAutoResumePending);
+    sharedPending.value = null;
+  }
+
+  function claimReservation(task: PendingResume): Promise<boolean> {
+    return withLock(async () => {
+      if (!isCurrent(task)) return false;
+      const active = readActiveReservation();
+      if (active !== null && !isSameReservation(active, task.sessionId, task.failedTurnId)) {
+        sharedPending.value = active;
+        return false;
+      }
+      writeStoredReservation(task);
+      return true;
+    });
+  }
+
+  function handleStorageEvent(event: StorageEvent): void {
+    if (event.key !== STORAGE_KEYS.quotaAutoResumePending) return;
+    const next = parseStoredReservation(event.newValue);
+    sharedPending.value = next !== null && !isExpiredReservation(next, now()) ? next : null;
+    const task = pending;
+    if (
+      task !== undefined &&
+      sharedPending.value !== null &&
+      !isSameReservation(sharedPending.value, task.sessionId, task.failedTurnId)
+    ) {
+      dropPending(task, { release: false });
+      return;
+    }
+    syncPendingView();
+  }
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('storage', handleStorageEvent);
+  }
+
   function jitterMs(): number {
     return QUOTA_AUTO_RESUME_MIN_JITTER_MS + Math.floor(random() * QUOTA_AUTO_RESUME_JITTER_SPAN_MS);
   }
@@ -109,6 +258,24 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     const next = [...consumedWindows(now()), resetAtMs];
     consumedResetAtMs = next;
     safeSetJson(STORAGE_KEYS.quotaAutoResumeConsumed, next);
+  }
+
+  function isNullResetCoolingDown(currentNow: number): boolean {
+    if (lastNullResetAtMs !== undefined && currentNow - lastNullResetAtMs < QUOTA_AUTO_RESUME_NULL_RESET_COOLDOWN_MS) {
+      return true;
+    }
+    const stored = safeGetJson<unknown>(STORAGE_KEYS.quotaAutoResumeNullResetAt);
+    return (
+      typeof stored === 'number' &&
+      Number.isFinite(stored) &&
+      currentNow - stored >= 0 &&
+      currentNow - stored < QUOTA_AUTO_RESUME_NULL_RESET_COOLDOWN_MS
+    );
+  }
+
+  function recordNullResetCooldown(atMs: number): void {
+    lastNullResetAtMs = atMs;
+    safeSetJson(STORAGE_KEYS.quotaAutoResumeNullResetAt, atMs);
   }
 
   function isExpired(task: PendingResume, atMs: number): boolean {
@@ -138,11 +305,13 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     return !task.cancelled && pending === task && host.enabled();
   }
 
-  function dropPending(task: PendingResume): void {
+  function dropPending(task: PendingResume, opts: { release?: boolean } = {}): void {
     task.cancelled = true;
     clearTaskTimer(task);
     if (pending === task) pending = undefined;
+    if (opts.release !== false) releaseStoredReservation(task);
     if (pending === undefined) stopWatchdog();
+    syncPendingView();
   }
 
   function scheduleFallbackPoll(task: PendingResume): void {
@@ -155,11 +324,13 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     task.pollAttempt += 1;
     task.dueAtMs = null;
     task.pollDueAtMs = now() + delay;
+    refreshStoredReservation(task);
     clearTaskTimer(task);
     task.timer = setTimeout(() => {
       task.timer = undefined;
       if (isCurrent(task)) void refreshSchedule(task);
     }, delay);
+    syncPendingView();
   }
 
   function scheduleAt(task: PendingResume, resetAt: string | null, resetAtMs: number | null, dueAtMs: number): void {
@@ -167,11 +338,13 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     task.resetAtMs = resetAtMs;
     task.dueAtMs = dueAtMs;
     task.pollDueAtMs = null;
+    refreshStoredReservation(task);
     clearTaskTimer(task);
     task.timer = setTimeout(() => {
       task.timer = undefined;
       if (isCurrent(task)) void fire(task);
     }, Math.max(0, dueAtMs - now()));
+    syncPendingView();
   }
 
   async function refreshSchedule(task: PendingResume): Promise<void> {
@@ -193,7 +366,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
       const exhausted = known.filter((entry) => entry.usedRatio >= 1);
       const currentNow = now();
       if (exhausted.length === 0) {
-        if (lastNullResetAtMs !== undefined && currentNow - lastNullResetAtMs < QUOTA_AUTO_RESUME_NULL_RESET_COOLDOWN_MS) {
+        if (isNullResetCoolingDown(currentNow)) {
           dropPending(task);
           return;
         }
@@ -229,6 +402,9 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     const currentNow = now();
     const delay = QUOTA_AUTO_RESUME_RETRY_DELAYS_MS[task.retryAttempt];
     if (delay === undefined || isExpired(task, currentNow) || isExpired(task, currentNow + delay)) {
+      task.cancelled = true;
+      releaseStoredReservation(task);
+      syncPendingView();
       host.onGiveUp?.(task.sessionId, error);
       return;
     }
@@ -253,16 +429,44 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     pending = undefined;
     running = task;
     stopWatchdog();
+    syncPendingView();
     let failure: { error: unknown } | undefined;
+    const releaseAndStop = (): void => releaseStoredReservation(task);
     try {
       await withLock(async () => {
         if (task.cancelled || !host.enabled()) return;
-        if (task.resetAtMs !== null && isConsumedWindow(task.resetAtMs)) return;
-        if (!(await host.isManagedKimiSession(task.sessionId))) return;
+        const active = readActiveReservation();
+        if (active !== null && !isSameReservation(active, task.sessionId, task.failedTurnId)) {
+          sharedPending.value = active;
+          return;
+        }
+        if (task.resetAtMs !== null && isConsumedWindow(task.resetAtMs)) {
+          releaseAndStop();
+          return;
+        }
+        if (task.resetAtMs === null && isNullResetCoolingDown(now())) {
+          releaseAndStop();
+          return;
+        }
+        if (!(await host.isManagedKimiSession(task.sessionId))) {
+          releaseAndStop();
+          return;
+        }
         if (task.cancelled || !host.enabled()) return;
         const ready = await host.checkSessionReady(task.sessionId, task.failedTurnId);
-        if (task.cancelled || !host.enabled() || !ready) return;
-        if (task.resetAtMs !== null && isConsumedWindow(task.resetAtMs)) return;
+        if (task.cancelled || !host.enabled()) return;
+        if (!ready) {
+          releaseAndStop();
+          return;
+        }
+        if (task.resetAtMs !== null && isConsumedWindow(task.resetAtMs)) {
+          releaseAndStop();
+          return;
+        }
+        if (task.resetAtMs === null && isNullResetCoolingDown(now())) {
+          releaseAndStop();
+          return;
+        }
         try {
           await host.submitResume(task.sessionId, {
             turnId: task.failedTurnId,
@@ -276,7 +480,8 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
           }
         }
         if (task.resetAtMs !== null) recordConsumedWindow(task.resetAtMs);
-        else lastNullResetAtMs = now();
+        else recordNullResetCooldown(now());
+        releaseAndStop();
       });
       if (failure !== undefined && !task.cancelled && host.enabled()) {
         retryOrGiveUp(task, failure.error);
@@ -285,6 +490,7 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
       if (!task.cancelled && host.enabled()) retryOrGiveUp(task, err);
     } finally {
       if (running === task) running = undefined;
+      syncPendingView();
     }
   }
 
@@ -329,24 +535,52 @@ export function createQuotaAutoResume(host: QuotaAutoResumeHost) {
     };
     pending = task;
     startWatchdog();
-    void refreshSchedule(task);
+    void (async () => {
+      if (!(await claimReservation(task))) {
+        if (isCurrent(task)) dropPending(task, { release: false });
+        return;
+      }
+      if (!isCurrent(task)) return;
+      syncPendingView();
+      await refreshSchedule(task);
+    })();
   }
 
   function cancelSession(sessionId: string): void {
     if (pending?.sessionId === sessionId) dropPending(pending);
-    if (running?.sessionId === sessionId) running.cancelled = true;
+    if (running?.sessionId === sessionId) {
+      running.cancelled = true;
+      releaseStoredReservation(running);
+      syncPendingView();
+    }
   }
 
   function clearAll(): void {
     if (pending !== undefined) dropPending(pending);
-    if (running !== undefined) running.cancelled = true;
+    if (running !== undefined) {
+      running.cancelled = true;
+      releaseStoredReservation(running);
+    }
+    if (!host.enabled()) {
+      safeRemove(STORAGE_KEYS.quotaAutoResumePending);
+      sharedPending.value = null;
+    }
     stopWatchdog();
+    syncPendingView();
+  }
+
+  function pendingFor(sessionId: string, failedTurnId?: string): QuotaAutoResumePendingView | null {
+    const view = pendingView.value;
+    if (view === null || view.sessionId !== sessionId) return null;
+    if (failedTurnId !== undefined && view.failedTurnId !== failedTurnId) return null;
+    return view;
   }
 
   return {
     handleTurnFailed,
     cancelSession,
     clearAll,
+    pendingFor,
     hasPending: () => pending !== undefined || running !== undefined,
   };
 }

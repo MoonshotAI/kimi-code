@@ -305,6 +305,8 @@ export default {
   noDefaultModel: 'No default model',
   defaultThinking: 'Thinking by default',
   defaultThinkingHint: 'Whether new sessions start with thinking enabled',
+  quotaAutoContinue: 'Auto-continue when limits reset',
+  quotaAutoContinueHint: 'Automatically continue interrupted sessions when your credits reset, synced with the toggle on error cards',
   secondaryModelSection: 'Subagents',
   secondaryModel: 'Subagent model',
   secondaryModelHint: 'Model and thinking effort that subagents use by default',
