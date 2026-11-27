@@ -26,6 +26,7 @@ import {
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
+import { slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '../src/protocol/session';
@@ -397,7 +398,7 @@ describe('server /api/v1/sessions list', () => {
 
     const page = await getData();
     const item = page.items.find((entry) => entry.id === id) as Session | undefined;
-    expect(item?.cwd).toBe(home);
+    expect(item?.cwd).toBe(slashPathOf(home));
 
     await rm(join(home as string, 'config.toml'), { force: true });
     await (server as RunningServer).close();

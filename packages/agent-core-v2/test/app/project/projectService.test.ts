@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mkdirSync, promises as fsp, realpathSync } from 'node:fs';
@@ -288,7 +289,7 @@ describe('WorkspaceService (file-backed)', () => {
       [encodeWorkDirKey(workA), encodeWorkDirKey(workB)].toSorted(),
     );
     const a = list.find((w) => w.id === encodeWorkDirKey(workA));
-    expect(a?.root).toBe(workA);
+    expect(a?.root).toBe(slashPathOf(workA));
     expect(a?.name).toBe('proj-a');
 
     expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
@@ -487,7 +488,7 @@ describe('WorkspaceService (file-backed)', () => {
   it('registers a missing directory best-effort on resolveImplicit', async () => {
     const missing = join(homeDir, 'never-created');
     const ws = await build().resolveImplicit(missing);
-    expect(ws.root).toBe(missing);
+    expect(ws.root).toBe(slashPathOf(missing));
     expect((await build().list()).map((w) => w.id)).toEqual([ws.id]);
   });
 
@@ -506,7 +507,7 @@ describe('WorkspaceService (file-backed)', () => {
     const link = join(homeDir, 'link-root');
     await fsp.symlink(real, link, 'dir');
     const ws = await build().resolveImplicit(link);
-    expect(ws.root).toBe(link);
+    expect(ws.root).toBe(slashPathOf(link));
     expect(ws.id).toBe(encodeWorkDirKey(link));
   });
 
@@ -515,7 +516,7 @@ describe('WorkspaceService (file-backed)', () => {
     await fsp.writeFile(file, 'hi', 'utf8');
     const child = join(file, 'child');
     const ws = await build().resolveImplicit(child);
-    expect(ws.root).toBe(child);
+    expect(ws.root).toBe(slashPathOf(child));
   });
 
   it('collapses duplicate registered entries for the same root, preferring the canonical id', async () => {
@@ -548,14 +549,14 @@ describe('WorkspaceService (file-backed)', () => {
 
     expect(cased.id).toBe(first.id);
     expect(slashed.id).toBe(first.id);
-    expect(cased.root).toBe('C:\\Users\\Foo\\Proj');
+    expect(cased.root).toBe('C:/Users/Foo/Proj');
     expect(cased.name).toBe(first.name);
     expect(cased.lastOpenedAt).toBeGreaterThanOrEqual(first.lastOpenedAt);
     expect(await registry.list()).toHaveLength(1);
 
     const reloaded = await restart().list();
     expect(reloaded).toHaveLength(1);
-    expect(reloaded[0]?.root).toBe('C:\\Users\\Foo\\Proj');
+    expect(reloaded[0]?.root).toBe('C:/Users/Foo/Proj');
   });
 
   it('merges legacy entries whose roots differ only by casing, preferring the canonical id', async () => {
@@ -577,7 +578,7 @@ describe('WorkspaceService (file-backed)', () => {
     const list = await build().list();
     expect(list).toHaveLength(1);
     expect(list[0]?.id).toBe(canonicalId);
-    expect(list[0]?.root).toBe(lowerRoot);
+    expect(list[0]?.root).toBe('c:/users/foo/proj');
   });
 
   it('rebuild folds session-index workDir variants into one workspace', async () => {
@@ -623,6 +624,15 @@ describe('WorkspaceService (file-backed)', () => {
     expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
       [implicit.id, created.id].toSorted(),
     );
+  });
+
+  it('create stores the root in normalized form whatever the request spelling', async () => {
+    const registry = build();
+
+    const created = await registry.create({ root: `${homeDir}/`, name: 'proj' });
+
+    expect(created.root).toBe(slashPathOf(homeDir));
+    expect((await restart().list()).find((w) => w.id === created.id)?.root).toBe(slashPathOf(homeDir));
   });
 
   it('create dedupes retries by idempotency key across restarts', async () => {
@@ -878,7 +888,7 @@ describe('WorkspaceService (file-backed)', () => {
     storage.failingKey = 'projects.json';
     await expect(registry.setPrimary(project.id, promoted)).rejects.toThrow('injected write failure');
 
-    expect((await readRegistry()).workspaces[project.id]?.root).toBe(original);
+    expect((await readRegistry()).workspaces[project.id]?.root).toBe(slashPathOf(original));
     expect(await trustStoreFor(new FileStorageService(homeDir)).forRoot(promoted).get()).toBe(false);
   });
 
@@ -1334,7 +1344,7 @@ describe('implicit project resolution', () => {
     expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
 
     const resolved = await registry.resolveImplicit(worktree);
-    expect(resolved).toMatchObject({ id: encodeWorkDirKey(worktree), root: worktree });
+    expect(resolved).toMatchObject({ id: encodeWorkDirKey(worktree), root: slashPathOf(worktree) });
   });
 
   it('counts a session in a Windows casing alias bucket as the own project holding sessions', async () => {
@@ -1372,7 +1382,7 @@ describe('implicit project resolution', () => {
     const registry = build();
 
     for (const dir of [worktree, subdir]) {
-      expect(await registry.resolveImplicit(dir)).toMatchObject({ id: encodeWorkDirKey(dir), root: dir });
+      expect(await registry.resolveImplicit(dir)).toMatchObject({ id: encodeWorkDirKey(dir), root: slashPathOf(dir) });
     }
     expect(await registry.resolveImplicit(main)).toMatchObject(moved);
     expect(await registry.resolveImplicit(lab.dir('other', 'src'))).toMatchObject(moved);
@@ -1433,7 +1443,7 @@ describe('implicit project resolution', () => {
 
     expect(await registry.reviveImplicit(id, subdir)).toMatchObject({ id, root: main, kind: 'implicit' });
     expect((await readRegistry()).deleted_workspace_ids).toEqual([]);
-    expect(await registry.reviveImplicit(windowsId, 'C:\\code\\app\\src')).toMatchObject({ id: windowsId, root: 'C:\\code\\app' });
+    expect(await registry.reviveImplicit(windowsId, 'C:\\code\\app\\src')).toMatchObject({ id: windowsId, root: 'C:/code/app' });
   });
 
   it('never registers a worktree project from grouped session-index lines on restart', async () => {
@@ -1519,9 +1529,9 @@ describe('implicit project resolution', () => {
     const evil = forgedPointer(lab.dir('evil'), `${main}/.git/worktrees/app-fix`);
     const registry = build();
 
-    expect((await registry.resolveImplicit(evil)).root).toBe(evil);
-    expect((await registry.peekImplicit(evil)).root).toBe(evil);
-    expect((await registry.resolveImplicit(evil)).root).toBe(evil);
+    expect((await registry.resolveImplicit(evil)).root).toBe(slashPathOf(evil));
+    expect((await registry.peekImplicit(evil)).root).toBe(slashPathOf(evil));
+    expect((await registry.resolveImplicit(evil)).root).toBe(slashPathOf(evil));
 
     expect(tracked).toEqual([{ event: 'project_locate_degraded', properties: { reason: 'backpointer-mismatch' } }]);
     expect(warnings).toEqual([
@@ -1563,7 +1573,7 @@ describe('implicit project resolution', () => {
     const { main, worktree } = repository();
     const registry = build(new HostFileSystem(), undefined, home);
 
-    expect((await registry.resolveImplicit(notes)).root).toBe(notes);
+    expect((await registry.resolveImplicit(notes)).root).toBe(slashPathOf(notes));
     expect(await registry.acceptsWorkDir({ root: home }, notes)).toBe(false);
     expect((await registry.resolveImplicit(worktree)).root).toBe(real(main));
     expect(await registry.acceptsWorkDir({ root: real(main) }, worktree)).toBe(true);
@@ -2009,6 +2019,37 @@ describe('projects.json migration and patch', () => {
         })),
       }));
       expect((await readProjects()).schema_version).toBe(2);
+    } finally {
+      persistence.dispose();
+    }
+  });
+
+  it('reads Windows roots and directories written with backslashes in forward-slash form and saves them that way', async () => {
+    const id = encodeWorkDirKey('C:\\Users\\me\\notes');
+    await writeProjects({
+      schema_version: 2,
+      projects: {
+        [id]: {
+          root: 'C:\\Users\\me\\notes',
+          name: 'notes',
+          kind: 'implicit',
+          additional_dirs: ['D:\\shared\\docs'],
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      deleted_project_ids: [],
+    });
+    const persistence = createPersistence();
+    try {
+      expect((await persistence.load())?.workspaces.map(({ id: projectId, root, additionalDirs }) => ({ id: projectId, root, additionalDirs }))).toEqual([
+        { id, root: 'C:/Users/me/notes', additionalDirs: ['D:/shared/docs'] },
+      ]);
+      await persistence.update((catalog) => ({
+        ...catalog,
+        workspaces: catalog.workspaces.map((workspace) => ({ ...workspace, lastOpenedAt: workspace.lastOpenedAt + 1 })),
+      }));
+      expect((await readProjects()).projects[id]).toMatchObject({ root: 'C:/Users/me/notes', additional_dirs: ['D:/shared/docs'] });
     } finally {
       persistence.dispose();
     }

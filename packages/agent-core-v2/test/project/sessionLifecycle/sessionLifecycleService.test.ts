@@ -123,6 +123,16 @@ describe('SessionLifecycleService', () => {
     expect(service.sessionWorkDir('/old', { environmentId: 'local', cwd: '/explicit' })).toBe('/explicit');
   });
 
+  it('reads the directories of a stored session in forward-slash form before resuming or forking it', async () => {
+    const stored = { id: 's1', cwd: 'C:\\repo\\app', environmentCwd: 'C:\\repo\\app-fix', createdAt: 1, updatedAt: 1 };
+    const service = Object.assign(Object.create(SessionLifecycleService.prototype), {
+      projectContext: { persistenceScope: 'sessions/workspace' },
+      docs: { get: async () => stored },
+    }) as unknown as { readMetaFromDisk(sessionId: string): Promise<Record<string, unknown> | undefined> };
+
+    await expect(service.readMetaFromDisk('s1')).resolves.toMatchObject({ cwd: 'C:/repo/app', environmentCwd: 'C:/repo/app-fix' });
+  });
+
   it('registers session presence even when the worktree flag starts disabled', async () => {
     const ready = Promise.resolve();
     const disposePresence = vi.fn();

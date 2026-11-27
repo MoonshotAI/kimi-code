@@ -45,6 +45,7 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
+import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { ISessionRunGate } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionRunGate';
@@ -191,7 +192,9 @@ export function registerSessionsRoutes(
       const body = req.body;
       const requestedRoots = requestedWorkspaceRoots(body);
       const requestedRoot = requestedRoots.at(-1);
-      const conflictingRoot = requestedRoots.find((root) => root.value !== requestedRoot?.value);
+      const conflictingRoot = requestedRoots.find(
+        (root) => requestedRoot !== undefined && !sameDir(root.value, requestedRoot.value),
+      );
       if (requestedRoot !== undefined && conflictingRoot !== undefined) {
         reply.send(
           buildValidationEnvelope(
@@ -225,7 +228,7 @@ export function registerSessionsRoutes(
         }
         if (
           requestedRoot !== undefined &&
-          requestedRoot.value !== workspace.root &&
+          !sameDir(requestedRoot.value, workspace.root) &&
           !(await isDirectory(core, requestedRoot.value))
         ) {
           reply.send(

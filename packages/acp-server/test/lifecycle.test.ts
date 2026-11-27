@@ -20,7 +20,7 @@ import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
-import { createGitWorktree, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
+import { createGitWorktree, fakeMcpServer, slashPathOf } from '@moonshot-ai/testkit/fixtures';
 
 import { filterSessionSummariesByCwd } from '../src/server';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
@@ -583,7 +583,7 @@ describe('acp-server session lifecycle', () => {
       const context = handle.accessor.get(ISessionContext);
       const project = await c.server.core.accessor.get(IProjectService).get(context.workspaceId);
       expect(await realpath(project!.root)).toBe(await realpath(main));
-      expect(context.cwd).toBe(worktree);
+      expect(context.cwd).toBe(slashPathOf(worktree));
       const inWorktree = (await c.send('session/list', { cwd: worktree })) as {
         sessions: { sessionId: string; cwd: string }[];
       };
@@ -591,7 +591,7 @@ describe('acp-server session lifecycle', () => {
         sessions: { sessionId: string }[];
       };
       expect(inWorktree.sessions).toContainEqual(
-        expect.objectContaining({ sessionId: created.sessionId, cwd: worktree }),
+        expect.objectContaining({ sessionId: created.sessionId, cwd: slashPathOf(worktree) }),
       );
       expect(inMain.sessions.map((s) => s.sessionId)).not.toContain(created.sessionId);
     },
@@ -644,5 +644,12 @@ describe('filterSessionSummariesByCwd', () => {
     const items = [summary('a', '/x'), summary('b'), summary('c', '/y')];
     expect(filterSessionSummariesByCwd(items, '/x').map((s) => s.id)).toEqual(['a', 'b']);
     expect(filterSessionSummariesByCwd(items, '/y').map((s) => s.id)).toEqual(['b', 'c']);
+  });
+
+  it('matches a session directory however the editor spells it', () => {
+    const items = [summary('a', 'C:/Users/me/app'), summary('b', 'C:/Users/me/app-fix'), summary('c', '/x')];
+    expect(filterSessionSummariesByCwd(items, 'C:\\Users\\me\\app').map((s) => s.id)).toEqual(['a']);
+    expect(filterSessionSummariesByCwd(items, 'c:\\users\\me\\app\\').map((s) => s.id)).toEqual(['a']);
+    expect(filterSessionSummariesByCwd(items, '/x/').map((s) => s.id)).toEqual(['c']);
   });
 });

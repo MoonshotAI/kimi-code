@@ -137,6 +137,40 @@ describe('SessionMetadata', () => {
     expect(order).toEqual(['written', 'drained']);
   });
 
+  it('loads the local directories of a document written with Windows backslashes in forward-slash form', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      cwd: 'C:\\repo\\app',
+      environmentCwd: 'C:\\repo\\app-fix',
+    });
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+
+    expect(await meta.read()).toMatchObject({ cwd: 'C:/repo/app', environmentCwd: 'C:/repo/app-fix' });
+    expect(meta.effectiveCwd).toBe('C:/repo/app-fix');
+  });
+
+  it('keeps the directories of a remote session document as written', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      cwd: 'C:\\repo\\app',
+      environmentId: 'remote',
+      environmentCwd: 'D:\\remote\\app',
+    });
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+
+    expect(await meta.read()).toMatchObject({ cwd: 'C:\\repo\\app', environmentCwd: 'D:\\remote\\app' });
+  });
+
   it('retains the host cwd in metadata and the read model for a remote session', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.ready;

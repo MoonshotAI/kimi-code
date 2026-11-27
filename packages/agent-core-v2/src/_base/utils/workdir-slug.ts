@@ -48,6 +48,11 @@ export function toAbsoluteDir(path: string): AbsoluteDir | undefined {
   return trimmed as AbsoluteDir;
 }
 
+export function normalizeDir(path: string): string {
+  const slashed = WIN_SHAPED.test(path) ? path.replaceAll('\\', '/') : path;
+  return slashed.replace(/(?<=[^/:])\/+$/, '');
+}
+
 export function sameDir(a: string, b: string): boolean {
   return dirKey(a) === dirKey(b);
 }

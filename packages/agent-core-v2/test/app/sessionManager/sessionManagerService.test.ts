@@ -1073,7 +1073,7 @@ describe('SessionManager creation environment', () => {
     expect(options).toMatchObject([
       { workDir: '/workspace', environmentCwd: undefined, ensureMainAgent: false },
       { workDir: '/workspace', environmentId: 'local', environmentCwd: undefined, ensureMainAgent: false },
-      { workDir: '/workspace/', environmentCwd: undefined, ensureMainAgent: false },
+      { workDir: '/workspace', environmentCwd: undefined, ensureMainAgent: false },
     ]);
     await expect(manager.resolveCreationEnvironment({ workDir: '/workspace' })).resolves.toEqual({
       workspaceId: 'workspace-1',

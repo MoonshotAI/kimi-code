@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
@@ -79,14 +80,14 @@ describe('local/local on-disk layout (byte compatibility)', () => {
     };
     expect(projectsFile.schema_version).toBe(2);
     expect(Object.keys(projectsFile.projects)).toEqual([workspaceId]);
-    expect(projectsFile.projects[workspaceId]).toMatchObject({ root: workDir });
+    expect(projectsFile.projects[workspaceId]).toMatchObject({ root: slashPathOf(workDir!) });
     expect(projectsFile.deleted_project_ids).toEqual([]);
 
     const indexLines = (await readFile(join(home!, 'session_index.jsonl'), 'utf8'))
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as { sessionId: string; sessionDir: string; workDir: string });
-    expect(indexLines).toEqual([{ sessionId, sessionDir, workDir }]);
+    expect(indexLines).toEqual([{ sessionId, sessionDir: slashPathOf(sessionDir), workDir: slashPathOf(workDir!) }]);
 
     const metaRaw = JSON.parse(await readFile(join(sessionDir, 'state.json'), 'utf8')) as {
       id: string;
@@ -103,7 +104,7 @@ describe('local/local on-disk layout (byte compatibility)', () => {
     const metaWithAgent = JSON.parse(await readFile(join(sessionDir, 'state.json'), 'utf8')) as {
       agents: Record<string, { homedir: string }>;
     };
-    expect(metaWithAgent.agents['main']?.homedir).toBe(join(sessionDir, 'agents', 'main'));
+    expect(metaWithAgent.agents['main']?.homedir).toBe(slashPathOf(join(sessionDir, 'agents', 'main')));
 
     const read = await fetch(`${base}/api/v1/sessions/${sessionId}`, {
       headers: authHeaders(server!),

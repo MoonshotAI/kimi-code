@@ -7,6 +7,7 @@ import { ILogService } from '#/_base/log/log';
 import {
   encodeWorkDirKey,
   isWorkDirKey,
+  normalizeDir,
   workspaceRootKey,
   type AbsoluteDir,
 } from '#/_base/utils/workdir-slug';
@@ -201,7 +202,7 @@ export class ProjectService implements IProjectService {
         const now = Date.now();
         ws = {
           id: `wm_${randomUUID()}`,
-          root: input.root,
+          root: normalizeDir(input.root),
           name: input.name ?? basename(input.root),
           kind: 'managed',
           additionalDirs,
@@ -301,7 +302,7 @@ export class ProjectService implements IProjectService {
             `project ${id} is implicit; its primary directory is the directory it was opened from and cannot change`,
           );
         }
-        const resolved = (await this.localConfig.resolveAdditionalDirs(existing.root, [path]))[0];
+        const resolved = (await this.localConfig.resolveAdditionalDirs(existing.root, [path])).map(normalizeDir)[0];
         if (resolved === undefined) {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);
         }
@@ -367,7 +368,7 @@ export class ProjectService implements IProjectService {
           ? collectAliasIds(catalog.workspaces, await readSessionIndexEntries(this.storage), root)
           : [];
         const removedIds = new Set([id, ...aliasIds]);
-        deletedRoot = root;
+        deletedRoot = normalizeDir(root);
         return {
           workspaces: catalog.workspaces.filter((ws) => !removedIds.has(ws.id)),
           deletedIds: [...new Set([...catalog.deletedIds, ...removedIds])],
@@ -566,7 +567,7 @@ export class ProjectService implements IProjectService {
     root: string,
     dirs: readonly string[],
   ): Promise<readonly string[]> {
-    const resolved = await this.localConfig.resolveAdditionalDirs(root, dirs);
+    const resolved = (await this.localConfig.resolveAdditionalDirs(root, dirs)).map(normalizeDir);
     const rootKey = workspaceRootKey(root);
     const result: string[] = [];
     for (const dir of resolved) {
@@ -600,7 +601,7 @@ export class ProjectService implements IProjectService {
 function implicitEntry(id: string, root: string, now: number): Project {
   return {
     id,
-    root,
+    root: normalizeDir(root),
     name: basename(root),
     kind: 'implicit',
     additionalDirs: [],

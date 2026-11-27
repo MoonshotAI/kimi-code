@@ -1,4 +1,4 @@
-import { sameDir, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { normalizeDir, sameDir, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -21,6 +21,15 @@ export function sessionWorkDir(session: SessionPlacement, projectRoot: string | 
   return local
     ? session.environmentCwd ?? projectRoot ?? session.cwd
     : session.cwd ?? projectRoot;
+}
+
+export function normalizeSessionDirs<T extends SessionPlacement>(session: T): T {
+  if ((session.environmentId ?? LOCAL_ENVIRONMENT_ID) !== LOCAL_ENVIRONMENT_ID) return session;
+  return {
+    ...session,
+    ...(typeof session.cwd === 'string' ? { cwd: normalizeDir(session.cwd) } : {}),
+    ...(typeof session.environmentCwd === 'string' ? { environmentCwd: normalizeDir(session.environmentCwd) } : {}),
+  };
 }
 
 export function workDirToPin(startDir: string, projectRoot: string): string | undefined {

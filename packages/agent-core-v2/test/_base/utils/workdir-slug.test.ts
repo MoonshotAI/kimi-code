@@ -4,6 +4,7 @@ import {
   encodeWorkDirKey,
   isAncestorOrSelf,
   isWorkDirKey,
+  normalizeDir,
   sameDir,
   toAbsoluteDir,
 } from '#/_base/utils/workdir-slug';
@@ -44,5 +45,18 @@ describe('directory identity', () => {
   it('tells project ids computed from a directory apart from generated ones', () => {
     expect(isWorkDirKey(encodeWorkDirKey('/repo/app'))).toBe(true);
     expect(isWorkDirKey('wm_00000000-0000-0000-0000-000000000000')).toBe(false);
+  });
+
+  it.each([
+    ['C:\\Users\\Me\\app\\', 'C:/Users/Me/app'],
+    ['c:\\users\\me\\app', 'c:/users/me/app'],
+    ['C:\\', 'C:/'],
+    ['\\\\server\\share\\app', '//server/share/app'],
+    ['/home/me/app/', '/home/me/app'],
+    ['/', '/'],
+    ['/home/me/odd\\name', '/home/me/odd\\name'],
+  ])('stores %s as %s without changing the project id it maps to', (dir, stored) => {
+    expect(normalizeDir(dir)).toBe(stored);
+    expect(encodeWorkDirKey(normalizeDir(dir))).toBe(encodeWorkDirKey(dir));
   });
 });

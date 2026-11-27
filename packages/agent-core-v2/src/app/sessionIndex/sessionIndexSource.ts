@@ -1,6 +1,6 @@
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { normalizeSessionDirs, sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
 import { SESSION_INDEX_DIRTY_DIR } from './sessionIndexDirtyJournal';
@@ -256,15 +256,17 @@ export async function readSessionSummary(
       ? (rawCustom as Record<string, unknown>)
       : undefined;
   const environmentId = typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined;
-  const environmentCwd = typeof meta['environmentCwd'] === 'string'
-    ? meta['environmentCwd']
-    : undefined;
+  const placement = normalizeSessionDirs({
+    cwd: recoverCwd(meta),
+    environmentId,
+    environmentCwd: typeof meta['environmentCwd'] === 'string' ? meta['environmentCwd'] : undefined,
+  });
   return buildSessionSummary({
     id: sessionId,
     workspaceId,
-    cwd: sessionWorkDir({ cwd: recoverCwd(meta), environmentId, environmentCwd }, primaryDir),
+    cwd: sessionWorkDir(placement, primaryDir),
     environmentId,
-    environmentCwd,
+    environmentCwd: placement.environmentCwd,
     title: typeof meta['title'] === 'string' ? meta['title'] : undefined,
     lastPrompt: typeof meta['lastPrompt'] === 'string' ? meta['lastPrompt'] : undefined,
     createdAt: parseTime(meta['createdAt']),

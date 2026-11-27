@@ -74,7 +74,7 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { normalizeSessionDirs, resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import {
   drainSessionMetadataWrites,
@@ -1097,7 +1097,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async readMetaFromDisk(sessionId: string): Promise<SessionMeta | undefined> {
-    return this.docs.get<SessionMeta>(sessionScopeOf(this.handlerScope, sessionId), 'state.json');
+    const meta = await this.docs.get<SessionMeta>(sessionScopeOf(this.handlerScope, sessionId), 'state.json');
+    return meta === undefined ? undefined : normalizeSessionDirs(meta);
   }
 }
 

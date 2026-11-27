@@ -226,10 +226,16 @@ describe('decideImplicitProject', () => {
       expect(decision).toEqual({ id: own.id, root: own.root, project: own });
     });
 
-    it('keeps the caller spelling of a new plain directory as its root', async () => {
+    it('stores a new plain directory with forward slashes and keeps the id of the caller spelling', async () => {
       const decision = await decideImplicitProject('C:\\Users\\Me\\notes', [], ports());
 
-      expect(decision).toEqual({ id: encodeWorkDirKey('C:\\Users\\Me\\notes'), root: 'C:\\Users\\Me\\notes' });
+      expect(decision).toEqual({ id: encodeWorkDirKey('C:\\Users\\Me\\notes'), root: 'C:/Users/Me/notes' });
+    });
+
+    it('stores a new plain POSIX directory without the trailing slash it was opened with', async () => {
+      const decision = await decideImplicitProject('/home/me/notes/', [], ports());
+
+      expect(decision).toEqual({ id: encodeWorkDirKey('/home/me/notes/'), root: '/home/me/notes' });
     });
   });
 });
