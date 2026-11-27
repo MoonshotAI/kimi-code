@@ -1003,7 +1003,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     expect(chunk).toContain(`Session: ${sessionId}`);
     expect(chunk).toContain('Model: fake');
     expect(chunk).toContain('Mode: default');
-    expect(chunk).toContain(`Working directory: ${slashPathOf(homeDir)}`);
+    expect(chunk).toContain(`Working directory: ${slashPathOf(homeDir!)}`);
     expect(model!.requests().length).toBe(0);
   }, 30_000);
 

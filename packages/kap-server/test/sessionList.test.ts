@@ -398,7 +398,7 @@ describe('server /api/v1/sessions list', () => {
 
     const page = await getData();
     const item = page.items.find((entry) => entry.id === id) as Session | undefined;
-    expect(item?.cwd).toBe(slashPathOf(home));
+    expect(item?.cwd).toBe(slashPathOf(home as string));
 
     await rm(join(home as string, 'config.toml'), { force: true });
     await (server as RunningServer).close();

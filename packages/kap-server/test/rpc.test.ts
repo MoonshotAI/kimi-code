@@ -253,7 +253,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       `/api/v1/debug/workspace/${workspaceId}/snapshot`,
     );
     expect(workspace.body.data).toMatchObject({
-      metadata: { id: workspaceId, root: slashPathOf(home) },
+      metadata: { id: workspaceId, root: slashPathOf(home as string) },
       lifecycle: 'active',
       program: {
         binding: { environmentId: 'local' },
@@ -269,7 +269,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(association.body.data).toEqual({
       sessionId,
       workspaceId,
-      cwd: slashPathOf(home),
+      cwd: slashPathOf(home as string),
     });
 
     const binding = await call<AgentEnvironmentBindingSnapshot>(
