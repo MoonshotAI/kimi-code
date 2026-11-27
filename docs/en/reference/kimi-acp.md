@@ -11,7 +11,7 @@ Once started, the command prints no banner and immediately waits for the ACP cli
 When Kimi starts a turn on its own — to report a completed background task, to continue after a `Stop` hook blocks, or to run a scheduled task — `kimi acp` sends the reply and tool calls to the IDE through `session/update`, even after the previous `session/prompt` has ended. A new prompt sent while that turn is running receives `turn.agent_busy` and can be retried when the turn is complete.
 
 ::: tip Who calls this?
-You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md).
+You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../customization/ides.md).
 :::
 
 ## Capability matrix
@@ -99,5 +99,5 @@ When an ACP client provides `mcpServers` in `session/new` or `session/load`, the
 
 ## Next steps
 
-- [Using in IDEs](../guides/ides.md) — Zed / JetBrains configuration steps and troubleshooting
+- [Using in IDEs](../customization/ides.md) — Zed / JetBrains configuration steps and troubleshooting
 - [`kimi` Command Reference](./kimi-command.md) — Complete subcommand list

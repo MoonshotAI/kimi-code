@@ -119,5 +119,5 @@ Web 界面显示「正在检查信任状态…」时，草稿和附件会留在�
 ## 下一步
 
 - [print 模式](../reference/kimi-command.md#print-模式) — 单次执行、结构化输出与退出码
-- [在其他 Agent 中使用（Agent to Agent）](./other-agents.md) — 从 Claude Code、Codex、Cursor 等 Agent 驱动与交接会话
+- [在其他 Agent 中使用（Agent to Agent）](../customization/other-agents.md) — 从 Claude Code、Codex、Cursor 等 Agent 驱动与交接会话
 - [kimi 命令](../reference/kimi-command.md#kimi-web) — `kimi web` 与 `kimi rc` 的全部命令行选项

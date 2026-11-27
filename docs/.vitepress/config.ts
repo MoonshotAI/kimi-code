@@ -59,14 +59,7 @@ const config = withMermaid(defineConfig({
                 { text: 'Git worktree', link: '/zh/guides/worktrees' },
                 { text: 'Tower 多 Agent 协作', link: '/zh/guides/tower' },
                 { text: '远程环境', link: '/zh/guides/remote-environment' },
-              ],
-            },
-            {
-              text: '多端与外部接入',
-              items: [
                 { text: '在网页中使用', link: '/zh/guides/web' },
-                { text: '在 IDE 中使用', link: '/zh/guides/ides' },
-                { text: '在其他 Agent 中使用（Agent to Agent）', link: '/zh/guides/other-agents' },
               ],
             },
           ],
@@ -79,6 +72,8 @@ const config = withMermaid(defineConfig({
                 { text: 'Plugins', link: '/zh/customization/plugins' },
                 { text: 'Agent 与 subagent', link: '/zh/customization/agents' },
                 { text: 'Hooks', link: '/zh/customization/hooks' },
+                { text: '在 IDE 中使用', link: '/zh/customization/ides' },
+                { text: '在其他 Agent 中使用（Agent to Agent）', link: '/zh/customization/other-agents' },
                 { text: '自定义主题', link: '/zh/customization/themes' },
               ],
             },
@@ -145,14 +140,7 @@ const config = withMermaid(defineConfig({
                 { text: 'Git worktrees', link: '/en/guides/worktrees' },
                 { text: 'Tower multi-agent collaboration', link: '/en/guides/tower' },
                 { text: 'Remote environments', link: '/en/guides/remote-environment' },
-              ],
-            },
-            {
-              text: 'Interfaces & Integrations',
-              items: [
                 { text: 'Using in the Browser', link: '/en/guides/web' },
-                { text: 'Using in IDEs', link: '/en/guides/ides' },
-                { text: 'Using in Other Agents (Agent to Agent)', link: '/en/guides/other-agents' },
               ],
             },
           ],
@@ -165,6 +153,8 @@ const config = withMermaid(defineConfig({
                 { text: 'Plugins', link: '/en/customization/plugins' },
                 { text: 'Agents and Subagents', link: '/en/customization/agents' },
                 { text: 'Hooks', link: '/en/customization/hooks' },
+                { text: 'Using in IDEs', link: '/en/customization/ides' },
+                { text: 'Using in Other Agents (Agent to Agent)', link: '/en/customization/other-agents' },
                 { text: 'Custom Themes', link: '/en/customization/themes' },
               ],
             },
@@ -237,7 +227,7 @@ const config = withMermaid(defineConfig({
       'server-api-files',
     ]
     for (const locale of ['en', 'zh'] as const) {
-      const guideTarget = `${base}${locale}/guides/other-agents.html`
+      const guideTarget = `${base}${locale}/customization/other-agents.html`
       const refDir = resolve(outDir, locale, 'reference')
       mkdirSync(refDir, { recursive: true })
       for (const slug of legacyPages) {
@@ -246,12 +236,18 @@ const config = withMermaid(defineConfig({
       }
       const guidesDir = resolve(outDir, locale, 'guides')
       mkdirSync(guidesDir, { recursive: true })
-      const rcTarget = `${base}${locale}/guides/web.html#${locale === 'zh' ? '远程控制' : 'remote-control'}`
-      writeFileSync(
-        resolve(guidesDir, 'remote-control.html'),
-        `<!DOCTYPE html><html lang="${locale}"><head><meta charset="utf-8"><title>Redirecting…</title><link rel="canonical" href="${rcTarget}"><meta http-equiv="refresh" content="0; url=${rcTarget}"><script>location.replace(${JSON.stringify(rcTarget)});</script></head><body><p>Redirecting to <a href="${rcTarget}">${rcTarget}</a>…</p></body></html>\n`,
-        'utf8',
-      )
+      const movedGuides: Record<string, string> = {
+        'remote-control.html': `${base}${locale}/guides/web.html#${locale === 'zh' ? '远程控制' : 'remote-control'}`,
+        'ides.html': `${base}${locale}/customization/ides.html`,
+        'other-agents.html': `${base}${locale}/customization/other-agents.html`,
+      }
+      for (const [slug, target] of Object.entries(movedGuides)) {
+        writeFileSync(
+          resolve(guidesDir, slug),
+          `<!DOCTYPE html><html lang="${locale}"><head><meta charset="utf-8"><title>Redirecting…</title><link rel="canonical" href="${target}"><meta http-equiv="refresh" content="0; url=${target}"><script>location.replace(${JSON.stringify(target)});</script></head><body><p>Redirecting to <a href="${target}">${target}</a>…</p></body></html>\n`,
+          'utf8',
+        )
+      }
     }
   },
 

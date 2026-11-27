@@ -13,7 +13,7 @@ Kimi Code CLI 与桌面端内置了 **Kimi Agent Protocol (KAP)** 本地服务�
 ## 前置准备
 
 - **版本要求**：Kimi Code CLI >= v2.7.0；Kimi Code Desktop >= v1.4.0；
-- **已完成登录或模型配置**：首次使用前请先完成登录（`kimi login`）或配置模型供应商，见[开始使用](./getting-started.md)。
+- **已完成登录或模型配置**：首次使用前请先完成登录（`kimi login`）或配置模型供应商，见[开始使用](../guides/getting-started.md)。
 
 ## 使用场景
 

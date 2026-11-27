@@ -11,7 +11,7 @@ kimi acp
 Kimi 自己发起回合时（汇报已完成的后台任务、`Stop` hook 拦截后续跑、执行定时任务），`kimi acp` 会通过 `session/update` 把回复和工具调用发送给 IDE，即使上一次 `session/prompt` 已经结束。这时提交新消息会收到 `turn.agent_busy`，可以等这个回合结束后重发。
 
 ::: tip 谁会调用它？
-你通常不需要手动跑 `kimi acp`——这个命令是给 IDE 的子进程入口准备的。IDE 端的配置见[在 IDE 中使用](../guides/ides.md)。
+你通常不需要手动跑 `kimi acp`——这个命令是给 IDE 的子进程入口准备的。IDE 端的配置见[在 IDE 中使用](../customization/ides.md)。
 :::
 
 ## 能力矩阵
@@ -99,5 +99,5 @@ ACP 客户端在 `session/new` 或 `session/load` 中提供 `mcpServers` 时，A
 
 ## 下一步
 
-- [在 IDE 中使用](../guides/ides.md) — Zed / JetBrains 配置步骤和故障排查
+- [在 IDE 中使用](../customization/ides.md) — Zed / JetBrains 配置步骤和故障排查
 - [kimi 命令参考](./kimi-command.md) — 完整子命令列表

@@ -10,13 +10,13 @@
 
 - 两个语言版本分别放在 `docs/en/` 和 `docs/zh/` 下，路径和文件名互为镜像。
 - 主要栏目（导航栏 + 侧边栏）如下：
-  - Guides 包含 getting-started、migration、use-cases、interaction、sessions、worktrees、tower、remote-environment，以及「多端与外部接入」下的 web、ides、other-agents。
-  - Customization: mcp, skills, plugins, datasource, agents, hooks
+  - Guides 包含 getting-started、migration、use-cases、interaction、sessions、worktrees、tower、remote-environment、web。
+  - Customization: mcp, skills, plugins, agents, hooks, ides, other-agents, themes
   - Configuration: config-files, providers, overrides, env-vars, data-locations
   - Reference: kimi-command, tools, slash-commands, keyboard
   - Release notes: changelog
 - 导航栏和侧边栏定义在 `docs/.vitepress/config.ts` 里。新增或重命名的页面，必须在这里为两个语言版本都配置好。
-- 外部 agent 接入 Kimi Code 的中英文用户指南放在 `docs/{en,zh}/guides/other-agents.md`。`skills/use-kimi-code/SKILL.md` 是跨版本的公开技能，构建时复制到 `/skills/use-kimi-code.md`。`packages/kap-server/docs/kap.md` 是与运行版本匹配的 KAP 协议指南，由服务通过 `GET /api/v1/kap.md` 提供。公开技能里不要写具体端点的载荷，让 agent 从运行中的服务读取 API 用法（`GET /api/v1/kap.md`）和字段定义（`GET /openapi.json`）。
+- 外部 agent 接入 Kimi Code 的中英文用户指南放在 `docs/{en,zh}/customization/other-agents.md`。`skills/use-kimi-code/SKILL.md` 是跨版本的公开技能，构建时复制到 `/skills/use-kimi-code.md`。`packages/kap-server/docs/kap.md` 是与运行版本匹配的 KAP 协议指南，由服务通过 `GET /api/v1/kap.md` 提供。公开技能里不要写具体端点的载荷，让 agent 从运行中的服务读取 API 用法（`GET /api/v1/kap.md`）和字段定义（`GET /openapi.json`）。
 
 ## 唯一依据
 

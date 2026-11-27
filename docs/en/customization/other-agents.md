@@ -13,7 +13,7 @@ Kimi Code CLI and the Kimi Code desktop app include a built-in **Kimi Agent Prot
 ## Prerequisites
 
 - **Version requirements**: Kimi Code CLI >= v2.7.0; Kimi Code Desktop >= v1.4.0;
-- **Logged in or model configured**: Complete login (`kimi login`) or configure a model provider beforehand — see [Getting Started](./getting-started.md).
+- **Logged in or model configured**: Complete login (`kimi login`) or configure a model provider beforehand — see [Getting Started](../guides/getting-started.md).
 
 ## Usage scenarios
 

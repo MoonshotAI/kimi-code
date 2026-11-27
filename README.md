@@ -81,14 +81,14 @@ For Zed, add this to `~/.config/zed/settings.json`:
 }
 ```
 
-Then open a new conversation in Zed's Agent panel. See [Using in IDEs](https://moonshotai.github.io/kimi-code/en/guides/ides) for JetBrains setup and troubleshooting, and the [`kimi acp` reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp) for the full capability matrix.
+Then open a new conversation in Zed's Agent panel. See [Using in IDEs](https://moonshotai.github.io/kimi-code/en/customization/ides) for JetBrains setup and troubleshooting, and the [`kimi acp` reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp) for the full capability matrix.
 
 ## Docs
 
 - [Getting Started](https://moonshotai.github.io/kimi-code/en/guides/getting-started)
 - [Interaction and approvals](https://moonshotai.github.io/kimi-code/en/guides/interaction)
 - [Sessions](https://moonshotai.github.io/kimi-code/en/guides/sessions)
-- [Using in IDEs (ACP)](https://moonshotai.github.io/kimi-code/en/guides/ides)
+- [Using in IDEs (ACP)](https://moonshotai.github.io/kimi-code/en/customization/ides)
 - [Configuration](https://moonshotai.github.io/kimi-code/en/configuration/config-files)
 - [Command reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-command)
 
