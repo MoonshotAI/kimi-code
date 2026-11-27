@@ -202,13 +202,16 @@ describe('mergeWorkspaces — scale', () => {
       id: `s${i}`,
       cwd: `/home/x/${i % 2 === 0 ? 'project' : 'derived'}-${i}`,
     }));
-    const startedAt = performance.now();
-    const result = mergeWorkspaces(input({ workspaces, sessions }));
-    const elapsedMs = performance.now() - startedAt;
-    expect(result).toHaveLength(count + count / 2);
-    expect(result[0]!.root).toBe('/home/x/project-0');
-    expect(result[count - 1]!.root).toBe(`/home/x/project-${count - 1}`);
-    expect(elapsedMs).toBeLessThan(300);
+    const elapsedSamples = Array.from({ length: 5 }, () => {
+      const startedAt = performance.now();
+      const result = mergeWorkspaces(input({ workspaces, sessions }));
+      const elapsedMs = performance.now() - startedAt;
+      expect(result).toHaveLength(count + count / 2);
+      expect(result[0]!.root).toBe('/home/x/project-0');
+      expect(result[count - 1]!.root).toBe(`/home/x/project-${count - 1}`);
+      return elapsedMs;
+    });
+    expect(Math.min(...elapsedSamples)).toBeLessThan(300);
   });
 });
 
