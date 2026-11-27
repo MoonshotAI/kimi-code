@@ -150,6 +150,13 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	/**
+	 * Whether the terminal shows its alternate screen buffer, as after ESC[?1049h
+	 */
+	isAlternateScreen(): boolean {
+		return this.xterm.buffer.active.type === "alternate";
+	}
+
+	/**
 	 * Get the visible viewport (what's currently on screen)
 	 * Note: You should use getViewportAfterWrite() for testing after writing data
 	 */
