@@ -31,6 +31,7 @@ import {
   type Diagnostic,
   type Frame,
   type PermissionMode,
+  type PlanModeState,
   type ReopenState,
   type SurfaceDriver,
   StartupFailure,
@@ -193,6 +194,16 @@ const ADD_DIR_FOR_SESSION = `${USER_MARK} Yes, for this session`;
 const ADD_DIR_ADDED = 'Added workspace directory:';
 const ADD_DIR_SESSION_ONLY = 'For this session only';
 const COMMAND_ERROR = 'Error: ';
+const PLAN_COMMAND = '/plan';
+const PLAN_SET: Readonly<Record<PlanModeState, string>> = { on: 'Plan mode: ON', off: 'Plan mode: OFF' };
+const PLAN_ALREADY = 'Plan mode is already ';
+const PLAN_NOTICES = ['Plan mode: ', PLAN_ALREADY, 'Error: Failed to set plan mode'] as const;
+const BTW_COMMAND = '/btw';
+const BTW_TITLE = '╭ BTW ─ ';
+const BTW_BORDER = '│';
+const BTW_QUESTION = 'Q: ';
+const BTW_WAITING = 'Waiting for answer…';
+const BTW_START_FAILED = 'Error: Failed to start /btw';
 
 interface Screen {
   readonly text: string;
@@ -278,6 +289,8 @@ interface QueuedMessage {
 }
 
 type Settled<T> = { readonly found: T } | { readonly over: Screen };
+
+type SideOutcome = { readonly opened: false } | { readonly opened: true; readonly shown: string; readonly answered: boolean };
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -627,6 +640,35 @@ function effortPicker(screen: Screen): EffortPicker | undefined {
 
 function switchNotices(screen: Screen): string[] {
   return [...screen.transcript, ...screen.status].map((row) => row.trim()).filter((row) => SWITCH_NOTICES.some((prefix) => row.startsWith(prefix)));
+}
+
+function rowsReading(screen: Screen, line: string): number {
+  return screen.transcript.filter((row) => row.trim() === line).length;
+}
+
+function planNotices(screen: Screen): number {
+  return screen.transcript.filter((row) => PLAN_NOTICES.some((prefix) => row.trimStart().startsWith(prefix))).length;
+}
+
+function sidePanel(screen: Screen): readonly string[] | undefined {
+  const rows = screen.viewport.map((row) => row.trim());
+  const top = rows.findLastIndex((row) => row.startsWith(BTW_TITLE));
+  if (top < 0) return undefined;
+  const body: string[] = [];
+  for (const row of rows.slice(top + 1)) {
+    if (!row.startsWith(BTW_BORDER)) break;
+    body.push(row.slice(BTW_BORDER.length, row.endsWith(BTW_BORDER) ? -BTW_BORDER.length : undefined).trim());
+  }
+  return body;
+}
+
+function sideAnswer(body: readonly string[], question: string): string | undefined {
+  const shown = squash(body.join(''));
+  const asked = squash(`${BTW_QUESTION}${question}`);
+  const at = shown.lastIndexOf(asked);
+  if (at < 0) return undefined;
+  const answer = shown.slice(at + asked.length);
+  return answer === '' || answer.startsWith(squash(BTW_WAITING)) ? undefined : answer;
 }
 
 function rejectionNote(screen: Screen): string {
@@ -1341,6 +1383,63 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const notice = await this.switchNotice('the transcript to record the thinking effort', notices);
     if (!notice.startsWith(`${EFFORT_SET}${effort}.`)) {
       throw this.failure(`setThinkingEffort() chose ${JSON.stringify(effort)}, but the transcript recorded ${JSON.stringify(notice)}.`, await this.read());
+    }
+  }
+
+  async setPlanMode(state: PlanModeState): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('setPlanMode() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('setPlanMode()', screen);
+    const notices = planNotices(screen);
+    const set = rowsReading(screen, PLAN_SET[state]);
+    const already = rowsReading(screen, `${PLAN_ALREADY}${state}`);
+    this.write(paste(`${PLAN_COMMAND} ${state}`));
+    this.write(KEYS.enter);
+    const answered = await this.wait('the transcript to record the plan mode', (current) =>
+      current.input === 'editor' && planNotices(current) > notices ? current : undefined,
+    );
+    if (rowsReading(answered, PLAN_SET[state]) > set) return;
+    if (rowsReading(answered, `${PLAN_ALREADY}${state}`) > already) {
+      throw this.failure(`setPlanMode() asked to turn plan mode ${state}, but plan mode is already ${state}.`, answered);
+    }
+    throw this.failure(`setPlanMode() asked to turn plan mode ${state}, but the transcript did not record "${PLAN_SET[state]}".`, answered);
+  }
+
+  async btw(question: string, reply: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('btw() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('btw()', screen);
+    const failedStarts = statusLines(screen, BTW_START_FAILED);
+    this.write(paste(`${BTW_COMMAND} ${question}`));
+    this.write(KEYS.enter);
+    let previous: string | undefined;
+    const outcome = await this.wait<SideOutcome>(`the side panel to finish answering ${JSON.stringify(question)}`, (current) => {
+      if (statusLines(current, BTW_START_FAILED) > failedStarts) return { opened: false };
+      const body = sidePanel(current);
+      const answer = body === undefined ? undefined : sideAnswer(body, question);
+      if (body === undefined || answer === undefined) {
+        previous = undefined;
+        return undefined;
+      }
+      const shown = body.join('\n').trimEnd();
+      const settled = shown === previous;
+      previous = shown;
+      return settled ? { opened: true, shown, answered: answer.includes(squash(reply)) } : undefined;
+    });
+    if (!outcome.opened) throw this.failure('btw() typed /btw, but the terminal UI could not start the side question.', await this.read());
+    this.write(KEYS.escape);
+    await this.wait('the side panel to close and the input box to come back', (current) =>
+      sidePanel(current) === undefined && current.input === 'editor' ? true : undefined,
+    );
+    if (!outcome.answered) {
+      throw this.failure(
+        `btw() asked ${JSON.stringify(question)}, but the side answer ended without ${JSON.stringify(reply)}. The side panel showed:\n${outcome.shown}`,
+        await this.read(),
+      );
     }
   }
 

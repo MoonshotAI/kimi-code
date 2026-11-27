@@ -40,6 +40,8 @@ const ONLY_THE_TERMINAL_UI_INITS = {
   desktop: 'The Desktop slash menu has no /init, and KAP has no request that generates AGENTS.md.',
   web: 'The Web slash menu has no /init, and KAP has no request that generates AGENTS.md.',
 };
+const NO_SIDE_QUESTION_OVER_ACP =
+  'ACP has no side question: an editor can only send /btw as a prompt, and the agent answers it with "Unknown ACP command: /btw" without asking the model.';
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
@@ -98,6 +100,8 @@ export const VERBS = {
   setThinkingEffort: { on: SURFACES, checksInterface: false },
   addDir: { on: ['tui'], absentBecause: NO_ADD_DIR, checksInterface: false },
   setBrowserControl: { on: ['desktop'], absentBecause: ONLY_DESKTOP_HAS_A_BROWSER, checksInterface: false },
+  setPlanMode: { on: SURFACES, checksInterface: false },
+  btw: { on: ['tui', 'desktop', 'web'], absentBecause: NO_SIDE_QUESTION_OVER_ACP, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -208,6 +212,7 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 export type WindowSize = 'normal' | 'narrow';
 
 export type BrowserControl = 'on' | 'off';
+export type PlanModeState = 'on' | 'off';
 
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
@@ -255,6 +260,8 @@ interface VerbSignatures {
   setThinkingEffort(effort: string): Promise<void>;
   addDir(path: string): Promise<void>;
   setBrowserControl(state: BrowserControl): Promise<void>;
+  setPlanMode(state: PlanModeState): Promise<void>;
+  btw(question: string, reply: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

@@ -41,6 +41,7 @@ import {
   type Diagnostic,
   type Frame,
   type PermissionMode,
+  type PlanModeState,
   type ReopenState,
   type SurfaceDriver,
   StartupFailure,
@@ -68,6 +69,7 @@ const PERMISSION_OPTIONS: Readonly<Record<string, string>> = {
   [REJECT]: 'reject_once',
 };
 const SESSION_MODES: Readonly<Record<PermissionMode, string>> = { manual: 'default', yolo: 'yolo', auto: 'auto' };
+const PLAN_MODE = 'plan';
 const QUESTION_TOOL = 'AskUserQuestion';
 const QUESTION_OPTION = /^q0_opt_\d+$/;
 const QUESTION_SKIP = { optionId: 'q0_skip', name: 'Skip', kind: 'reject_once' } as const;
@@ -303,6 +305,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private sessionId = '';
   private openedMode: string | undefined;
   private openedConfig: readonly SessionConfigOption[] = [];
+  private modeBeforePlan: string | undefined;
   private restored = false;
   private reopens: { readonly list: boolean; readonly load: boolean } = { list: false, load: false };
   private readonly leftSessions = new Set<string>();
@@ -477,18 +480,36 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   async setPermissionMode(mode: PermissionMode): Promise<void> {
     const name = PERMISSION_MODE_NAMES[mode];
     const modeId = SESSION_MODES[mode];
-    if (!this.turnOver() || this.permissions.length > 0) {
-      throw new Error(`setPermissionMode() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
-    }
+    this.assertModeSwitchable('setPermissionMode()');
     if (this.sessionMode() === modeId) {
       throw new Error(`setPermissionMode() asked for ${name}, but that is already the permission mode: the session is in mode ${modeId}.\n${this.describe()}`);
     }
+    await this.switchMode('setPermissionMode()', modeId);
+  }
+
+  async setPlanMode(state: PlanModeState): Promise<void> {
+    this.assertModeSwitchable('setPlanMode()');
+    const current = this.sessionMode();
+    if ((current === PLAN_MODE) === (state === 'on')) {
+      throw new Error(`setPlanMode() asked to turn plan mode ${state}, but plan mode is already ${state}: the session is in mode ${String(current)}.\n${this.describe()}`);
+    }
+    await this.switchMode('setPlanMode()', state === 'on' ? PLAN_MODE : (this.modeBeforePlan ?? SESSION_MODES.manual));
+    this.modeBeforePlan = state === 'on' ? current : undefined;
+  }
+
+  private assertModeSwitchable(verb: string): void {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`${verb} needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+  }
+
+  private async switchMode(verb: string, modeId: string): Promise<void> {
     const mark = this.updates.length;
     await this.response(`the agent to switch the session to mode ${modeId}`, this.connection.agent.request(methods.agent.session.setMode, { sessionId: this.sessionId, modeId }));
     await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
     const reported = this.updates.slice(mark).some((update) => update.sessionUpdate === 'current_mode_update' && update.currentModeId === modeId);
     if (!reported) {
-      throw new Error(`setPermissionMode() switched the session to mode ${modeId}, but the agent never reported it with current_mode_update.\n${this.describe()}`);
+      throw new Error(`${verb} switched the session to mode ${modeId}, but the agent never reported it with current_mode_update.\n${this.describe()}`);
     }
   }
 
@@ -562,6 +583,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.sessionId = session.sessionId;
     this.openedMode = session.modes?.currentModeId;
     this.openedConfig = session.configOptions ?? [];
+    this.modeBeforePlan = undefined;
     this.sessionStart = this.updates.length;
     this.restored = false;
     this.prompts = [];

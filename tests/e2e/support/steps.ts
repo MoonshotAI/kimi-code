@@ -59,6 +59,8 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   setThinkingEffort: (effort) => `用户把思考强度调成${quote(effort)}`,
   addDir: (path) => `用户用 /add-dir 把${quote(path)}加进本会话的工作区`,
   setBrowserControl: (state) => (state === 'off' ? '用户在设置里关掉「让 agent 控制内置浏览器」' : '用户在设置里打开「让 agent 控制内置浏览器」'),
+  setPlanMode: (state) => (state === 'on' ? '用户打开计划模式' : '用户关掉计划模式'),
+  btw: (question, reply) => `用户用 /btw 问旁路问题${quote(question)}，看到旁路回答${quote(reply)}后回到主对话`,
 };
 
 export const DISK_TITLES = {

@@ -199,7 +199,7 @@ async function readIfPresent(path: string): Promise<string | undefined> {
   }
 }
 
-function promptCheck(verb: 'send' | 'queue' | 'steer' | 'openSession'): (text: string) => void {
+function promptCheck(verb: 'send' | 'queue' | 'steer' | 'openSession' | 'btw'): (text: string) => void {
   return (text) => {
     if (!/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable text without surrounding spaces, got ${JSON.stringify(text)}`);
@@ -240,7 +240,7 @@ function assertToolExpectation(expectation: ToolExpectation): void {
   }
 }
 
-function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther' | 'switchModel'): (text: string) => void {
+function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther' | 'switchModel' | 'btw'): (text: string) => void {
   return (text) => {
     if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
@@ -294,6 +294,10 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   switchModel: lineCheck('switchModel'),
   setThinkingEffort: assertEffort,
   addDir: assertWorkspaceDirectory,
+  btw: (question, reply) => {
+    promptCheck('btw')(question);
+    lineCheck('btw')(reply);
+  },
 };
 
 

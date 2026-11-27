@@ -14,6 +14,7 @@ import {
   type ApproveOptions,
   type DriverActionsOn,
   type PermissionMode,
+  type PlanModeState,
   type ToolExpectation,
   type ToolName,
   type ToolStatus,
@@ -69,6 +70,18 @@ const SETTINGS = 'Settings';
 const CLOSE_SETTINGS = 'Close (Esc)';
 const BROWSER_SETTINGS = 'Browser';
 const AGENT_BROWSER_CONTROL = 'Let agents control the built-in browser';
+const PLAN_PLACEHOLDER = 'What should the agent plan for?';
+const ADD_MENU = 'Add';
+const PLAN_ITEM = /^Plan/;
+const PLAN_PILL = 'Plan';
+const EXIT_MODE = 'Exit mode';
+const CLOSE_DOCK_PANEL = 'Close panel';
+const BTW_COMMAND = '/btw';
+const DETAIL_PANEL = 'Detail panel';
+const SIDE_CHAT = /^Side Chat(?: \d+)?$/;
+const CLOSE_TAB = 'Close tab';
+const CLOSE_SIDE_CHAT_DIALOG = 'Close side chat?';
+const CLOSE_SIDE_CHAT = 'Close side chat';
 
 export type MenuPage = () => Promise<Page>;
 
@@ -567,6 +580,56 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.enter(name, before);
   }
 
+  async setPlanMode(state: PlanModeState): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`setPlanMode() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    const wanted = state === 'on';
+    if ((await this.planShown()) === wanted) {
+      throw new Error(`setPlanMode() asked to turn plan mode ${state}, but plan mode is already ${state}.\n${await this.describe()}`);
+    }
+    if (wanted) await this.armPlanMode();
+    else await this.leavePlanMode();
+    await this.wait(`the message input to show that plan mode is ${state}`, async () => ((await this.planShown()) === wanted ? true : undefined));
+  }
+
+  async btw(question: string, reply: string): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`btw() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.assertEmptyInput('btw()');
+    await this.press('btw()', 'the message input', this.composer());
+    await this.page.keyboard.type(`${BTW_COMMAND} ${question}`);
+    const send = this.page.getByRole('button', { name: SEND, exact: true, disabled: false });
+    await this.wait('the Send button to become enabled', async () => (await send.isVisible()) || undefined);
+    await this.page.keyboard.press('Enter');
+    const panel = this.page.getByRole('complementary', { name: DETAIL_PANEL });
+    const tab = panel.getByRole('tab', { name: SIDE_CHAT, selected: true });
+    await this.wait('the side chat to open', async () => (await tab.isVisible()) || undefined);
+    const asking = this.page.getByText(question, { exact: true });
+    const asked = panel.locator(BLOCK).filter({ has: asking });
+    const replies = panel.locator(`${BLOCK}${REPLY}`).filter({ hasNot: asking });
+    const working = panel.getByRole('button', { name: INTERRUPT });
+    let previous: string | undefined;
+    const outcome = await this.wait(`the side chat to finish answering ${JSON.stringify(question)}`, async () => {
+      const ended = (await asked.count()) > 0 && !(await working.isVisible()) && ((await replies.count()) > 0 || (await panel.getByRole('alert').count()) > 0);
+      if (!ended) {
+        previous = undefined;
+        return undefined;
+      }
+      if ((await replies.filter({ hasText: containing(reply) }).count()) > 0) return 'answered' as const;
+      const shown = (await panel.allTextContents()).join('\n');
+      const settled = shown === previous;
+      previous = shown;
+      return settled ? ('over' as const) : undefined;
+    });
+    const shown = await this.cardLines(panel);
+    await this.closeSideChat(panel, tab);
+    if (outcome === 'over') {
+      throw new Error(`btw() asked ${JSON.stringify(question)}, but the side chat ended without ${JSON.stringify(reply)}. The side chat showed:\n${shown}\n${await this.describe()}`);
+    }
+  }
+
   async newSession(): Promise<void> {
     if (!(await this.idle())) {
       throw new Error(`newSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
@@ -661,6 +724,47 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   private notices(text: string | RegExp): Locator {
     return this.page.getByRole('status').and(this.page.locator(SHOWN)).filter({ hasText: text });
+  }
+
+  private async planShown(): Promise<boolean> {
+    return (await this.composer().getAttribute('aria-placeholder', { timeout: TIMEOUTS.wait })) === PLAN_PLACEHOLDER;
+  }
+
+  private async armPlanMode(): Promise<void> {
+    const add = this.page.getByRole('button', { name: ADD_MENU, exact: true });
+    const composerArea = this.composer().locator('xpath=ancestor::*').filter({ has: add }).last();
+    await this.press('setPlanMode()', ADD_MENU, composerArea.getByRole('button', { name: ADD_MENU, exact: true }));
+    await this.press('setPlanMode()', PLAN_PILL, composerArea.getByRole('menuitem', { name: PLAN_ITEM }));
+  }
+
+  private async leavePlanMode(): Promise<void> {
+    const armed = this.composer().locator('xpath=..').getByRole('button', { name: EXIT_MODE, exact: true });
+    if (await armed.isVisible()) {
+      await this.press('setPlanMode()', EXIT_MODE, armed);
+      return;
+    }
+    await this.press('setPlanMode()', `the ${PLAN_PILL} pill`, this.page.getByRole('button', { name: PLAN_PILL, exact: true }));
+    const exit = this.page.getByRole('button', { name: EXIT_MODE, exact: true });
+    await this.press('setPlanMode()', EXIT_MODE, exit);
+    await this.wait(`the plan panel to drop its ${EXIT_MODE} button`, async () => ((await exit.count()) === 0 ? true : undefined));
+    const close = this.page.getByRole('button', { name: CLOSE_DOCK_PANEL, exact: true });
+    if (await close.isVisible()) await this.press('setPlanMode()', CLOSE_DOCK_PANEL, close);
+    await this.wait('the plan panel to close', async () => ((await close.count()) === 0 ? true : undefined));
+  }
+
+  private async closeSideChat(panel: Locator, tab: Locator): Promise<void> {
+    const closeTab = this.page.getByRole('button', { name: CLOSE_TAB, exact: true });
+    await this.press('btw()', CLOSE_TAB, tab.locator('xpath=ancestor::*').filter({ has: closeTab }).last().getByRole('button', { name: CLOSE_TAB, exact: true }));
+    const confirm = this.page.getByRole('dialog', { name: CLOSE_SIDE_CHAT_DIALOG, exact: true }).getByRole('button', { name: CLOSE_SIDE_CHAT, exact: true });
+    const sideChats = panel.getByRole('tab', { name: SIDE_CHAT });
+    const closed = await this.wait('the side chat to ask before closing, or to close', async () => {
+      if ((await sideChats.count()) === 0) return true;
+      return (await confirm.isVisible()) ? false : undefined;
+    });
+    if (!closed) await this.press('btw()', CLOSE_SIDE_CHAT, confirm);
+    await this.wait('the side chat to close and leave one message input', async () =>
+      (await sideChats.count()) === 0 && (await this.page.getByRole('combobox', { name: 'Message input' }).count()) === 1 ? true : undefined,
+    );
   }
 
   private async inputArea(): Promise<Locator> {

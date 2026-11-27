@@ -87,10 +87,11 @@ entries:
     operation: Turn plan mode on or off between two turns
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/plan-mode-keeps-the-prefix.spec.ts
       - kind: kap
         test: tests/scenarios/prompt-cache.test.ts
         case: turning plan mode on
-    gap: Needs a plan mode action on every surface.
 
   - id: B3
     operation: Switch to another model with /model, then switch back
@@ -293,7 +294,9 @@ entries:
   - id: D9
     operation: Ask a side question with /btw, then go back to the main conversation
     promise: keeps
-    gap: Needs a btw action, and an explicit check that the side request reuses the main conversation's prefix, because the ledger does not check side requests.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/side-question-keeps-the-prefix.spec.ts
 
   - id: E1
     operation: Write or change AGENTS.md in the middle of a session
