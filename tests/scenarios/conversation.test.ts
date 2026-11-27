@@ -357,6 +357,26 @@ describe('conversation over KAP', () => {
     expect(await kap.session(session.id)).toMatchObject({ activity: 'idle', last_turn_outcome: 'interrupted' });
   });
 
+  test('leaves no running item in a turn stopped while its reply was streaming', async ({ kap, model }) => {
+    model.script(held('mid-reply', think('pondering', say(['partial ', 'answer'])), 2));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    await kap.prompt(session.id, 'explain slowly');
+    await model.hold('mid-reply').reached();
+    await socket.waitFor((frame) => frame.type === 'item.started' && itemOf(frame)?.type === 'assistant_message');
+    await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: true });
+    await expect.poll(() => model.request(0).state).toBe('aborted');
+    await kap.waitIdle(session.id);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
+
+    const turns = await kap.turns(session.id);
+    expect(turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted' });
+    expect(turns[0]?.items.filter((item) => item['status'] === 'running')).toEqual([]);
+    expect(socket.turns(session.id)).toEqual(turns);
+  });
+
   test('keeps a background command running on cancel until the client also asks to stop background work, then tells the model it was stopped', async ({ kap, model }) => {
     model.script(bash({ command: 'sleep 10', description: 'long sleep', run_in_background: true }), say('started it'), say('noted the stop'));
     const socket = await kap.connect();
