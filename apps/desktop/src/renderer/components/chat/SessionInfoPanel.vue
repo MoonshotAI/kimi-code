@@ -2,7 +2,7 @@
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useContextInspector } from '@moonshot-ai/app-core/composables';
-import { Icon, IconButton } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Spinner } from '@moonshot-ai/app-ui';
 import { sessionInfoStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { SessionInfoPopover, sessionWorktreeDisplay, type CompactPhase } from '@moonshot-ai/app-components/support';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
@@ -162,7 +162,8 @@ watch(
               :aria-busy="refreshing"
               @click="refresh"
             >
-              <Icon name="refresh" size="sm" />
+              <Spinner v-if="refreshing" size="sm" />
+              <Icon v-else name="refresh" size="sm" />
             </IconButton>
           </template>
         </SessionInfoFolder>
@@ -217,13 +218,6 @@ watch(
 .session-info:hover .si-refresh,
 .si-refresh:focus-visible,
 .si-refresh.spinning { opacity: 1; }
-.si-refresh.spinning :deep(.kw-icon) { animation: si-refresh-spin 0.9s linear infinite; }
-@keyframes si-refresh-spin {
-  to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .si-refresh.spinning :deep(.kw-icon) { animation: none; }
-}
 @media (hover: none) {
   .si-refresh { opacity: 1; }
 }

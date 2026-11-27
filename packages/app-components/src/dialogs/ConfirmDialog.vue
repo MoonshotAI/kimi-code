@@ -166,4 +166,7 @@ onBeforeUnmount(() => {
 .confirm-dialog__checkbox {
   margin-top: var(--space-4);
 }
+.confirm-dialog__checkbox :deep(.ui-check__label) {
+  overflow-wrap: anywhere;
+}
 </style>

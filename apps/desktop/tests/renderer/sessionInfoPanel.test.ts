@@ -600,7 +600,7 @@ describe('SessionInfoPanel', () => {
     const stateStyle = pullRequestStateSource.match(/\.spr-state\s*\{([^}]*)\}/)?.[1];
 
     expect(stateStyle).not.toContain('margin-left: auto');
-    expect(stateStyle).toContain('font-size: 11px');
+    expect(pullRequestStateSource).toMatch(/<Badge[^>]*\bsize="sm"/);
   });
 
   it.each([

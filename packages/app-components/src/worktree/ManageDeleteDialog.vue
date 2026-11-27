@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Checkbox } from '@moonshot-ai/app-ui';
 import type { WorktreeDeleteDialogState } from '@moonshot-ai/app-client/composables';
 import {
   worktreeDeleteRows,
@@ -153,25 +152,14 @@ function onCancel(source: ConfirmDialogCancelSource): void {
     :variant="variant"
     :loading="loading"
     :hide-cancel="view === 'progress'"
+    :checkbox-label="branchOption ?? undefined"
+    :checked="deleteBranch"
+    @update:checked="emit('setDeleteBranch', $event)"
     @confirm="onConfirm"
     @cancel="onCancel"
   >
     <template #after-row="{ index }">
       <ManageDeleteList v-if="index === 0 && listItems.length > 0" :items="listItems" />
     </template>
-    <div v-if="branchOption !== null" class="manage-delete__option">
-      <Checkbox :model-value="deleteBranch" :disabled="loading" @update:model-value="emit('setDeleteBranch', $event)">
-        {{ branchOption }}
-      </Checkbox>
-    </div>
   </ConfirmDialog>
 </template>
-
-<style scoped>
-.manage-delete__option {
-  margin-top: var(--space-4);
-}
-.manage-delete__option :deep(.ui-check__label) {
-  overflow-wrap: anywhere;
-}
-</style>
