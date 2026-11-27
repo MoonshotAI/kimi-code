@@ -13,13 +13,18 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   call,
+  held,
+  httpError,
   reply,
   say,
   startFakeModel,
   type FakeModel,
   type Lane,
 } from "@moonshot-ai/testkit/model";
+import { Events } from "../shared/bridge";
+import type { UIStreamEvent } from "../shared/types";
 import { replaySessionToWebviewEvents } from "../src/runtime/replay-adapter";
+import { SessionRuntime } from "../src/runtime/session-runtime";
 
 const MODEL_ALIAS = "vscode-replay-test";
 
@@ -127,7 +132,79 @@ function waitForEvent(
   });
 }
 
+function watchLive(session: Session): { runtime: SessionRuntime; streamed: unknown[] } {
+  const streamed: unknown[] = [];
+  const runtime = new SessionRuntime({
+    session,
+    legacyApproval: { yolo: true, afk: false },
+    broadcast: (event, data) => {
+      if (event === Events.StreamEvent) streamed.push(data);
+    },
+    captureBaseline: () => undefined,
+    log: () => undefined,
+  });
+  runtime.subscribe("view-1");
+  return { runtime, streamed };
+}
+
+function turnOutcomes(events: readonly unknown[]): unknown[] {
+  return events.filter((event) => {
+    const type = (event as UIStreamEvent).type;
+    return type === "stream_complete" || type === "error";
+  });
+}
+
+async function replayAfterResume(rig: ReplayRig, sessionId: string): Promise<UIStreamEvent[]> {
+  const resumed = await rig.harness.resumeSession({ id: sessionId, includeSubagents: true });
+  const state = resumed.getResumeState();
+  if (state === undefined) throw new Error("Expected public resume state");
+  return replaySessionToWebviewEvents(state, resumed.id);
+}
+
 describe("VS Code replay from a public Node SDK resume state", () => {
+  it("restores the same inline error that the live failed turn showed", async () => {
+    const rig = await createReplayRig();
+    rig.replies.script(httpError(400, { message: "The example service refused this request." }));
+    const session = await rig.harness.createSession({
+      id: "ses_vscode_replay_failed_turn",
+      workDir: rig.workDir,
+      model: MODEL_ALIAS,
+    });
+    const live = watchLive(session);
+
+    await expect(live.runtime.prompt("Summarize the deploy.")).resolves.toEqual({ status: "failed" });
+    await live.runtime.close();
+    const restored = await replayAfterResume(rig, session.id);
+
+    expect(turnOutcomes(live.streamed)).toEqual([
+      expect.objectContaining({ type: "error", code: "provider.api_error", phase: "runtime" }),
+    ]);
+    expect(turnOutcomes(restored)).toEqual(turnOutcomes(live.streamed));
+  });
+
+  it("restores the same completion that the live stopped turn emitted", async () => {
+    const rig = await createReplayRig();
+    rig.replies.script(held("mid-reply", say(["Partial ", "answer"]), 1));
+    const session = await rig.harness.createSession({
+      id: "ses_vscode_replay_stopped_turn",
+      workDir: rig.workDir,
+      model: MODEL_ALIAS,
+    });
+    const live = watchLive(session);
+
+    const completion = live.runtime.prompt("Write a long answer.");
+    await rig.provider.hold("mid-reply").reached();
+    await live.runtime.cancel();
+    await expect(completion).resolves.toEqual({ status: "cancelled" });
+    await live.runtime.close();
+    const restored = await replayAfterResume(rig, session.id);
+
+    expect(turnOutcomes(live.streamed)).toEqual([
+      { type: "stream_complete", result: { status: "cancelled" }, _sessionId: session.id },
+    ]);
+    expect(turnOutcomes(restored)).toEqual(turnOutcomes(live.streamed));
+  });
+
   it("restores persisted file and todo displays", async () => {
     const rig = await createReplayRig();
     const filePath = join(rig.workDir, "sample.txt");

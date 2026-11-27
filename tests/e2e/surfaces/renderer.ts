@@ -70,8 +70,6 @@ const STOP_TASK = 'stop';
 const RENDERER_TASK_STATUS: { readonly [S in TaskStatus]: string } = { running: 'running', done: 'Done', failed: 'Failed', stopped: 'Stopped' };
 const TASKS_PILL = /^(?:Bash|Background tasks)\b/;
 const SETTINGS = 'Settings';
-const SETTINGS_AGENT_TAB = 'Agent & Sessions';
-const DEFAULT_PERMISSION = /^Default permission/;
 const DISCLOSURE = 'button[aria-expanded]';
 const FOLDED = 'button[aria-expanded="false"]';
 const MARKDOWN = 'p, h1, h2, h3, h4, h5, h6, ul, ol, pre, blockquote, table';
@@ -554,26 +552,6 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const model = current === effortLabel('off') ? before : before.slice(0, before.lastIndexOf(MODEL_SUFFIX));
     const expected = effort === 'off' ? model : `${model}${MODEL_SUFFIX}${effort === 'on' ? THINKING_ON : wanted}`;
     await this.wait(`the model button to show ${expected}`, async () => ((await this.modelName()) === expected ? true : undefined));
-  }
-
-  async setDefaultPermissionMode(mode: PermissionMode): Promise<void> {
-    const name = PERMISSION_MODE_NAMES[mode];
-    if (!(await this.idle())) {
-      throw new Error(`setDefaultPermissionMode() needs an idle product, but a turn is running or an approval is pending.\n${await this.describe()}`);
-    }
-    await this.press('setDefaultPermissionMode()', SETTINGS, this.page.getByRole('button', { name: SETTINGS, exact: true }));
-    const tabs = this.page.getByRole('tablist', { name: SETTINGS, exact: true });
-    await this.press('setDefaultPermissionMode()', SETTINGS_AGENT_TAB, tabs.getByRole('tab', { name: SETTINGS_AGENT_TAB, exact: true }));
-    const row = this.page.getByText(DEFAULT_PERMISSION).locator('xpath=ancestor::*').filter({ has: this.page.getByRole('tablist') }).last();
-    const choice = row.getByRole('tab', { name, exact: true });
-    const already = (await choice.getAttribute('aria-selected', { timeout: TIMEOUTS.wait })) === 'true';
-    if (!already) {
-      await this.press('setDefaultPermissionMode()', name, choice);
-      await this.wait(`the default permission to show ${name}`, async () => ((await choice.getAttribute('aria-selected')) === 'true' ? true : undefined));
-    }
-    await this.page.keyboard.press('Escape');
-    await this.wait('the settings to close', async () => ((await tabs.isVisible()) ? undefined : true));
-    if (already) throw new Error(`setDefaultPermissionMode() asked for ${name}, but that is already the default permission.\n${await this.describe()}`);
   }
 
   async stop(): Promise<void> {

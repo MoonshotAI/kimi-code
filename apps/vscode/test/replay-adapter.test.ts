@@ -39,6 +39,37 @@ function record(messageValue: ReplayMessage, time: number = 1): AgentReplayRecor
   return { type: "message", message: messageValue, time };
 }
 
+type TurnEndedRecord = Extract<AgentReplayRecord, { type: "turn_ended" }>;
+
+function turnEnded(
+  turnId: number,
+  reason: TurnEndedRecord["reason"],
+  error?: TurnEndedRecord["error"],
+  time: number = 1,
+): AgentReplayRecord {
+  return error === undefined
+    ? { type: "turn_ended", turnId, reason, time }
+    : { type: "turn_ended", turnId, reason, error, time };
+}
+
+const PROVIDER_REFUSAL = {
+  code: "provider.api_error",
+  message: "The example service refused this request.",
+  retryable: false,
+} as const;
+
+function prompt(text: string, time: number = 1): AgentReplayRecord {
+  return record(message("user", [{ type: "text", text }], { origin: { kind: "user" } }), time);
+}
+
+function answer(text: string, time: number = 1): AgentReplayRecord {
+  return record(message("assistant", [{ type: "text", text }]), time);
+}
+
+function transcriptEvents(records: readonly AgentReplayRecord[]) {
+  return replay(records).filter((event) => event.type !== "StatusUpdate");
+}
+
 function resumedAgent(
   replay: readonly AgentReplayRecord[],
   options: {
@@ -382,6 +413,100 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
     ]);
   });
 
+  it("restores the inline error of a failed last turn instead of completing it", () => {
+    const events = transcriptEvents([
+      prompt("Summarize the deploy."),
+      answer("Partial summary"),
+      turnEnded(1, "failed", PROVIDER_REFUSAL),
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      "TurnBegin",
+      "StepBegin",
+      "ContentPart",
+      "error",
+    ]);
+    expect(events.at(-1)).toEqual({
+      type: "error",
+      code: "provider.api_error",
+      message: "Service temporarily unavailable.",
+      detail: "The example service refused this request.",
+      phase: "runtime",
+      _sessionId: "session-1",
+    });
+  });
+
+  it("restores a failed last turn that has no reply yet", () => {
+    const events = transcriptEvents([
+      prompt("Summarize the deploy."),
+      turnEnded(1, "failed", PROVIDER_REFUSAL),
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual(["TurnBegin", "error"]);
+  });
+
+  it("drops the inline error of an earlier failed turn because the next prompt cleared it", () => {
+    const events = transcriptEvents([
+      prompt("First", 1),
+      turnEnded(1, "failed", PROVIDER_REFUSAL, 2),
+      prompt("Second", 3),
+      answer("Two", 4),
+      turnEnded(2, "completed", undefined, 5),
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      "TurnBegin",
+      "stream_complete",
+      "TurnBegin",
+      "StepBegin",
+      "ContentPart",
+      "stream_complete",
+    ]);
+  });
+
+  it("keeps the inline error of the last prompt when a hidden follow-up turn completes", () => {
+    const events = transcriptEvents([
+      prompt("Summarize the deploy.", 1),
+      turnEnded(1, "failed", PROVIDER_REFUSAL, 2),
+      record(message("user", [{ type: "text", text: "<system>background task done</system>" }], {
+        origin: { kind: "injection", variant: "system_reminder" },
+      }), 3),
+      answer("Background note", 4),
+      turnEnded(2, "completed", undefined, 5),
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      "TurnBegin",
+      "error",
+      "StepBegin",
+      "ContentPart",
+      "stream_complete",
+    ]);
+  });
+
+  it("restores a blocked turn from an older session as a failed turn", () => {
+    const events = transcriptEvents([prompt("Deploy now."), turnEnded(1, "blocked")]);
+
+    expect(events.at(-1)).toEqual({
+      type: "error",
+      code: "turn.blocked",
+      message: "Turn ended with reason: blocked",
+      detail: "Turn ended with reason: blocked",
+      phase: "runtime",
+      _sessionId: "session-1",
+    });
+  });
+
+  it.each([
+    ["completed", "finished"],
+    ["cancelled", "cancelled"],
+  ] as const)("completes a turn that ended as %s exactly once", (reason, status) => {
+    const events = transcriptEvents([prompt("Hello"), answer("Partial"), turnEnded(1, reason)]);
+
+    expect(events.filter((event) => event.type === "stream_complete" || event.type === "error"))
+      .toEqual([{ type: "stream_complete", result: { status }, _sessionId: "session-1" }]);
+  });
+
   it("does not expose an injected user message in resumed history", () => {
     const events = replay([
       record(
@@ -649,5 +774,56 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
         event: { type: "ContentPart", payload: { type: "text", text: "second child answer" } },
       },
     }));
+  });
+
+  it("does not surface how a subagent turn ended", () => {
+    const main = resumedAgent([
+      prompt("Delegate", 1),
+      record(message("assistant", [], {
+        toolCalls: [{ type: "function", id: "agent-call-1", name: "Agent", arguments: "{}" }],
+      }), 2),
+      record(message("tool", [{ type: "text", text: "agent_id: sub-1\nstatus: failed" }], {
+        toolCallId: "agent-call-1",
+      }), 6),
+      answer("The subagent failed.", 7),
+      turnEnded(1, "completed", undefined, 8),
+    ]);
+    const child = resumedAgent([
+      record(message("user", [{ type: "text", text: "child task" }], {
+        origin: { kind: "system_trigger", name: "subagent" },
+      }), 3),
+      answer("child partial", 4),
+      turnEnded(1, "failed", PROVIDER_REFUSAL, 5),
+    ], { type: "sub" });
+    const state: ResumedSessionState = {
+      sessionMetadata: {
+        createdAt: "",
+        updatedAt: "",
+        title: "",
+        isCustomTitle: false,
+        agents: {
+          main: { type: "main", parentAgentId: null },
+          "sub-1": { type: "sub", parentAgentId: "main" },
+        },
+        custom: {},
+      },
+      agents: { main, "sub-1": child },
+    };
+
+    const events = replaySessionToWebviewEvents(state, "session-1");
+
+    expect(events.filter((event) => event.type === "stream_complete" || event.type === "error"))
+      .toEqual([{ type: "stream_complete", result: { status: "finished" }, _sessionId: "session-1" }]);
+    expect(events.filter((event) => event.type === "SubagentEvent")).toEqual([
+      expect.objectContaining({
+        payload: { parent_tool_call_id: "agent-call-1", event: { type: "StepBegin", payload: { n: 1 } } },
+      }),
+      expect.objectContaining({
+        payload: {
+          parent_tool_call_id: "agent-call-1",
+          event: { type: "ContentPart", payload: { type: "text", text: "child partial" } },
+        },
+      }),
+    ]);
   });
 });

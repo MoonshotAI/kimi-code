@@ -1,13 +1,15 @@
 import type { Event } from '@moonshot-ai/kimi-code-sdk';
 
+import { getUserMessage } from '../../shared/errors';
 import type {
   DisplayBlock,
   LegacyWireEvent,
+  RunResult,
   StatusUpdate,
   TokenUsage,
   TurnBegin,
 } from '../../shared/legacy-sdk';
-import type { ErrorPhase, UIStreamEvent } from '../../shared/types';
+import type { ErrorPhase, StreamError, UIStreamEvent } from '../../shared/types';
 import { toLegacyDisplay } from './tool-display';
 
 const DEFAULT_MAIN_AGENT_ID = 'main';
@@ -51,6 +53,12 @@ export interface TurnTerminalMetadata {
   readonly reason: SdkTurnEndedEvent['reason'];
   readonly error?: NonNullable<SdkTurnEndedEvent['error']>;
 }
+
+export type TurnOutcome = Pick<TurnTerminalMetadata, 'reason' | 'error'>;
+
+export type TurnOutcomeEvent =
+  | { readonly type: 'stream_complete'; readonly result: RunResult; readonly _sessionId: string }
+  | (StreamError & { readonly detail: string; readonly _sessionId: string });
 
 export interface EventAdapterResult {
   readonly state: EventAdapterState;
@@ -161,6 +169,28 @@ export function adaptSdkEvent(
     state: mapped.state,
     event: withSessionId(routed, sdkEvent.sessionId),
   };
+}
+
+export function turnOutcomeEvent({ reason, error }: TurnOutcome, sessionId: string): TurnOutcomeEvent {
+  switch (reason) {
+    case 'completed':
+      return { type: 'stream_complete', result: { status: 'finished' }, _sessionId: sessionId };
+    case 'cancelled':
+      return { type: 'stream_complete', result: { status: 'cancelled' }, _sessionId: sessionId };
+    case 'failed':
+    case 'blocked': {
+      const code = error?.code ?? `turn.${reason}`;
+      const detail = error?.message ?? `Turn ended with reason: ${reason}`;
+      return {
+        type: 'error',
+        code,
+        message: getUserMessage(code, detail),
+        detail,
+        phase: 'runtime',
+        _sessionId: sessionId,
+      };
+    }
+  }
 }
 
 export function toLegacyToolName(name: string): string {
