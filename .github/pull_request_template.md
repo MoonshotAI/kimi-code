@@ -37,7 +37,7 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
      consider "unchanged" whose branch conditions moved, and prompt-text edits sentence by sentence.
      | Behavior | Before | After | Who relies on the old behavior | Escape hatch |
      Name affected users concretely (client, provider dialect, platform, config state, data written
-     by older versions, external scripts); see .agents/skills/review-pr/surfaces.md.
+     by older versions, external scripts); see .agents/skills/review-pr/users.md.
      Write "None" with evidence if nothing observable changes.
      Then list affected modules and the test coverage for each row. -->
 

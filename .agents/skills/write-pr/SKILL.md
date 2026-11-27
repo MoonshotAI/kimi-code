@@ -1,6 +1,6 @@
 ---
 name: write-pr
-description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出让 reviewer 只读描述就能从逻辑和架构上理解改动的 PR 描述，包括核心思路与结构图、"行为变化与受影响人群"表、可视化大纲，以及 UI/UX 变化的截图和录屏。
+description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出让 reviewer 只读描述就能从逻辑和架构上理解改动的 PR 描述，包括核心思路与结构图、"行为变化与影响到谁"表、可视化大纲，以及 UI/UX 变化的截图和录屏。
 ---
 
 # 写 PR 描述
@@ -32,7 +32,7 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
    - **Bug Reproduction Steps**：只有 bug 类 PR 需要；feature 写 `N/A`。步骤已在 issue 里的写 `See linked issue`。
    - **Root Cause**：只有 bug 类 PR 需要；feature 写 `N/A`。说明根因，以及这是根本修复还是绕过。机制要靠时序或状态才说得清的，用图，见"代码变更的可视化大纲"。
    - **Code Changes**：先判断要不要先建立整体理解，再讲具体变化，见"讲清楚改动"。
-   - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与受影响人群"。验证只写结论：覆盖了哪些场景、哪些没验证；测试文件清单、全量运行结果和修复过程放进折叠块。
+   - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与影响到谁"。验证只写结论：覆盖了哪些场景、哪些没验证；测试文件清单、全量运行结果和修复过程放进折叠块。
    - **Checklist**：勾上所有适用的项。
 
 5. 发布描述：
@@ -40,35 +40,35 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
    - 先存到临时文件，再 `gh pr edit <number> --body-file <path>` 或 `gh pr create --body-file <path>`。
    - 确认更新成功。
 
-## 行为变化与受影响人群
+## 行为变化与影响到谁
 
 这一节回答一个问题：合入之后，现有用户会失去什么。这个仓库过去的回归大多来自没人回答这个问题，而不是逻辑错误。
 
-判据：**改动前能工作的任何输入（配置键、环境变量、命令行参数、provider 响应形态、旧版本写的会话数据、客户端请求、hook 载荷）改动后必须行为不变，除非这里明确声明了变化并给出退路。**
+判据：**改动前能工作的任何输入（配置项、环境变量、命令行参数、模型服务返回的数据、旧版本保存的会话、客户端请求、hook 收到的数据），改动后必须行为不变，除非这里明确写出了这项变化。**
 
 写法：
 
-1. 列出 diff 改变的每一个可观测行为，一行一个。包括你认为"不变"但分支条件挪动了的：新增的条件会不会先于旧条件命中既有输入；删除或收窄的分支改动前谁在走。内部包会打进 CLI 发布包，"内部"不等于用户无感。表格用 PR 描述的语言，下面的示例用英文只是示意形状：
+1. 列出 diff 改变的每一个外部看得到的行为，一行一个。包括你认为"不变"但分支条件挪动了的：新增的条件会不会比旧条件先命中现有输入；删掉或缩小范围的分支，改动前是谁在走。内部包会打进 CLI 发布包，"内部"不等于用户感觉不到。表格用 PR 描述的语言，下面的示例用英文，只是示意表格的样子：
 
    | Behavior | Before | After | Who relies on the old behavior | Escape hatch |
    |---|---|---|---|---|
-   | reasoning parsing when `reasoning_details` is an array | string `reasoning` also read | string ignored | OpenAI-compatible gateways that send both (OpenRouter dialect) | none |
+   | reasoning parsing when `reasoning_details` is an array | string `reasoning` also read | string ignored | OpenAI-compatible gateways that send both, such as OpenRouter | none |
 
-2. 人群要具名，不要写"部分用户"。从 `.agents/skills/review-pr/surfaces.md` 里取：客户端（TUI、print 模式、desktop 与 web、VS Code、ACP、SDK）、provider 方言、平台、配置状态、数据年代、外部脚本。
+2. 受影响的用户要写具体，不要写"部分用户"。从 `.agents/skills/review-pr/users.md` 里找：客户端（TUI、print 模式、desktop 与 web、VS Code、ACP、SDK）、不同的模型服务、平台、配置、旧数据、外部脚本。
 
 3. 改了 prompt 文本（system prompt、工具描述、提醒）的，每一句单独成行，写清这句改动前约束了什么行为、谁依赖、现在由什么来约束。"没有测试引用这句"不是无影响的证据。
 
-4. 替换或绕过旧路径的（移植、runtime binding、协议替换），额外列出旧路径的功能清单：它认哪些环境变量、有哪些兜底、接受哪些输入，以及每一项在新路径里的位置。
+4. 替换或绕过旧路径的（移植、runtime binding、协议替换），额外列出旧路径的功能清单：它认哪些环境变量、出错时怎么回退、接受哪些输入，以及每一项在新路径里的位置。
 
-5. 确实没有可观测变化的，写 `None`，并说明证据：哪些分支、默认值、契约文件没动。
+5. 确实没有外部看得到的变化的，写 `None`，并说明证据：哪些分支、默认值、契约文件没动。
 
-6. 表后面列受影响模块与每一行对应的测试覆盖。默认翻转或删除行为的，必须有一条测试把未被改动的人群的旧行为钉住，并且 changeset 要写明用户失去了什么，见 `gen-changesets` skill；没有退路的，在 PR 里请维护者显式拍板。
+6. 表后面列受影响模块与每一行对应的测试覆盖。翻转默认值或删除功能的，必须有一条测试把还在用旧行为的情况固定住，changeset 要写明用户失去了什么，见 `gen-changesets` skill；没有恢复旧行为的办法时，在 PR 里请维护者明确同意。
 
 ## 讲清楚改动
 
 Code Changes 要让 reviewer 不看 diff 也能从逻辑和架构上理解这个 PR。先判断要不要先建立整体理解：
 
-- 需要：改动跨多个模块，引入新概念、新数据流或新的部署形态，替换旧路径，或者 diff 大到 reviewer 不知道从哪看起。
+- 需要：改动跨多个模块，引入新概念、新数据流或新的部署方式，替换旧路径，或者 diff 大到 reviewer 不知道从哪看起。
 - 不需要：在已有结构里改一个点，比如修一个判断条件。直接用"代码变更的可视化大纲"讲变化。
 - 拿不准时问自己：reviewer 不先知道改完后系统长什么样，能看懂具体变化吗？
 
