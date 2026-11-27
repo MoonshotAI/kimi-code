@@ -4,6 +4,7 @@ import { createTestHome, type TestHome } from '#/fixtures/home';
 import { installNetworkGuard, type NetworkGuardOptions } from '#/fixtures/network';
 import { startKap, type KapHarness, type KapLaunchOptions, type KapRunningServer, type StartKapOptions } from '#/kap/harness';
 import { verifyKapInvariants } from '#/kap/invariants';
+import { verifyKapSchemas } from '#/kap/schemas';
 import { createFakeModel, type FakeModel, type FakeModelOptions } from '#/model/fake-model';
 
 export type Use<T> = (value: T) => Promise<void>;
@@ -113,6 +114,7 @@ export function kapFixtures<O extends KapLaunchOptions, S extends KapRunningServ
         verifyModelOnce(model);
         if (verifyInvariants === true && task.result?.state !== 'fail') {
           await verifyKapInvariants(kap);
+          await verifyKapSchemas(kap);
           model.verify();
         }
       } finally {
