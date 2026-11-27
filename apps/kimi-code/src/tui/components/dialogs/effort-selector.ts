@@ -11,12 +11,9 @@ import {
 
 import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 
+import { finishDialogLines } from '#/tui/components/chrome/dock-section';
 import { currentTheme } from '#/tui/theme';
-import {
-  finishDialogLines,
-  handleSegmentedMouse,
-  type MouseColRegion,
-} from '#/tui/utils/dialog-mouse';
+import { handleSegmentedMouse, type MouseColRegion } from '#/tui/utils/mouse-hit-test';
 
 import { effortLabel } from './model-selector';
 

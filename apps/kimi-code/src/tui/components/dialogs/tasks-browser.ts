@@ -30,7 +30,7 @@ import {
   rowIndexAt,
   type MouseActionSpan,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { printableChar } from '#/tui/utils/printable-key';
 import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';

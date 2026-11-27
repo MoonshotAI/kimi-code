@@ -9,7 +9,7 @@ import {
 
 import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
 import { currentTheme } from '#/tui/theme';
-import { focusOnUnfocusedMouse, handleSegmentedMouse } from '#/tui/utils/dialog-mouse';
+import { focusOnUnfocusedMouse, handleSegmentedMouse } from '#/tui/utils/mouse-hit-test';
 import { layoutTabStrip, type TabStripHitRange } from '#/tui/utils/tab-strip';
 
 import {
