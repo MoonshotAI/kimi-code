@@ -6,20 +6,21 @@ import { Button, IconResolverKey } from '@moonshot-ai/app-ui';
 let app: App | undefined;
 let host: HTMLDivElement | undefined;
 
-function mountButton(platform: string, keys: string[]): HTMLElement {
+function mountButton(platform: string, keys: string[]): HTMLElement | null {
   vi.spyOn(navigator, 'platform', 'get').mockReturnValue(platform);
   host = document.createElement('div');
   document.body.appendChild(host);
   app = createApp({ setup: () => () => h(Button, { keys }, () => 'Approve') });
   app.provide(IconResolverKey, (name) => defineComponent({ setup: () => () => h('svg', { 'data-icon': name }) }));
   app.mount(host);
-  return host.querySelector('.ui-button__cap')!;
+  return host.querySelector('.ui-button__kbd');
 }
 
-function capParts(cap: Element): string[] {
-  return [...cap.children].map((part) =>
-    part.classList.contains('ui-button__cap-text') ? `text:${part.textContent}` : `key:${part.querySelector('svg')?.getAttribute('data-icon')}`,
-  );
+function keyCaps(kbd: Element): string[] {
+  return [...kbd.querySelectorAll('.ui-kbd__key')].map((key) => {
+    const svg = key.querySelector('svg');
+    return svg === null ? `text:${key.textContent}` : `key:${svg.getAttribute('data-icon')}`;
+  });
 }
 
 afterEach(() => {
@@ -31,27 +32,30 @@ afterEach(() => {
 });
 
 describe('Button key cap', () => {
-  it('joins Command and Enter with a plus icon on Apple platforms', () => {
-    const cap = mountButton('MacIntel', ['mod', 'enter']);
-    expect(capParts(cap)).toEqual(['key:key-command', 'key:key-plus', 'key:key-enter']);
-    expect(cap.classList.contains('ui-button__cap--combo')).toBe(true);
+  it('reuses the button Kbd variant outside the button content and hides it from the accessible name', () => {
+    const kbd = mountButton('MacIntel', ['enter'])!;
+    expect(kbd.classList.contains('ui-kbd')).toBe(true);
+    expect(kbd.classList.contains('ui-kbd--button')).toBe(true);
+    expect(kbd.getAttribute('aria-hidden')).toBe('true');
+    expect(kbd.parentElement?.tagName).toBe('BUTTON');
+    expect(host?.querySelector('.ui-button__cap')).toBeNull();
   });
 
-  it('spells Ctrl before the plus and Enter icons on other platforms', () => {
-    const cap = mountButton('Win32', ['mod', 'enter']);
-    expect(capParts(cap)).toEqual(['text:Ctrl', 'key:key-plus', 'key:key-enter']);
-    expect(cap.classList.contains('ui-button__cap--combo')).toBe(true);
+  it('renders Command and Enter as separate key caps on Apple platforms', () => {
+    const kbd = mountButton('MacIntel', ['mod', 'enter'])!;
+    expect(keyCaps(kbd)).toEqual(['key:key-command', 'key:key-enter']);
   });
 
-  it.each(['MacIntel', 'Win32'])('renders single keys without the combo layout on %s', (platform) => {
-    const enter = mountButton(platform, ['enter']);
-    expect(capParts(enter)).toEqual(['key:key-enter']);
-    expect(enter.classList.contains('ui-button__cap--combo')).toBe(false);
+  it('renders Ctrl and Enter as separate key caps on other platforms', () => {
+    const kbd = mountButton('Win32', ['mod', 'enter'])!;
+    expect(keyCaps(kbd)).toEqual(['text:Ctrl', 'key:key-enter']);
+  });
+
+  it.each(['MacIntel', 'Win32'])('renders single Enter and Escape key caps on %s', (platform) => {
+    expect(keyCaps(mountButton(platform, ['enter'])!)).toEqual(['key:key-enter']);
     app?.unmount();
     host?.remove();
-    const escape = mountButton(platform, ['escape']);
-    expect(capParts(escape)).toEqual(['text:Esc']);
-    expect(escape.classList.contains('ui-button__cap--combo')).toBe(false);
+    expect(keyCaps(mountButton(platform, ['escape'])!)).toEqual(['text:Esc']);
   });
 
   it('renders no cap without keys', () => {

@@ -432,7 +432,4 @@ const enterHintKeys = computed<string[] | null>(() => {
 .sab-actions .ui-button.is-touch {
   height: var(--touch-target-min);
 }
-.sab-enter {
-  margin-left: var(--space-1);
-}
 </style>

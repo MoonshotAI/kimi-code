@@ -507,8 +507,7 @@ onUnmounted(() => {
           :loading="config.loading"
           @click="activate('confirm')"
         >
-          {{ config.confirmLabel }}
-          <Kbd v-if="config.annotation && !config.input?.readOnly" :keys="['mod', 'enter']" variant="button" />
+          {{ config.confirmLabel }}<Kbd v-if="config.annotation && !config.input?.readOnly" :keys="['mod', 'enter']" variant="button" />
         </Button>
       </footer>
     </section>
@@ -786,5 +785,4 @@ onUnmounted(() => {
 .annotation-status { font-size: var(--text-xs); color: var(--color-text-muted); }
 .is-annotation .browser-overlay-dialog__head { user-select: none; }
 .is-annotation .browser-overlay-dialog__head h2 { font-weight: var(--weight-section-label); }
-.is-annotation .browser-overlay-dialog__confirm { padding-right: var(--space-2); }
 </style>

@@ -49,7 +49,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
       <button type="button" class="trust-opt primary" :disabled="busy" @click="emit('trust')">
         <span class="opt-key">A.</span>
         <span class="opt-label">{{ t('workspace.trust.trustAction') }}</span>
-        <Kbd class="opt-shortcut" :keys="['mod', 'enter']" />
+        <Kbd class="opt-shortcut" :keys="['mod', 'enter']" variant="button" />
       </button>
       <button type="button" class="trust-opt" :disabled="busy" @click="emit('reject')">
         <span class="opt-key">B.</span>
@@ -132,6 +132,5 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
 
 .opt-shortcut {
   flex: none;
-  color: var(--color-text-faint);
 }
 </style>
