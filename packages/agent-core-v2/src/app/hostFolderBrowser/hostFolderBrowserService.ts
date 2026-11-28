@@ -1,4 +1,4 @@
-import { readdir, realpath } from 'node:fs/promises';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
@@ -40,13 +40,31 @@ export class HostFolderBrowser implements IHostFolderBrowser {
       throw mapFsError(err, realTarget);
     }
 
-    const entries: FsBrowseEntry[] = dirents
-      .filter((d) => d.isDirectory())
-      .map((d) => ({
-        name: d.name,
-        path: join(realTarget, d.name),
-        is_dir: true as const,
-      }));
+    const entries: FsBrowseEntry[] = [];
+    for (const d of dirents) {
+      const entryPath = join(realTarget, d.name);
+      if (d.isDirectory()) {
+        entries.push({ name: d.name, path: entryPath, is_dir: true as const });
+      } else if (d.isSymbolicLink()) {
+        try {
+          const targetStat = await stat(entryPath);
+          if (targetStat.isDirectory()) {
+            entries.push({ name: d.name, path: entryPath, is_dir: true as const });
+          }
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (
+            code !== 'ENOENT' &&
+            code !== 'ENOTDIR' &&
+            code !== 'ELOOP' &&
+            code !== 'EACCES' &&
+            code !== 'EPERM'
+          ) {
+            throw err;
+          }
+        }
+      }
+    }
 
     entries.sort(compareBrowseEntries);
 
