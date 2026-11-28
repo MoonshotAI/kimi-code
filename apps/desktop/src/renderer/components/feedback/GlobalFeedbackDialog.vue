@@ -11,6 +11,7 @@ import {
   type FeedbackForm,
   type GlobalFeedbackTarget,
 } from '../../composables/useDesktopFeedback';
+import { trackFeedbackMediaValidation } from '../../lib/feedbackTelemetry';
 import FeedbackGuideLink from './FeedbackGuideLink.vue';
 import GlobalFeedbackMedia from './GlobalFeedbackMedia.vue';
 import { addFeedbackMedia, FEEDBACK_MEDIA_LIMIT, type FeedbackMedia } from './feedbackMedia';
@@ -85,6 +86,7 @@ function addMedia(files: FileList): void {
   if (busy.value) return;
   resetMediaErrors();
   mediaErrors.value = addFeedbackMedia(draft.value.media, files);
+  trackFeedbackMediaValidation(mediaErrors.value, files, availableSessionId.value ?? draft.value.sessionId);
   if (mediaErrors.value.length) errorTimer = setTimeout(resetMediaErrors, 6000);
 }
 

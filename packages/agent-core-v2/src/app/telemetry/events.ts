@@ -267,6 +267,25 @@ export interface RemoteControlToggleEvent {
   outcome: 'ok' | 'already_running' | 'rejected' | 'error';
 }
 
+export interface FeedbackAttachmentUploadEvent {
+  emitter: 'client' | 'server';
+  attachment_kind: 'session' | 'diagnostics' | 'media';
+  stage: 'validation' | 'authorize' | 'collect' | 'export' | 'presign' | 'upload' | 'complete';
+  outcome: 'succeeded' | 'failed' | 'aborted' | 'skipped' | 'validation_rejected';
+  duration_ms: number;
+  feedback_id?: number;
+  upload_id?: number;
+  attempt?: 'initial' | 'retry';
+  host_kind?: 'local' | 'ssh';
+  media_kind?: 'image' | 'video';
+  size_bytes?: number;
+  size_bucket?: '<1mb' | '1-10mb' | '10-50mb' | '50-100mb' | '100-500mb' | '500mb+';
+  part_count?: number;
+  error_class?: string;
+  error_code?: string;
+  http_status?: number;
+}
+
 export interface PluginToggleEvent {
   plugin_id: string;
   enabled: boolean;
@@ -1036,6 +1055,28 @@ export const telemetryEventDefinitions = {
     properties: {
       enabled: 'Whether the request was to enable or disable the tunnel',
       outcome: 'How the request resolved',
+    },
+  }),
+  feedback_attachment_upload: defineTelemetryEvent<FeedbackAttachmentUploadEvent>({
+    owner: 'kimi-code',
+    comment: 'A feedback attachment validation, session archive export, or upload attempt settles.',
+    properties: {
+      emitter: 'Side that observed the outcome: renderer client or kap-server',
+      attachment_kind: 'Kind of feedback attachment',
+      stage: 'Furthest pipeline stage reached when the attempt settled',
+      outcome: 'How the attachment attempt resolved',
+      duration_ms: 'Attempt wall-clock time in milliseconds',
+      feedback_id: 'Feedback record id the attachment belongs to',
+      upload_id: 'Upload id returned by the feedback service when available',
+      attempt: 'Whether the client attempt was the initial upload or a manual retry',
+      host_kind: 'Whether the session archive came from the local host or an SSH host',
+      media_kind: 'Media type for image or video attachments',
+      size_bytes: 'Attachment byte size when known',
+      size_bucket: 'Bucketed attachment byte size reported by kap-server',
+      part_count: 'Number of multipart upload parts returned by the feedback service',
+      error_class: 'Bounded failure category; never contains message text or paths',
+      error_code: 'Protocol or OS/network error code such as 41301 or ECONNRESET',
+      http_status: 'Upstream feedback or storage HTTP status code when available',
     },
   }),
   plugin_toggle: defineTelemetryEvent<PluginToggleEvent>({

@@ -4,13 +4,20 @@ import { stat } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 
 import {
+  ErrorCodes,
   IBootstrapService,
   IOAuthService,
+  isError2,
   MAIN_AGENT_ID,
+  type FeedbackAttachmentUploadEvent,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
-import { uploadArchive } from '@moonshot-ai/agent-core-v2/app/auth/feedback/upload';
+import {
+  uploadArchive,
+  UploadPartHttpError,
+  UploadPartTimeoutError,
+} from '@moonshot-ai/agent-core-v2/app/auth/feedback/upload';
 import {
   fetchCompleteFeedbackUpload,
   fetchCreateFeedbackUploadUrl,
@@ -34,9 +41,70 @@ type UpdateFeedback = z.infer<typeof updateFeedbackSchema>;
 type FeedbackFile = { filename: string; path: string; size: number; sha256: string };
 
 export class FeedbackError extends Error {
-  constructor(readonly code: FeedbackErrorCode, message: string) {
+  constructor(readonly code: FeedbackErrorCode, message: string, readonly status?: number) {
     super(message);
   }
+}
+
+export type FeedbackUploadStage = 'presign' | 'upload' | 'complete';
+
+export interface FeedbackUploadFailure {
+  readonly error_class: string;
+  readonly error_code?: string;
+  readonly http_status?: number;
+}
+
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_PROXY',
+]);
+
+const feedbackErrorClasses: Readonly<Partial<Record<FeedbackErrorCode, string>>> = {
+  [ErrorCode.AUTH_TOKEN_MISSING]: 'auth_required',
+  [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: 'access_denied',
+  [ErrorCode.FILE_TOO_LARGE]: 'file_too_large',
+  [ErrorCode.SESSION_NOT_FOUND]: 'session_not_found',
+  [ErrorCode.FEEDBACK_REJECTED]: 'feedback_rejected',
+  [ErrorCode.VALIDATION_FAILED]: 'validation_failed',
+};
+
+export function classifyFeedbackUploadError(error: unknown): FeedbackUploadFailure {
+  if (error instanceof FeedbackError) {
+    return {
+      error_class: feedbackErrorClasses[error.code] ?? 'internal',
+      error_code: String(error.code),
+      ...(error.status === undefined ? {} : { http_status: error.status }),
+    };
+  }
+  if (error instanceof UploadPartHttpError) {
+    return { error_class: 'http', http_status: error.status };
+  }
+  if (error instanceof UploadPartTimeoutError) {
+    return { error_class: 'timeout' };
+  }
+  if (isError2(error)) {
+    if (error.code === ErrorCodes.SESSION_EXPORT_TOO_LARGE) {
+      return { error_class: 'file_too_large', error_code: error.code };
+    }
+    return { error_class: 'fs', error_code: error.code };
+  }
+  if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+    return { error_class: error.name === 'TimeoutError' ? 'timeout' : 'aborted' };
+  }
+  for (let current: unknown = error; current !== null && current !== undefined;) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(code)) {
+      return {
+        error_class: NETWORK_ERROR_CODES.has(code) || code.includes('CERT') || code.startsWith('UND_ERR_') ? 'network' : 'fs',
+        error_code: code,
+      };
+    }
+    if (!(current instanceof Error) || current.cause === current) break;
+    current = current.cause;
+  }
+  return { error_class: 'unknown' };
 }
 
 export async function requireFeedbackToken(core: Scope, oauthRef?: ManagedKimiOAuthRef): Promise<string> {
@@ -114,8 +182,14 @@ export class FeedbackGateway {
     if (result.kind === 'error') throw gatewayError(result.status);
   }
 
-  async upload(feedbackId: number, file: FeedbackFile, signal?: AbortSignal): Promise<number> {
+  async upload(
+    feedbackId: number,
+    file: FeedbackFile,
+    signal?: AbortSignal,
+    onStage?: (stage: FeedbackUploadStage, partCount?: number) => void,
+  ): Promise<number> {
     const options = { feedbackUrl: this.url.href, redirect: 'error', signal } as const;
+    onStage?.('presign');
     return uploadArchive({
       createUploadUrl: async (input) => {
         const result = await fetchCreateFeedbackUploadUrl(this.token, {
@@ -125,17 +199,17 @@ export class FeedbackGateway {
           feedback_id: input.feedbackId,
         }, options);
         if (result.kind === 'error') throw gatewayError(result.status);
-        return {
-          uploadId: result.upload_id,
-          parts: result.parts.map((part) => ({
-            partNumber: part.part_number,
-            method: part.method,
-            url: this.uploadUrl(part.url, part.method),
-            size: part.size,
-          })),
-        };
+        const parts = result.parts.map((part) => ({
+          partNumber: part.part_number,
+          method: part.method,
+          url: this.uploadUrl(part.url, part.method),
+          size: part.size,
+        }));
+        onStage?.('upload', parts.length);
+        return { uploadId: result.upload_id, parts };
       },
       completeUpload: async (input) => {
+        onStage?.('complete');
         const result = await fetchCompleteFeedbackUpload(this.token, {
           upload_id: input.uploadId,
           parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),
@@ -179,16 +253,26 @@ function gatewayError(status?: number): FeedbackError {
   switch (status ?? 0) {
     case 400:
     case 422:
-      return new FeedbackError(ErrorCode.VALIDATION_FAILED, 'The feedback service rejected the submitted data.');
+      return new FeedbackError(ErrorCode.VALIDATION_FAILED, 'The feedback service rejected the submitted data.', status);
     case 401:
     case 403:
-      return new FeedbackError(ErrorCode.AUTH_TOKEN_UNAUTHORIZED, 'The feedback service did not authorize this operation.');
+      return new FeedbackError(ErrorCode.AUTH_TOKEN_UNAUTHORIZED, 'The feedback service did not authorize this operation.', status);
     case 404:
     case 409:
-      return new FeedbackError(ErrorCode.FEEDBACK_REJECTED, 'The feedback is unavailable or can no longer be changed.');
+      return new FeedbackError(ErrorCode.FEEDBACK_REJECTED, 'The feedback is unavailable or can no longer be changed.', status);
     case 413:
-      return new FeedbackError(ErrorCode.FILE_TOO_LARGE, 'The feedback attachment is too large.');
+      return new FeedbackError(ErrorCode.FILE_TOO_LARGE, 'The feedback attachment is too large.', status);
     default:
-      return new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The feedback service could not complete the request.');
+      return new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The feedback service could not complete the request.', status);
   }
+}
+
+export function feedbackSizeBucket(size: number): NonNullable<FeedbackAttachmentUploadEvent['size_bucket']> {
+  const mib = 1024 * 1024;
+  if (size < mib) return '<1mb';
+  if (size < 10 * mib) return '1-10mb';
+  if (size < 50 * mib) return '10-50mb';
+  if (size < 100 * mib) return '50-100mb';
+  if (size <= 500 * mib) return '100-500mb';
+  return '500mb+';
 }

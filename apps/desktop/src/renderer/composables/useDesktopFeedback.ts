@@ -6,6 +6,8 @@ import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { FEEDBACK_FORM_CONFIG_NAME, feedbackFormSchema, type FeedbackForm } from '@moonshot-ai/kap-server/protocol/feedback-reasons';
 import { getKimiWebApi } from '../api';
 import { showFeedbackError, showFeedbackReceipt, type FeedbackAttachment } from '../lib/feedbackReceipt';
+import { classifyFeedbackClientError } from '../lib/feedbackTelemetry';
+import { track } from '../lib/track';
 
 export type { FeedbackAttachment } from '../lib/feedbackReceipt';
 export type { FeedbackForm };
@@ -220,18 +222,35 @@ export function useDesktopFeedback(deps: {
   }
 
   async function submitGlobal(input: Extract<CreateFeedbackInput, { kind: 'global' }>, attachments: FeedbackAttachment[]): Promise<number | undefined> {
+    const startedAt = Date.now();
     const { signal } = accountFor().controller;
     const session = attachments.find(item => item.kind === 'session');
     const host = session === undefined ? undefined : deps.sessionHost(session.sessionId);
     const submitter = deps.accountId();
+    const uploadSession = session !== undefined;
+    const uploadLogs = attachments.some((item) => item.kind === 'diagnostics');
+    const mediaCount = attachments.filter((item) => item.kind === 'media').length;
+    const sessionId = session?.sessionId ?? input.session_id;
+    const base = () => ({
+      kind: 'global' as const,
+      duration_ms: Date.now() - startedAt,
+      upload_session: uploadSession,
+      upload_logs: uploadLogs,
+      media_count: mediaCount,
+      ...(sessionId === undefined ? {} : { session_id: sessionId }),
+      host_kind: session === undefined ? ('none' as const) : host === undefined ? ('local' as const) : ('ssh' as const),
+    });
     try {
       const { feedback_id: id } = await getKimiWebApi().createFeedback({
         ...input,
         client: isDesktop ? 'desktop' : 'web',
-        upload_session: attachments.some((item) => item.kind === 'session'),
-        upload_logs: attachments.some((item) => item.kind === 'diagnostics'),
+        upload_session: uploadSession,
+        upload_logs: uploadLogs,
       });
-      if (signal.aborted) return;
+      if (signal.aborted) {
+        track('feedback_submit_result', { ...base(), outcome: 'aborted', feedback_id: id, error_class: 'aborted' });
+        return;
+      }
       const authorizeSession = session === undefined || host === undefined ? undefined : async () => {
         if (!requireLogin(session.sessionId)) return;
         const hostSignal = accountFor(host).controller.signal;
@@ -240,8 +259,11 @@ export function useDesktopFeedback(deps: {
         if (userId !== undefined && userId === await deps.hostUserId(host)) return hostSignal;
       };
       showFeedbackReceipt(id, attachments, signal, handleLoginError, { hostId: host, authorizeSession });
+      track('feedback_submit_result', { ...base(), outcome: 'succeeded', feedback_id: id });
       return id;
     } catch (error) {
+      const classified = classifyFeedbackClientError(error, signal);
+      track('feedback_submit_result', { ...base(), outcome: classified.error_class === 'aborted' ? 'aborted' : 'failed', ...classified });
       if (signal.aborted) return;
       handleLoginError(error);
       throw error;
@@ -317,9 +339,21 @@ export function useDesktopFeedback(deps: {
     const current = turnStates.get(key);
     if (current?.kind !== 'recorded' || current.record.rating !== 'down') return;
     const { record } = current;
+    const startedAt = Date.now();
+    const base = () => ({
+      kind: 'turn_details' as const,
+      duration_ms: Date.now() - startedAt,
+      upload_session: details.includeSession,
+      session_id: target.sessionId,
+      host_kind: host === undefined ? ('local' as const) : ('ssh' as const),
+      feedback_id: record.feedbackId,
+    });
     turnStates.set(key, { kind: 'updating', record });
     try {
-      if (host !== undefined && !await ownsExistingRating(account, host)) return;
+      if (host !== undefined && !await ownsExistingRating(account, host)) {
+        track('feedback_submit_result', { ...base(), outcome: 'aborted', error_class: 'aborted' });
+        return;
+      }
       await getKimiWebApi().updateFeedback(record.feedbackId, {
         kind: 'details',
         reasons: details.reasons,
@@ -327,6 +361,8 @@ export function useDesktopFeedback(deps: {
         upload_session: details.includeSession,
       }, target.sessionId);
     } catch (error) {
+      const classified = classifyFeedbackClientError(error, signal);
+      track('feedback_submit_result', { ...base(), outcome: classified.error_class === 'aborted' ? 'aborted' : 'failed', ...classified });
       if (signal.aborted) return;
       turnStates.set(key, current);
       if (handleLoginError(error, target.sessionId)) return;
@@ -334,7 +370,11 @@ export function useDesktopFeedback(deps: {
       showFeedbackError(failure, signal);
       return failure;
     }
-    if (signal.aborted) return;
+    if (signal.aborted) {
+      track('feedback_submit_result', { ...base(), outcome: 'aborted', error_class: 'aborted' });
+      return;
+    }
+    track('feedback_submit_result', { ...base(), outcome: 'succeeded' });
     const sessionUpload = details.includeSession ? new AbortController() : undefined;
     turnStates.set(key, { kind: 'recorded', record: { ...record, status: 'thanks', sessionUpload } });
     closePopover(target);

@@ -1,16 +1,20 @@
 import { effectScope, shallowRef } from 'vue';
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dismissToastByKey, onToast, type ToastEvent } from '@moonshot-ai/app-client/client';
+import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import { FEEDBACK_FORM_STALE_MS, useDesktopFeedback, type FeedbackForm, type TurnFeedbackTarget } from '../../src/renderer/composables/useDesktopFeedback';
 import { i18n } from '../../src/renderer/i18n';
+import { rendererTrackEventSchema } from '../../src/shared/track-events';
 
-const { api, getClientConfig } = vi.hoisted(() => ({
+const { api, getClientConfig, track } = vi.hoisted(() => ({
   api: {
     createFeedback: vi.fn(), updateFeedback: vi.fn(), uploadFeedbackSession: vi.fn(), uploadFeedbackAttachment: vi.fn(), getUserInfo: vi.fn(),
   },
   getClientConfig: vi.fn(),
+  track: vi.fn(),
 }));
 vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: () => api }));
+vi.mock('../../src/renderer/lib/track', () => ({ track }));
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/app-client/client')>();
   return {
@@ -126,6 +130,10 @@ describe('feedback account ownership', () => {
       { variant: 'success', title: 'Feedback submitted · ID 1', copyLink: { label: 'Copy ID', copiedLabel: 'Copied', url: '1' } },
       { variant: 'danger', title: 'Couldn’t submit conversation history', actions: [{ label: 'Retry submission' }] },
     ]);
+    expect(track).toHaveBeenCalledWith('feedback_attachment_upload', expect.objectContaining({
+      emitter: 'client', attachment_kind: 'session', stage: 'authorize', outcome: 'skipped',
+      attempt: 'initial', feedback_id: 1, session_id: 'first', host_kind: 'ssh', error_class: 'ownership_unverified',
+    }));
     userIds['first'] = 'user';
     void shown()[1]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
     await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { hostId: 'first' }));
@@ -133,6 +141,10 @@ describe('feedback account ownership', () => {
     feedback.clearHostAccount('first');
     expect(api.uploadFeedbackSession.mock.calls[0]?.[2]).toHaveProperty('aborted', true);
     expect(api.uploadFeedbackAttachment.mock.calls[0]?.[2]).toHaveProperty('aborted', false);
+    await vi.waitFor(() => expect(track).toHaveBeenCalledWith('feedback_attachment_upload', expect.objectContaining({
+      emitter: 'client', attachment_kind: 'session', stage: 'upload', outcome: 'aborted',
+      attempt: 'retry', feedback_id: 1, session_id: 'first', host_kind: 'ssh', error_class: 'aborted',
+    })));
   });
 
   it('reports mixed failures together in submission order and does not send a session with unverified ownership', async () => {
@@ -201,6 +213,97 @@ describe('feedback account ownership', () => {
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledTimes(5);
     expect(api.uploadFeedbackAttachment).toHaveBeenLastCalledWith(1, { kind: 'media', file: second, fileName: second.name }, expect.any(AbortSignal));
     expect(api.createFeedback).toHaveBeenCalledOnce();
+  });
+});
+
+describe('feedback submission and upload telemetry', () => {
+  function trackedEvents(name: string) {
+    return track.mock.calls.filter(([event]) => event === name).map(([, properties]) => {
+      const parsed = rendererTrackEventSchema.safeParse({ event: name, properties });
+      expect(parsed.success, JSON.stringify(properties)).toBe(true);
+      return properties;
+    });
+  }
+
+  it('tracks successful global submission and session upload with joinable feedback and session ids', async () => {
+    const { feedback } = setup();
+    api.uploadFeedbackSession.mockResolvedValueOnce({ upload_id: 9 });
+    const id = await feedback.submitGlobal({ kind: 'global', source: 'menu', category: 'bug', content: 'Broken', session_id: 'local' }, [
+      { kind: 'session', sessionId: 'local' },
+    ]);
+    expect(id).toBe(1);
+    await vi.waitFor(() => expect(trackedEvents('feedback_attachment_upload')).toHaveLength(1));
+    expect(trackedEvents('feedback_submit_result')).toEqual([expect.objectContaining({
+      kind: 'global', outcome: 'succeeded', feedback_id: 1, upload_session: true, upload_logs: false, media_count: 0,
+      session_id: 'local', host_kind: 'local',
+    })]);
+    expect(trackedEvents('feedback_attachment_upload')).toEqual([expect.objectContaining({
+      emitter: 'client', attachment_kind: 'session', stage: 'upload', outcome: 'succeeded', attempt: 'initial',
+      feedback_id: 1, upload_id: 9, session_id: 'local', host_kind: 'local',
+    })]);
+  });
+
+  it('tracks submission API failure and post-submit account switch abort', async () => {
+    const { feedback, accountId } = setup();
+    api.createFeedback.mockRejectedValueOnce(new DaemonApiError({ code: 40112, msg: 'Denied /Users/alice', requestId: 'req' }));
+    await expect(feedback.submitGlobal({ kind: 'global', source: 'sidebar', category: 'bug', content: 'Broken' }, [
+      { kind: 'session', sessionId: 'local' },
+    ])).rejects.toBeInstanceOf(DaemonApiError);
+    expect(trackedEvents('feedback_submit_result')[0]).toMatchObject({
+      kind: 'global', outcome: 'failed', upload_session: true, error_class: 'access_denied', error_code: '40112',
+    });
+    expect(JSON.stringify(track.mock.calls)).not.toContain('/Users/alice');
+
+    let finish!: (value: { feedback_id: number }) => void;
+    api.createFeedback.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = feedback.submitGlobal({ kind: 'global', source: 'sidebar', category: 'bug', content: 'Broken' }, [
+      { kind: 'session', sessionId: 'local' },
+    ]);
+    accountId.value = 'other-user';
+    finish({ feedback_id: 7 });
+    await expect(pending).resolves.toBeUndefined();
+    expect(api.uploadFeedbackSession).not.toHaveBeenCalled();
+    expect(trackedEvents('feedback_submit_result')[1]).toMatchObject({
+      kind: 'global', outcome: 'aborted', feedback_id: 7, upload_session: true, error_class: 'aborted',
+    });
+  });
+
+  it('tracks session upload failure stage and manual retry recovery', async () => {
+    const { feedback } = setup();
+    api.uploadFeedbackSession
+      .mockRejectedValueOnce(new DaemonApiError({ code: 41301, msg: 'Archive /Users/alice/session.zip too large', requestId: 'req' }))
+      .mockResolvedValueOnce({ upload_id: 11 });
+    await feedback.submitGlobal({ kind: 'global', source: 'sidebar', category: 'bug', content: 'Large session' }, [
+      { kind: 'session', sessionId: 'local' },
+    ]);
+    await vi.waitFor(() => expect(shown()).toHaveLength(2));
+    await shown()[1]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
+    await vi.waitFor(() => expect(trackedEvents('feedback_attachment_upload')).toHaveLength(2));
+    expect(trackedEvents('feedback_attachment_upload')).toEqual([
+      expect.objectContaining({
+        stage: 'upload', outcome: 'failed', attempt: 'initial', feedback_id: 1,
+        error_class: 'file_too_large', error_code: '41301',
+      }),
+      expect.objectContaining({
+        stage: 'upload', outcome: 'succeeded', attempt: 'retry', feedback_id: 1, upload_id: 11,
+      }),
+    ]);
+    expect(JSON.stringify(track.mock.calls)).not.toContain('/Users/alice');
+  });
+
+  it('tracks turn details update failure and success with the existing feedback id', async () => {
+    const { feedback } = setup();
+    const reply = target('local');
+    await feedback.chooseRating(reply, 'down');
+    api.updateFeedback.mockRejectedValueOnce(new DaemonApiError({ code: 50001, msg: 'Offline', requestId: 'req' }));
+    await expect(feedback.submitDetails(reply, details)).resolves.toBe('feedback.submitFailed');
+    api.uploadFeedbackSession.mockResolvedValueOnce({ upload_id: 5 });
+    await expect(feedback.submitDetails(reply, details)).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(trackedEvents('feedback_attachment_upload')).toHaveLength(1));
+    expect(trackedEvents('feedback_submit_result')).toEqual([
+      expect.objectContaining({ kind: 'turn_details', outcome: 'failed', feedback_id: 1, upload_session: true, error_class: 'api', error_code: '50001' }),
+      expect.objectContaining({ kind: 'turn_details', outcome: 'succeeded', feedback_id: 1, upload_session: true, session_id: 'local' }),
+    ]);
   });
 });
 
