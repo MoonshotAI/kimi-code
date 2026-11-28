@@ -11,6 +11,9 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
+import { EventBusService } from '#/app/event/eventBusService';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
@@ -45,12 +48,6 @@ const ZERO_USAGE = emptyUsage();
 let disposables: DisposableStore;
 let telemetryEvents: TelemetryRecord[];
 
-const noopEventBus: IEventBus = {
-  _serviceBrand: undefined,
-  publish: () => {},
-  subscribe: () => ({ dispose: () => {} }),
-};
-
 beforeEach(() => {
   disposables = new DisposableStore();
   telemetryEvents = [];
@@ -64,6 +61,8 @@ interface Harness {
   readonly executor: IAgentToolExecutorService;
   readonly registry: IAgentToolRegistryService;
   readonly steps: AfterStepContext[];
+  readonly bus: EventBusService;
+  readonly agent: AgentContext;
 }
 
 function createHarness(
@@ -72,11 +71,14 @@ function createHarness(
 ): Harness {
   const loop = stubLoopWithHooks();
   const steps: AfterStepContext[] = [];
+  const agent = stubAgentContext('main', 0);
+  const bus = disposables.add(new EventBusService());
+  bus.activateAgent(agent);
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerTestAgentWireServices(reg, 'wire/tool-dedupe');
       reg.defineInstance(ITelemetryService, telemetry);
-      reg.defineInstance(IEventBus, noopEventBus);
+      reg.defineInstance(IEventBus, bus);
       const homedir = '/tmp/tool-dedupe-homedir';
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
@@ -91,7 +93,7 @@ function createHarness(
       reg.defineInstance(IAgentScopeContext, {
         _serviceBrand: undefined,
         agentId: 'main',
-        agentContext: stubAgentContext('main', 0),
+        agentContext: agent,
         scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
       } satisfies IAgentScopeContext);
       reg.defineInstance(IBootstrapService, stubBootstrap(homedir, options.env));
@@ -109,7 +111,7 @@ function createHarness(
   ix.get(IAgentToolDedupeService);
   const executor = ix.get(IAgentToolExecutorService);
   const registry = ix.get(IAgentToolRegistryService);
-  return { ix, loop, executor, registry, steps };
+  return { ix, loop, executor, registry, steps, bus, agent };
 }
 
 function okResult(text: string): ToolDedupeResult {
@@ -612,6 +614,67 @@ describe('AgentToolDedupeService', () => {
       await runStep(h, 8, 1, [toolCall('new-turn', 'Read', { path: '/a' })]);
 
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toHaveLength(0);
+    });
+
+    it('clears turn repeat records on core turn.ended for an active turn', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('Read'));
+      h.bus.publish(
+        new CoreLoopEvent({ agentId: 'main', event: { type: 'step.started', turnId: 7, step: 1, stepId: 's1' } }),
+        h.agent,
+      );
+
+      await runStep(h, 7, 1, [toolCall('c1', 'Read', { path: '/a' })]);
+      await runStep(h, 7, 2, [toolCall('c2', 'Read', { path: '/b' })]);
+      telemetryEvents.length = 0;
+
+      await runStep(h, 7, 3, [toolCall('c3', 'Read', { path: '/a' })]);
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toHaveLength(1);
+      telemetryEvents.length = 0;
+
+      h.bus.publish(
+        new CoreLoopEvent({ agentId: 'main', event: { type: 'turn.ended', turnId: 7, outcome: { type: 'done' } } }),
+        h.agent,
+      );
+      await runStep(h, 7, 4, [toolCall('c4', 'Read', { path: '/b' })]);
+
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toHaveLength(0);
+    });
+
+    it('keeps turn repeat records when gate-blocked or unannounced-cancelled turns end', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('Read'));
+      h.bus.publish(
+        new CoreLoopEvent({ agentId: 'main', event: { type: 'step.started', turnId: 7, step: 1, stepId: 's1' } }),
+        h.agent,
+      );
+
+      await runStep(h, 7, 1, [toolCall('c1', 'Read', { path: '/a' })]);
+      await runStep(h, 7, 2, [toolCall('c2', 'Read', { path: '/b' })]);
+      telemetryEvents.length = 0;
+
+      h.bus.publish(
+        new CoreLoopEvent({ agentId: 'main', event: { type: 'turn.started', turnId: 8, trigger: 'normal' } }),
+        h.agent,
+      );
+      h.bus.publish(
+        new CoreLoopEvent({
+          agentId: 'main',
+          event: {
+            type: 'turn.ended',
+            turnId: 8,
+            outcome: { type: 'blocked', at: 'turn.starting', cause: { by: 'gate', reason: 'blocked' } },
+          },
+        }),
+        h.agent,
+      );
+      h.bus.publish(
+        new CoreLoopEvent({ agentId: 'main', event: { type: 'turn.ended', turnId: 9, outcome: { type: 'aborted' } } }),
+        h.agent,
+      );
+      await runStep(h, 7, 3, [toolCall('c3', 'Read', { path: '/a' })]);
+
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toHaveLength(1);
     });
 
     it('merges the request trace id into dedupe and repeat telemetry', async () => {

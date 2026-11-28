@@ -13,8 +13,7 @@ import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import { llmErrorName, llmErrorRequestId, type LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { onCoreTurnLifecycle } from '#/agent/loop/coreLoopEvent';
 import { isAbortError } from '#/_base/utils/abort';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import {
@@ -174,11 +173,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }),
     );
     this._register(
-      this.eventBus.subscribe(TurnStarted, () => this.resetForTurn()),
-    );
-    this._register(
-      this.eventBus.subscribe(TurnEnded, () => {
-        this.activeTurnId = undefined;
+      onCoreTurnLifecycle(this.eventBus, {
+        onStarted: () => this.resetForTurn(),
+        onEnded: () => {
+          this.activeTurnId = undefined;
+        },
       }),
     );
     this._register(

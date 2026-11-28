@@ -30,6 +30,38 @@ export function onCoreLoopEvent<T extends LoopEmitted['type']>(
   });
 }
 
+export interface CoreTurnLifecycleHandlers {
+  readonly onStarted?: (turnId: number, envelope: CoreLoopEvent) => void;
+  readonly onEnded?: (
+    event: Extract<LoopEmitted, { type: 'turn.ended' }>,
+    envelope: CoreLoopEvent,
+  ) => void;
+}
+
+export function onCoreTurnLifecycle(
+  bus: IEventBus,
+  handlers: CoreTurnLifecycleHandlers,
+): IDisposable {
+  const activeTurns = new Map<string, number>();
+  return bus.subscribe(CoreLoopEvent, (envelope) => {
+    const { agentId, event } = envelope;
+    if (event.type === 'turn.ended') {
+      if (activeTurns.get(agentId) !== event.turnId) return;
+      activeTurns.delete(agentId);
+      handlers.onEnded?.(event, envelope);
+      return;
+    }
+    const startsTurn =
+      event.type === 'step.started' ||
+      event.type === 'turn.resumed' ||
+      (event.type === 'turn.started' && event.promptOnly === true);
+    if (!startsTurn) return;
+    if (activeTurns.get(agentId) === event.turnId) return;
+    activeTurns.set(agentId, event.turnId);
+    handlers.onStarted?.(event.turnId, envelope);
+  });
+}
+
 export function turnOutcomeReason(outcome: TurnOutcome): TurnEndReason {
   switch (outcome.type) {
     case 'done':
