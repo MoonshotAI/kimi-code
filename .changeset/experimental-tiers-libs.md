@@ -1,7 +1,7 @@
 ---
 "@moonshot-ai/agent-core-v2": minor
-"@moonshot-ai/klient": patch
-"@moonshot-ai/kap-server": patch
+"@moonshot-ai/klient": minor
+"@moonshot-ai/kap-server": minor
 "@moonshot-ai/acp-server": patch
 ---
 
