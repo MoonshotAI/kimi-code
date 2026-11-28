@@ -441,6 +441,27 @@ describe('migrateLegacyMasterEnvTower', () => {
     expect(marker.legacyMasterEnvTowerMigrated).toBe(true);
   });
 
+  it('stamps both cli and desktop profiles when a fresh installation starts on Desktop first', () => {
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        profile: 'desktop',
+      }),
+    ).toBe('stamped-fresh-install');
+
+    mkdirSync(join(tempDir, 'sessions'));
+    writeFileSync(join(tempDir, 'config.toml'), 'default_model = "kimi-k2"\n', 'utf8');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+        profile: 'cli',
+      }),
+    ).toBe('already-migrated');
+    expect(readFileSync(join(tempDir, 'config.toml'), 'utf8')).toBe('default_model = "kimi-k2"\n');
+  });
+
   it('migrates existing installations with KIMI_CODE_EXPERIMENTAL_FLAG=1 once while preserving comments', () => {
     writeFileSync(
       join(tempDir, 'config.toml'),

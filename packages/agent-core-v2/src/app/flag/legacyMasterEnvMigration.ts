@@ -213,9 +213,9 @@ function mergeProfileRecords(
 function stampMigrationMarker(
   markerPath: string,
   existing: ExperimentalMigrationsRecord,
-  profile: ExperimentalProfile,
-  configKey: string,
-  isDefaultConfig: boolean,
+  profiles: readonly ExperimentalProfile[],
+  configKeys: readonly string[],
+  includesDefaultConfig: boolean,
 ): boolean {
   let releaseLock: (() => void) | undefined;
   try {
@@ -236,24 +236,28 @@ function stampMigrationMarker(
       },
       legacyMasterEnvTowerMigratedProfiles: mergedProfiles,
     };
+    const stampsCli = profiles.includes('cli');
+    const nextProfiles: MigratedProfileConfigMap = { ...mergedProfiles };
+    for (const targetProfile of profiles) {
+      const bucket: Record<string, boolean> = { ...nextProfiles[targetProfile] };
+      for (const key of configKeys) {
+        bucket[key] = true;
+      }
+      nextProfiles[targetProfile] = bucket;
+    }
+    const nextConfigs: Record<string, boolean> = {
+      ...mergedBase.legacyMasterEnvTowerMigratedConfigs,
+    };
+    if (stampsCli) {
+      for (const key of configKeys) {
+        nextConfigs[key] = true;
+      }
+    }
     const next: ExperimentalMigrationsRecord = {
       ...mergedBase,
-      ...(profile === 'cli' && isDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
-      ...(profile === 'cli'
-        ? {
-            legacyMasterEnvTowerMigratedConfigs: {
-              ...mergedBase.legacyMasterEnvTowerMigratedConfigs,
-              [configKey]: true,
-            },
-          }
-        : {}),
-      legacyMasterEnvTowerMigratedProfiles: {
-        ...mergedProfiles,
-        [profile]: {
-          ...mergedProfiles[profile],
-          [configKey]: true,
-        },
-      },
+      ...(stampsCli && includesDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
+      ...(stampsCli ? { legacyMasterEnvTowerMigratedConfigs: nextConfigs } : {}),
+      legacyMasterEnvTowerMigratedProfiles: nextProfiles,
     };
     writeFileAtomically(markerPath, `${JSON.stringify(next, null, 2)}\n`);
     return true;
@@ -410,8 +414,9 @@ export function migrateLegacyMasterEnvTower(
   }
 
   if (!isExistingInstallation(homeDir, configPath, defaultConfigPath)) {
+    const freshConfigKeys = isDefaultConfig ? [configKey] : [configKey, defaultConfigKey];
     return record !== undefined &&
-      stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
+      stampMigrationMarker(markerPath, record, EXPERIMENTAL_PROFILES, freshConfigKeys, true)
       ? 'stamped-fresh-install'
       : 'skipped-error';
   }
@@ -420,7 +425,7 @@ export function migrateLegacyMasterEnvTower(
   const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
   if (towerEnvOverride !== undefined) {
     return record !== undefined &&
-      stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
+      stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
       ? 'stamped-noop'
       : 'skipped-error';
   }
@@ -431,7 +436,7 @@ export function migrateLegacyMasterEnvTower(
   }
   if (initial.kind === 'already-configured') {
     return record !== undefined &&
-      stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
+      stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
       ? 'stamped-noop'
       : 'skipped-error';
   }
@@ -468,7 +473,7 @@ export function migrateLegacyMasterEnvTower(
         return current.outcome;
       }
       if (current.kind === 'already-configured') {
-        return stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
+        return stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
           ? 'stamped-noop'
           : 'skipped-error';
       }
@@ -542,7 +547,7 @@ export function migrateLegacyMasterEnvTower(
     } catch {}
   }
 
-  return stampMigrationMarker(markerPath, record, profile, configKey, isDefaultConfig)
+  return stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
     ? 'migrated-tower'
     : 'skipped-error';
 }
