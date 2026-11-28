@@ -8,6 +8,10 @@ export class BrowserControlError extends Error {
   }
 }
 
+export function browserUserTakeoverError(): BrowserControlError {
+  return new BrowserControlError('BROWSER_USER_TAKEOVER', 'The user has manually taken over the browser. Stop browser actions and ask the user what they would like to do next. Do not retry or reacquire control during this turn. Browser control is available again when the user starts a new turn.');
+}
+
 interface BlockedController {
   sessionId: string;
   run?: BrowserSubagentRun;
@@ -90,6 +94,9 @@ export class BrowserControlOwnershipState {
   isBlocked(sessionId: string | undefined, run?: BrowserSubagentRun): boolean {
     return sessionId !== undefined && this.blocked.has(this.key(sessionId, run));
   }
+  isTakenOver(sessionId: string, run?: BrowserSubagentRun): boolean {
+    return this.blocked.get(this.key(sessionId, run))?.userTakeover === true;
+  }
 
   takeOver(browserId: string): boolean {
     const sessionId = this.sessions.get(browserId);
@@ -153,7 +160,7 @@ export class BrowserControlOwnershipState {
     const ownRelease = allowRelease && revision !== undefined && currentRevision === revision + 1 && sessionId !== undefined && !this.active.has(sessionId);
     const takeoverRevision = sessionId === undefined ? undefined : this.takeoverRevisions.get(this.key(sessionId, run));
     if (this.isBlocked(sessionId, run) || (revision !== undefined && takeoverRevision !== undefined && revision < takeoverRevision)) {
-      throw new BrowserControlError('BROWSER_USER_TAKEOVER', 'The user has manually taken over the browser. Stop browser actions and ask the user what they would like to do next. Do not retry or reacquire control during this turn. Browser control is available again when the user starts a new turn.');
+      throw browserUserTakeoverError();
     }
     if (revision !== undefined && revision !== currentRevision && !ownRelease) {
       throw new BrowserControlError('TAB_NOT_ACTIVE', 'Browser control changed; request a new operation under the current control.');

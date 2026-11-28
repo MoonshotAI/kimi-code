@@ -29,9 +29,9 @@ import type { BrowserDialogRecord, BrowserPageDialog, BrowserPendingDialog } fro
 import { formatBrowserToolResult } from './browser-tool-output';
 import { getBrowserData, getBrowserDownloads } from './browser-data';
 import { localFileAddressUrl } from './browser-local-file';
-import { browserControlOwnership, BrowserControlError } from './browser-control-ownership';
+import { browserControlOwnership, BrowserControlError, browserUserTakeoverError } from './browser-control-ownership';
 import type { DesktopBrowserSubagentRun } from './browser-subagent-control';
-import { sameBrowserSubagentRun } from '../../shared/browser-run';
+import { sameBrowserSubagentRun, type BrowserSubagentRun } from '../../shared/browser-run';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { WebContents } from 'electron';
 import type { MainWindow } from '../window/main-window';
@@ -439,6 +439,24 @@ export function runBrowserAutomation(
   run?: DesktopBrowserSubagentRun,
 ): Promise<BrowserRunResult> {
   return requestSession.run({ sessionId, run }, () => executeBrowserAutomation(request, signal));
+}
+
+export async function browserTakeoverRefusal(
+  request: BrowserRunRequest,
+  sessionId: string,
+  run?: BrowserSubagentRun,
+  signal?: AbortSignal,
+): Promise<BrowserRunResult | undefined> {
+  if (!browserControlOwnership.isTakenOver(sessionId, run)) return undefined;
+  if (run === undefined) {
+    try {
+      await requestSession.run({ sessionId }, () => requestBrowserUi({ action: 'get_state' }, signal, true));
+    } catch {
+      return undefined;
+    }
+    if (!browserControlOwnership.isTakenOver(sessionId)) return undefined;
+  }
+  return failure(request.operation, browserUserTakeoverError());
 }
 
 export function fitPendingDialog(dialog: BrowserPendingDialog, room: number): BrowserPendingDialog | null {

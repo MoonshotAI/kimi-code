@@ -29,7 +29,8 @@ import {
   createDesktopBrowserAccess,
   registerDesktopBrowserMcp,
 } from '../../../src/main/browser/browser-mcp-registration';
-import { runBrowserAutomation } from '../../../src/main/browser/browser-automation';
+import { browserTakeoverRefusal, runBrowserAutomation } from '../../../src/main/browser/browser-automation';
+import { setDesktopTrackImpl } from '../../../src/main/diagnostics/track';
 import { DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE, DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE, DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE, startDesktopBrowserMcp, type DesktopBrowserAgentControl } from '../../../src/main/browser/browser-mcp';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
@@ -37,6 +38,7 @@ import { browserControlOwnership } from '../../../src/main/browser/browser-contr
 
 vi.mock('../../../src/main/browser/browser-automation', () => ({
   isAgentLocalFileAddress: () => false,
+  browserTakeoverRefusal: vi.fn(async () => undefined),
   runBrowserAutomation: vi.fn(async (request) => ({
     ok: true,
     operation: request.operation,
@@ -845,6 +847,102 @@ it('attaches trusted identity to an eligible subagent scope that already exists'
     );
   } finally {
     registration?.dispose();
+    await server.close();
+    await browser.close();
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}, 30000);
+
+it('answers browser calls the user has taken over without asking for approval first', async () => {
+  vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', 'false');
+  vi.stubEnv('KIMI_CODE_SEARCH_WORKER', 'false');
+  vi.mocked(runBrowserAutomation).mockClear();
+  vi.mocked(browserTakeoverRefusal).mockClear();
+  const home = await mkdtemp(join(tmpdir(), 'desktop-browser-takeover-approval-'));
+  const access = createDesktopBrowserAccess(createControl(), createControl());
+  const browser = await startDesktopBrowserMcp({ access });
+  const server = await startServer({
+    hostIdentity: { productName: 'test-host', platform: 'test_platform', version: '0.0.0' },
+    homeDir: home,
+    port: 0,
+    logLevel: 'silent',
+    env: { ...process.env },
+  });
+  const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
+  const name = 'mcp__desktop_browser__run';
+  const takeover = {
+    ok: false,
+    operation: 'page.text.snapshot',
+    error: { code: 'BROWSER_USER_TAKEOVER', message: 'The user has manually taken over the browser.' },
+  } as const;
+  const events: Array<{ event: string; properties?: Record<string, unknown> }> = [];
+  setDesktopTrackImpl((event, properties) => events.push({ event, properties }));
+  try {
+    const session = await server.core.accessor.get(ISessionManager).create({ workDir: home });
+    await session.accessor.get(ISessionMcpHandle).ready;
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    if (lifecycle.handleOf('main') === undefined) await lifecycle.create({ agentId: 'main' });
+    const workerContext = await lifecycle.create({ agentId: 'worker' });
+    const prepare = async (agentId: string) => {
+      const agent = lifecycle.handleOf(agentId)!;
+      vi.spyOn(agent.accessor.get(IAgentProfileService), 'getModelCapabilities').mockReturnValue({
+        image_in: true, video_in: false, audio_in: false, thinking: false, tool_use: true,
+        max_context_tokens: 128000, dynamically_loaded_tools: false,
+      });
+      await agent.accessor.get(IAgentMcpService).waitForInitialLoad();
+      await vi.waitFor(() => expect(agent.accessor.get(IAgentToolRegistryService).resolve(name)).toBeDefined());
+      const approvals = vi.spyOn(agent.accessor.get(IAgentToolApprovalService), 'requestToolApproval').mockResolvedValue(undefined);
+      return { agent, approvals };
+    };
+    type Agent = NonNullable<ReturnType<typeof lifecycle.handleOf>>;
+    const call = async (agent: Agent, turnId: number) => {
+      const toolCall = { type: 'function' as const, id: `call-${turnId}`, name, arguments: JSON.stringify({ protocol: 'kimi.browser/1.0.0', operation: 'page.text.snapshot', tabId: 'tab-1' }) };
+      const result = await agent.accessor.get(IAgentToolExecutorService).executor.execute(toolCall, { origin: 'loop', turnId });
+      if ('detached' in result) throw new Error('unexpected detached tool result');
+      return {
+        output: result.content.map((part) => part.type === 'text' ? part.text : '').join(''),
+        isError: result.outcome.type === 'success' ? undefined : true,
+      };
+    };
+    const main = await prepare('main');
+    const worker = await prepare('worker');
+
+    expect((await call(main.agent, 1)).isError).not.toBe(true);
+    expect(main.approvals).toHaveBeenCalledOnce();
+    expect(runBrowserAutomation).toHaveBeenCalledOnce();
+
+    vi.mocked(browserTakeoverRefusal).mockResolvedValueOnce(takeover);
+    const refused = await call(main.agent, 2);
+    expect(refused.isError).toBe(true);
+    expect(refused.output).toContain('BROWSER_USER_TAKEOVER');
+    expect(refused.output).toContain('The user has manually taken over the browser.');
+    expect(main.approvals).toHaveBeenCalledOnce();
+    expect(runBrowserAutomation).toHaveBeenCalledOnce();
+    expect(browserTakeoverRefusal).toHaveBeenLastCalledWith(
+      expect.objectContaining({ operation: 'page.text.snapshot', tabId: 'tab-1' }), session.id, undefined, expect.any(AbortSignal),
+    );
+    expect(events).toContainEqual({
+      event: 'browser_operation_result',
+      properties: expect.objectContaining({ operation: 'page.text.snapshot', ok: false, error_code: 'BROWSER_USER_TAKEOVER', caller: 'main', session_id: session.id }),
+    });
+
+    vi.mocked(browserTakeoverRefusal).mockResolvedValueOnce(takeover);
+    const refusedWorker = await call(worker.agent, 5);
+    expect(refusedWorker.isError).toBe(true);
+    expect(refusedWorker.output).toContain('BROWSER_USER_TAKEOVER');
+    expect(worker.approvals).not.toHaveBeenCalled();
+    expect(runBrowserAutomation).toHaveBeenCalledOnce();
+    expect(browserTakeoverRefusal).toHaveBeenLastCalledWith(
+      expect.objectContaining({ operation: 'page.text.snapshot' }), session.id,
+      { agentId: 'worker', generation: workerContext.generation, turnId: 5 }, expect.any(AbortSignal),
+    );
+    expect(events).toContainEqual({
+      event: 'browser_operation_result',
+      properties: expect.objectContaining({ ok: false, error_code: 'BROWSER_USER_TAKEOVER', caller: 'subagent' }),
+    });
+  } finally {
+    setDesktopTrackImpl(null);
+    registration.dispose();
     await server.close();
     await browser.close();
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

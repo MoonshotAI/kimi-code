@@ -16,12 +16,12 @@ import {
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { ISessionEphemeralMcpServers } from '@moonshot-ai/agent-core-v2/session/mcp/ephemeralMcpServers';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
-import { legacyDidExecuteContext, legacyRejectedResult, type LegacyAfterContext, type LegacyDecisionContext } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/legacyHooks';
+import { legacyDidExecuteContext, legacyRejectedResult, legacyStartingDecision, type LegacyAfterContext, type LegacyDecisionContext } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/legacyHooks';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { ISessionMetadata, type AgentMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import type { BrowserSubagentRun } from '../../shared/browser-run';
 import type { DesktopBrowserAccess, DesktopBrowserAgentControl, DesktopBrowserMcpHandle } from './browser-mcp';
-import { DESKTOP_BROWSER_CONTROL_OFF_REASON, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, describeBlockedDesktopBrowser, describeRejectedDesktopBrowserApproval, describeToolPolicyDesktopBrowser } from './browser-mcp';
+import { DESKTOP_BROWSER_CONTROL_OFF_REASON, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, describeBlockedDesktopBrowser, describeRejectedDesktopBrowserApproval, describeToolPolicyDesktopBrowser, refuseBrowserCallAfterTakeover } from './browser-mcp';
 import { BrowserSubagentRunRegistry, DESKTOP_BROWSER_SUBAGENT_RUN, type DesktopBrowserSubagentRun } from './browser-subagent-control';
 import { restoreBrowserSubagentRuns, revokeBrowserSubagentRun } from './browser-control';
 import type { BrowserControlTrigger, BrowserMcpReconnectEvent } from '../diagnostics/telemetry-events';
@@ -103,6 +103,17 @@ function guideBlockedBrowserCalls(access: DesktopBrowserAccess, sessionId: strin
   return (context: LegacyAfterContext) => {
     const guidance = blockedBrowserGuidance(legacyDidExecuteContext(context), access.allows(sessionId));
     return guidance === undefined ? undefined : legacyRejectedResult(context, guidance);
+  };
+}
+
+function refuseTakenOverBrowserCalls(access: DesktopBrowserAccess, sessionId: string, subagent: AgentContext | undefined) {
+  return async (context: LegacyDecisionContext) => {
+    if (context.call.name !== DESKTOP_BROWSER_RUN_TOOL) return undefined;
+    const run: BrowserSubagentRun | undefined = subagent === undefined
+      ? undefined
+      : { agentId: subagent.agentId, generation: subagent.generation, turnId: context.context.turnId };
+    const refusal = await refuseBrowserCallAfterTakeover(sessionId, access, context.args, run, context.signal);
+    return refusal === undefined ? undefined : legacyStartingDecision(context, { veto: { output: refusal, isError: true } });
   };
 }
 
@@ -273,12 +284,14 @@ export function registerDesktopBrowserMcp(
       if (handle === undefined || agents.has(agentId)) return;
       const provider = browserReminder(access, session.id, () => loadsToolsOnDemand(handle));
       const reminder = handle.accessor.get(IAgentReminderService).register(DESKTOP_BROWSER_REMINDER_VARIANT, provider);
-      const guidance = handle.accessor.get(IAgentToolExecutorService).registerHook({
+      const runsAsSubagent = agentId !== MAIN_AGENT_ID && meta?.type === 'sub' && meta.labels?.['btw'] !== 'true';
+      const browserHooks = handle.accessor.get(IAgentToolExecutorService).registerHook({
+        starting: refuseTakenOverBrowserCalls(access, session.id, runsAsSubagent ? context : undefined),
         afterExecute: guideBlockedBrowserCalls(access, session.id),
       });
       let decoration: IDisposable | undefined;
       let ended: IDisposable | undefined;
-      if (agentId !== MAIN_AGENT_ID && meta?.type === 'sub' && meta.labels?.['btw'] !== 'true') {
+      if (runsAsSubagent) {
         access.runs.attach(session.id, {
           agentId,
           generation: context.generation,
@@ -297,7 +310,7 @@ export function registerDesktopBrowserMcp(
           access.runs.finish(session.id, { agentId, generation: context.generation, turnId: event.turnId });
         });
       }
-      agents.set(agentId, { dispose: () => { ended?.dispose(); decoration?.dispose(); guidance.dispose(); reminder.dispose(); } });
+      agents.set(agentId, { dispose: () => { ended?.dispose(); decoration?.dispose(); browserHooks.dispose(); reminder.dispose(); } });
     };
     const created = lifecycle.onDidCreateScope(({ context, handle, meta }) => attachAgent(context, handle, meta));
     const closed = lifecycle.onDidClose((context) => {
