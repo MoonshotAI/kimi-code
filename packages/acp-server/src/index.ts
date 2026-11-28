@@ -78,6 +78,7 @@ export {
   PLAN_REVISE_OPTION_ID,
   REJECT_OPTION_ID,
 } from './approval';
+export type { AcpPermissionOutcome, AcpPermissionResponse } from './approval';
 export {
   elicitationResponseToQuestionAnswers,
   outcomeToQuestionAnswer,
