@@ -11,9 +11,8 @@ import {
   type AgentActorContext,
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
+import { onCoreTurnLifecycle, turnOutcomeReason } from '#/agent/loop/coreLoopEvent';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -72,21 +71,22 @@ const todoReminder = fromCallback(({
     return reminder.text;
   });
   const change = runtime.onDidChange(() => { updatedInTurn = true; });
-  const started = bus.subscribe(TurnStarted, () => { updatedInTurn = false; });
-  const ended = bus.subscribe(TurnEnded, (event) => {
-    const progress = todoProgress(runtime.getState());
-    if (progress.total === 0 && !updatedInTurn) return;
-    telemetry.track2('todo_turn_ended', {
-      turn_id: event.turnId,
-      reason: event.reason,
-      item_count: progress.total,
-      open_count: progress.open,
-      updated_in_turn: updatedInTurn,
-    });
+  const turnLifecycle = onCoreTurnLifecycle(bus, {
+    onStarted: () => { updatedInTurn = false; },
+    onEnded: (event) => {
+      const progress = todoProgress(runtime.getState());
+      if (progress.total === 0 && !updatedInTurn) return;
+      telemetry.track2('todo_turn_ended', {
+        turn_id: event.turnId,
+        reason: turnOutcomeReason(event.outcome),
+        item_count: progress.total,
+        open_count: progress.open,
+        updated_in_turn: updatedInTurn,
+      });
+    },
   });
   return () => {
-    ended.dispose();
-    started.dispose();
+    turnLifecycle.dispose();
     change.dispose();
     registration.dispose();
   };

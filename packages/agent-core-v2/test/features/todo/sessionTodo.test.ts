@@ -1,12 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TurnOutcome } from '@moonshot-ai/core/loop/index';
+import { held, say } from '@moonshot-ai/testkit/model';
+import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { appendContext } from '../../agent/contextMemory/stubs';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { TodoFeature } from '#/features/todo/todoFeature';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import type { TodoItem } from '#/features/todo/todoItem';
@@ -18,7 +20,9 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import {
   createTestAgent,
   InMemoryWireRecordPersistence,
+  testkitAgentFixtures,
   type TestAgentContext,
+  type TestkitAgentFixtures,
 } from '../../harness';
 
 function reminderCount(memory: IAgentLoopService): number {
@@ -229,21 +233,41 @@ describe('AgentTodoService', () => {
       const todo = tracked.get(IAgentTodoService);
       const bus = tracked.get(IEventBus);
 
-      bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+      const startStep = (turnId: number) =>
+        bus.publish(new CoreLoopEvent({
+          agentId: 'main',
+          event: { type: 'step.started', turnId, step: 1, stepId: `step-${String(turnId)}` },
+        }));
+      const endWith = (turnId: number, outcome: TurnOutcome) =>
+        bus.publish(new CoreLoopEvent({
+          agentId: 'main',
+          event: { type: 'turn.ended', turnId, outcome },
+        }));
+
+      startStep(1);
       await todo.replace([
         { title: 'parse config', status: 'done' },
         { title: 'update callers', status: 'in_progress' },
       ]);
       appendAssistantTurns(tracked.context, 10);
       await runReminderStep(tracked.context);
-      bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
-      bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }));
-      bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'cancelled' }));
-      bus.publish(new TurnStarted({ agentId: 'main', turnId: 3, origin: { kind: 'user' } }));
+      endWith(1, { type: 'done' });
+      startStep(2);
+      endWith(2, { type: 'aborted' });
+      startStep(3);
       await todo.replace([]);
-      bus.publish(new TurnEnded({ agentId: 'main', turnId: 3, reason: 'completed' }));
-      bus.publish(new TurnStarted({ agentId: 'main', turnId: 4, origin: { kind: 'user' } }));
-      bus.publish(new TurnEnded({ agentId: 'main', turnId: 4, reason: 'completed' }));
+      endWith(3, { type: 'done' });
+      startStep(4);
+      endWith(4, { type: 'done' });
+
+      bus.publish(new CoreLoopEvent({
+        agentId: 'main',
+        event: { type: 'turn.started', turnId: 5, trigger: 'normal' },
+      }));
+      await todo.replace([{ title: 'blocked edit', status: 'pending' }]);
+      endWith(5, { type: 'blocked', at: 'turn.starting', cause: { by: 'prompt', reason: 'blocked' } });
+      startStep(6);
+      endWith(6, { type: 'failed', error: new Error('provider down') });
 
       const propertiesOf = (event: string) =>
         records.filter((record) => record.event === event).map((record) => record.properties);
@@ -272,11 +296,93 @@ describe('AgentTodoService', () => {
           open_count: 0,
           updated_in_turn: true,
         }),
+        expect.objectContaining({
+          turn_id: 6,
+          reason: 'failed',
+          item_count: 1,
+          open_count: 1,
+          updated_in_turn: false,
+        }),
       ]);
     } finally {
       await tracked.dispose();
     }
   });
+});
+
+const engineTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+describe('AgentTodoService turn lifecycle (testkit engine)', () => {
+  engineTest(
+    'resets per-turn edit tracking on core step start and skips gate-blocked turns',
+    async ({ agent, model }) => {
+      await agent.restorePersisted();
+      const todo = agent.get(IAgentTodoService);
+      const loop = agent.get(IAgentLoopService);
+      const track2 = vi.spyOn(agent.get(ITelemetryService), 'track2');
+      const endedEvents = () =>
+        track2.mock.calls
+          .filter(([event]) => event === 'todo_turn_ended')
+          .map(([, properties]) => properties);
+
+      model.script(held('edit-during-turn', say('Edited todos.'), 1));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'track work' }] });
+      await model.hold('edit-during-turn').reached();
+      await todo.replace([{ title: 'write tests', status: 'in_progress' }]);
+      model.hold('edit-during-turn').release();
+      await agent.untilTurnEnd();
+
+      model.script(held('cancel-turn', say('Streaming before cancel.'), 1));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'cancel me' }] });
+      await model.hold('cancel-turn').reached();
+      expect(loop.cancel()).toBe(true);
+      await agent.untilTurnEnd();
+
+      const gate = loop.hooks.onBeforeSubmitPrompt.register('test-block-todo-turn', async (ctx, next) => {
+        ctx.block = true;
+        await next();
+      });
+      try {
+        await todo.replace([{ title: 'write tests', status: 'done' }]);
+        await expect(
+          loop.submit({ input: [{ type: 'text', text: 'blocked' }], promptId: 'blocked-todo' }),
+        ).resolves.toBeUndefined();
+        await expect(loop.promptHandle('blocked-todo')!.completion).resolves.toMatchObject({ state: 'blocked' });
+      } finally {
+        gate.dispose();
+      }
+      expect(endedEvents()).toHaveLength(2);
+
+      model.script(say('Final answer.'));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'finish' }] });
+      await agent.untilTurnEnd();
+
+      expect(endedEvents()).toEqual([
+        expect.objectContaining({
+          turn_id: 0,
+          reason: 'completed',
+          item_count: 1,
+          open_count: 1,
+          updated_in_turn: true,
+        }),
+        expect.objectContaining({
+          turn_id: 1,
+          reason: 'cancelled',
+          item_count: 1,
+          open_count: 1,
+          updated_in_turn: false,
+        }),
+        expect.objectContaining({
+          turn_id: 3,
+          reason: 'completed',
+          item_count: 1,
+          open_count: 0,
+          updated_in_turn: false,
+        }),
+      ]);
+      await agent.expectResumeMatches();
+    },
+  );
 });
 
 describe('KeyedResourceLeasePool', () => {

@@ -8,12 +8,11 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { runLegacyBeforeExecute } from '#/agent/toolExecutor/legacyHooks';
 import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { onCoreTurnLifecycle } from '#/agent/loop/coreLoopEvent';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -88,16 +87,16 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => this.onWillExecuteTool(event)),
     }));
     this._register(
-      eventBus.subscribe(TurnStarted, (event) => {
-        if (event.agentId !== this.agentCtx.agentId) return;
-        this.activeTurnId = event.turnId;
-      }),
-    );
-    this._register(
-      eventBus.subscribe(TurnEnded, (event) => {
-        if (event.agentId !== this.agentCtx.agentId) return;
-        if (this.activeTurnId === event.turnId) this.activeTurnId = undefined;
-        void this.enqueue(() => this.endCheckpoint(event.turnId));
+      onCoreTurnLifecycle(eventBus, {
+        onStarted: (turnId, envelope) => {
+          if (envelope.agentId !== this.agentCtx.agentId) return;
+          this.activeTurnId = turnId;
+        },
+        onEnded: (event, envelope) => {
+          if (envelope.agentId !== this.agentCtx.agentId) return;
+          if (this.activeTurnId === event.turnId) this.activeTurnId = undefined;
+          void this.enqueue(() => this.endCheckpoint(event.turnId));
+        },
       }),
     );
     this.effect(() => () => this.queue, 'fileHistory:drain');
