@@ -14,12 +14,7 @@ import {
   type Turn,
   type TurnResult,
 } from '#/agent/loop/loop';
-import {
-  AssistantDelta,
-  ThinkingDelta,
-  TurnStepRetrying,
-  TurnStepStarted,
-} from '#/agent/loop/turnEvents';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 
@@ -88,27 +83,46 @@ class EventBusStub {
   }
 }
 
-function stepStarted(turnId: number, stepId: string): TurnStepStarted {
-  return new TurnStepStarted({ agentId: 'agent-child', turnId, step: 1, stepId });
-}
-
-function delta(turnId: number, text: string): AssistantDelta {
-  return new AssistantDelta({ agentId: 'agent-child', turnId, delta: text });
-}
-
-function retrying(turnId: number, stepId: string): TurnStepRetrying {
-  return new TurnStepRetrying({
+function stepStarted(turnId: number, stepId: string, step = 1): CoreLoopEvent {
+  return new CoreLoopEvent({
     agentId: 'agent-child',
-    turnId,
-    step: 1,
-    stepId,
-    failedAttempt: 1,
-    nextAttempt: 2,
-    maxAttempts: 3,
-    delayMs: 0,
-    errorName: 'APIConnectionError',
-    errorMessage: 'connection reset',
+    event: { type: 'step.started', turnId, step, stepId },
   });
+}
+
+function delta(turnId: number, text: string): CoreLoopEvent {
+  return new CoreLoopEvent({
+    agentId: 'agent-child',
+    event: { type: 'llm.delta.part', turnId, step: 1, block: 0, part: { type: 'text', text } },
+  });
+}
+
+function thinking(turnId: number, think: string, hidden?: boolean): CoreLoopEvent {
+  return new CoreLoopEvent({
+    agentId: 'agent-child',
+    event: { type: 'llm.delta.part', turnId, step: 1, block: 0, part: { type: 'think', think, hidden } },
+  });
+}
+
+function retrying(
+  turnId: number,
+  reason: 'backoff' | 'invalid_tool_arguments' | 'recovery' = 'backoff',
+): CoreLoopEvent {
+  const error = { kind: 'connection', message: 'connection reset', retryable: true } as const;
+  const event: Extract<CoreLoopEvent['event'], { type: 'llm.retry' }> = reason === 'recovery'
+    ? { type: 'llm.retry', turnId, step: 1, reason, strategy: 'strict', action: 'retry', error }
+    : {
+        type: 'llm.retry',
+        turnId,
+        step: 1,
+        reason,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        delayMs: 0,
+        error,
+      };
+  return new CoreLoopEvent({ agentId: 'agent-child', event });
 }
 
 interface TaskFixture {
@@ -368,7 +382,8 @@ describe('runAgentTurn partial output', () => {
     const run = await runPromise;
 
     events.emit(stepStarted(7, 'step-1'));
-    events.emit(new ThinkingDelta({ agentId: 'agent-child', turnId: 7, delta: 'hidden reasoning' }));
+    events.emit(thinking(7, 'hidden reasoning'));
+    events.emit(thinking(7, 'redacted reasoning', true));
     events.emit(delta(7, 'Found the loop '));
     events.emit(delta(7, 'at src/parser.ts:42.'));
     events.emit(stepStarted(7, 'step-2'));
@@ -391,15 +406,67 @@ describe('runAgentTurn partial output', () => {
 
     events.emit(stepStarted(1, 'step-1'));
     events.emit(delta(1, 'Checked the parser.'));
-    events.emit(stepStarted(1, 'step-2'));
+    events.emit(stepStarted(1, 'step-2', 2));
     events.emit(delta(1, 'The report starts'));
-    events.emit(retrying(1, 'step-2'));
-    events.emit(stepStarted(1, 'step-3'));
+    events.emit(retrying(1));
+    events.emit(stepStarted(1, 'step-3', 3));
     events.emit(delta(1, 'The report, retried'));
     finish({ type: 'failed', steps: 3, error: new Error('provider down') });
     await rejection(run.completion);
 
     expect(run.partialOutput()).toBe('Checked the parser.\n\nThe report, retried');
+  });
+
+  it('discards partial text on backoff and invalid-argument retries but keeps it on recovery retries', async () => {
+    const events = new EventBusStub();
+    const { turn, finish } = pendingTurn(1);
+    const run = await runAgentTurn(
+      handleWith(turn, [], events).handle,
+      { kind: 'prompt', prompt: 'find it' },
+      { signal },
+    );
+
+    events.emit(stepStarted(1, 'step-1'));
+    events.emit(delta(1, 'Dropped on backoff.'));
+    events.emit(retrying(1, 'backoff'));
+    expect(run.partialOutput()).toBe('');
+
+    events.emit(delta(1, 'Dropped on invalid arguments.'));
+    events.emit(retrying(1, 'invalid_tool_arguments'));
+    expect(run.partialOutput()).toBe('');
+
+    events.emit(delta(1, 'Kept before recovery.'));
+    events.emit(retrying(1, 'recovery'));
+    expect(run.partialOutput()).toBe('Kept before recovery.');
+
+    events.emit(delta(1, ' Final answer.'));
+    finish(cancelled);
+    await rejection(run.completion);
+
+    expect(run.partialOutput()).toBe('Kept before recovery. Final answer.');
+  });
+
+  it('applies the same retry discard rules to retry-mode loop output', async () => {
+    const events = new EventBusStub();
+    const failure = new Error('retry exhausted');
+    const { handle } = handleWith(
+      makeTurn({ type: 'completed', steps: 1, truncated: false }),
+      [assistant('done')],
+      events,
+      async () => ({ type: 'failed', steps: 1, error: failure }),
+    );
+    const run = await runAgentTurn(handle, { kind: 'retry' }, { signal });
+
+    events.emit(stepStarted(1, 'step-1'));
+    events.emit(delta(1, 'Dropped.'));
+    events.emit(retrying(1, 'backoff'));
+    expect(run.partialOutput()).toBe('');
+
+    events.emit(delta(1, 'Kept on recovery.'));
+    events.emit(retrying(1, 'recovery'));
+    await rejection(run.completion);
+
+    expect(run.partialOutput()).toBe('Kept on recovery.');
   });
 
   it('does not hand back text from an earlier run of the same agent', async () => {

@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
-import { getLiveSessionById, IAgentLifecycleService, IEventBus, type Interaction } from '@moonshot-ai/agent-core-v2';
+import { CoreLoopEvent, getLiveSessionById, IAgentLifecycleService, IEventBus, type Interaction } from '@moonshot-ai/agent-core-v2';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { askUserQuestion, call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
+import { askUserQuestion, call, createFakeModel, exitPlanMode, held, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AcpInteractionBridge } from '../src/interaction-bridge';
@@ -636,6 +636,94 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       updates.some((u) => u?.sessionUpdate === 'tool_call_update' && u?.title === 'Still working…'),
     ).toBe(true);
     expect(updates.some((u) => u?.title === 'raw-stdout-bytes')).toBe(false);
+  }, 30_000);
+
+  it('maps core llm.delta.part events to ACP chunks and resets stream tool ids on retry and step end', async () => {
+    const c = await boot();
+    model!.script(held('acp-core-deltas', say('done')));
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const promptPromise = c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'stream' }],
+    });
+    await model!.hold('acp-core-deltas').reached();
+
+    const session = getLiveSessionById(c.server.core.accessor, created.sessionId)!;
+    const bus = session.accessor.get(IAgentLifecycleService).handleOf('main')!.accessor.get(IEventBus);
+    const emit = (event: CoreLoopEvent['event']): void => {
+      bus.publish(new CoreLoopEvent({ agentId: 'main', event }));
+    };
+
+    emit({ type: 'llm.delta.part', turnId: 0, step: 1, block: 0, part: { type: 'text', text: 'Hello ' } });
+    emit({ type: 'llm.delta.part', turnId: 0, step: 1, block: 0, part: { type: 'think', think: 'pondering' } });
+    emit({ type: 'llm.delta.part', turnId: 0, step: 1, block: 0, part: { type: 'think', think: 'secret-thought', hidden: true } });
+    emit({ type: 'llm.delta.part', turnId: 0, step: 1, part: { type: 'tool_call_part', index: 42, argumentsPart: 'orphan-before-function' } });
+
+    emit({
+      type: 'llm.delta.part',
+      turnId: 0,
+      step: 1,
+      part: { type: 'function', id: 'call_step1', name: 'Bash', arguments: '', _streamIndex: 0 },
+    });
+    emit({ type: 'llm.delta.part', turnId: 0, step: 1, part: { type: 'tool_call_part', index: 0, argumentsPart: '{"command":' } });
+    emit({ type: 'llm.delta.part', turnId: 0, step: 1, part: { type: 'tool_call_part', index: 0, argumentsPart: '"echo hi"}' } });
+
+    emit({
+      type: 'llm.retry',
+      turnId: 0,
+      step: 1,
+      reason: 'backoff',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 3,
+      delayMs: 0,
+      error: { kind: 'rate_limit', message: 'slow down', requestId: null, retryAfterMs: null, headers: null, retryable: true },
+    });
+    emit({ type: 'llm.delta.part', turnId: 0, step: 1, part: { type: 'tool_call_part', index: 0, argumentsPart: 'orphan-after-retry' } });
+
+    emit({
+      type: 'llm.delta.part',
+      turnId: 0,
+      step: 2,
+      part: { type: 'function', id: 'call_step2', name: 'Read', arguments: '', _streamIndex: 0 },
+    });
+    emit({ type: 'step.ended', turnId: 0, step: 2, outcome: { type: 'continue' } });
+    emit({ type: 'llm.delta.part', turnId: 0, step: 2, part: { type: 'tool_call_part', index: 0, argumentsPart: 'orphan-after-step-end' } });
+
+    await vi.waitFor(() => {
+      const text = JSON.stringify(c.sessionUpdates());
+      expect(text).toContain('pondering');
+      expect(text).toContain('{\\"command\\":\\"echo hi\\"}');
+      expect(text).toContain('call_step2');
+    }, 10_000);
+
+    model!.hold('acp-core-deltas').release();
+    expect(await promptPromise).toEqual({ stopReason: 'end_turn' });
+
+    type Update = {
+      sessionUpdate?: string;
+      toolCallId?: string;
+      status?: string;
+      title?: string;
+      content?: { type: string; text?: string };
+    };
+    const updates = c.sessionUpdates().map((m) => (m.params as { update: Update }).update);
+    const serialized = JSON.stringify(updates);
+    expect(serialized).not.toContain('secret-thought');
+    expect(serialized).not.toContain('orphan-before-function');
+    expect(serialized).not.toContain('orphan-after-retry');
+    expect(serialized).not.toContain('orphan-after-step-end');
+
+    const step1 = updates.filter((u) => u.toolCallId === '0:call_step1');
+    expect(step1[0]).toMatchObject({ sessionUpdate: 'tool_call', status: 'pending', title: 'Bash' });
+    expect(step1.at(-1)).toMatchObject({
+      sessionUpdate: 'tool_call_update',
+      status: 'in_progress',
+      content: [{ type: 'content', content: { type: 'text', text: '{"command":"echo hi"}' } }],
+    });
+    expect(updates.filter((u) => u.toolCallId === '0:call_step2')).toHaveLength(1);
   }, 30_000);
 
   it('shows what a running command has printed when the editor offers no terminal', async () => {

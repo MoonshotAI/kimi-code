@@ -225,7 +225,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       infiniteRetry: this.infiniteRetryEnabled,
     }));
     this.projector = new AgentLoopProjector((anomalies) => this.observer.reportProjectionRepairs(anomalies));
-    this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, attribution);
+    this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, eventBus, attribution);
+    this._register(this.requestMetadata);
     this._register(this.config.onDidSectionChange(({ domain }) => {
       if (REQUEST_CONFIG_SECTIONS.has(domain)) this.syncRequester();
     }));
