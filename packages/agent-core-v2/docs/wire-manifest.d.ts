@@ -26,7 +26,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (67 record types)
+// Index (68 record types)
 //   changeNotifier.snapshot            changeNotifier.snapshot                                    src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      (none)                                                     src/agent/profile/profileOps.ts
 //   context.append_loop_event          changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
@@ -85,6 +85,7 @@
 //   tools.register_user_tool           userTool                                                   src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           (none)                                                     src/agent/profile/profileOps.ts
 //   tools.set_active_tools             (none)                                                     src/agent/profile/profileOps.ts
+//   tools.settled                      turn                                                       src/agent/loop/turnOps.ts
 //   tools.unregister_user_tool         userTool                                                   src/agent/userTool/userToolOps.ts
 //   tools.update_store                 (none)                                                     src/features/todo/todoOps.ts
 //   tower_mode.enter                   tower, tower.owner                                         src/features/tower/towerOps.ts
@@ -887,6 +888,21 @@ interface ToolsSetActiveToolsPayload {
 }
 
 /**
+ * states: turn
+ * owner: src/agent/loop/turnOps.ts
+ */
+interface ToolsSettledPayload {
+  _name: 'tools.settled';
+  agentId: string;
+  tools: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    deferred?: true;
+  }[];
+}
+
+/**
  * states: userTool
  * owner: src/agent/userTool/userToolOps.ts
  */
@@ -1112,6 +1128,7 @@ interface WirePayloadMap {
   "tools.register_user_tool": ToolsRegisterUserToolPayload;
   "tools.reset_active_tools": ToolsResetActiveToolsPayload;
   "tools.set_active_tools": ToolsSetActiveToolsPayload;
+  "tools.settled": ToolsSettledPayload;
   "tools.unregister_user_tool": ToolsUnregisterUserToolPayload;
   "tools.update_store": ToolsUpdateStorePayload;
   "tower_mode.enter": TowerModeEnterPayload;
