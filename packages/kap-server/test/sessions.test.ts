@@ -11,16 +11,19 @@ import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/conte
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
 import { bashPathOf, createGitWorktree, FAKE_MCP_SERVER, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
-import type { KapHarness } from '@moonshot-ai/testkit/kap';
+import type { KapFrame, KapHarness, KapItem } from '@moonshot-ai/testkit/kap';
 import { startKimiServices } from '@moonshot-ai/testkit/services';
 import {
   agent,
   bash,
   fakeModelConfig,
   held,
+  httpError,
   reply,
   say,
   startFakeModel,
+  streamError,
+  think,
   type FakeModel,
   type Lane,
   type RequestFacts,
@@ -29,6 +32,7 @@ import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, test as base, vi } from 'vitest';
 
 import {
+  CoreLoopEvent,
   Error2,
   ErrorCodes,
   interactions,
@@ -4689,6 +4693,108 @@ kapTest('loads a persisted subagent only when the Agent tool resumes it after a 
   await kap.prompt(session.id, 'resume the child');
   await kap.waitIdle(session.id);
   expect(agents.handleOf(childId)).toBeDefined();
+});
+
+kapTest('streams live conversation deltas from core loop events across backoff and recovery retries with REST and replay parity', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(
+    streamError(
+      reply(
+        think(['planning ', 'the call']),
+        bash({ command: "printf 'partial'", description: 'partial tool' }, { id: 'call_partial_retry', argumentChunks: 3 }),
+      ),
+      { status: 429, message: 'rate limited', retryAfterMs: 1 },
+    ),
+    say('recovered after backoff'),
+    httpError(400, { message: 'text content blocks must be non-empty' }),
+    say('recovered after structure recovery'),
+  );
+  const { id } = await kap.createSession();
+  const socket = await kap.connect();
+  await socket.subscribe(id);
+  const live = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, id))!);
+  const retryReasons: string[] = [];
+  const subscription = live.accessor.get(IEventBus).subscribe(CoreLoopEvent, (envelope) => {
+    if (envelope.event.type === 'llm.retry') retryReasons.push(envelope.event.reason);
+  });
+
+  await kap.prompt(id, 'trigger backoff');
+  expect((await kap.waitIdle(id)).last_turn_outcome).toBe('completed');
+  await kap.prompt(id, 'trigger recovery');
+  expect((await kap.waitIdle(id)).last_turn_outcome).toBe('completed');
+  subscription.dispose();
+
+  expect(retryReasons).toEqual(['backoff', 'recovery']);
+
+  const streamFrames = socket.frames.filter((frame) =>
+    frame['session_id'] === id && (frame.type.startsWith('turn.') || frame.type.startsWith('item.')),
+  );
+  const reasoningFrame = streamFrames.find((frame) => frame.type === 'item.started' && (frame['item'] as KapItem).type === 'reasoning');
+  if (reasoningFrame === undefined) throw new Error('expected a streamed reasoning item before the retry');
+  const reasoningId = (reasoningFrame['item'] as KapItem).item_id;
+  const normalizeItemId = (value: unknown): string => value === reasoningId ? '<partial-reasoning>' : String(value);
+  const summarize = (frames: readonly KapFrame[]): unknown[] =>
+    frames.map((frame) => {
+      if (frame.type === 'item.started' || frame.type === 'item.ended') {
+        const item = frame['item'] as KapItem;
+        if (item.item_id === reasoningId) return `${frame.type}:<partial-reasoning>`;
+        if (item.type === 'assistant_message') return `${frame.type}:assistant_message:${String(item['text'])}`;
+        if (item.type === 'tool_call') return `${frame.type}:${item.item_id}`;
+        return `${frame.type}:${item.type}`;
+      }
+      if (frame.type === 'item.removed') return `item.removed:${normalizeItemId(frame['item_id'])}`;
+      if (frame.type === 'item.delta') return `item.delta:${normalizeItemId(frame['item_id'])}:${String(frame['field'])}`;
+      if (frame.type === 'turn.updated') {
+        const step = frame['step'] as { outcome?: string } | undefined;
+        const retry = frame['retry'] as { attempt?: number } | undefined;
+        return { type: 'turn.updated', step: step?.outcome, retry: retry?.attempt };
+      }
+      return frame.type;
+    });
+
+  const secondTurnIndex = streamFrames.findIndex((frame) =>
+    frame.type === 'turn.started' && (frame['turn'] as { ordinal?: number }).ordinal === 1,
+  );
+  expect(summarize(streamFrames.slice(0, secondTurnIndex))).toEqual([
+    'turn.started',
+    'item.ended:user_message',
+    'item.started:<partial-reasoning>',
+    'item.delta:<partial-reasoning>:text',
+    'item.started:call_partial_retry',
+    'item.delta:call_partial_retry:input_text',
+    'item.delta:call_partial_retry:input_text',
+    'item.delta:call_partial_retry:input_text',
+    'item.removed:<partial-reasoning>',
+    'item.removed:call_partial_retry',
+    { type: 'turn.updated', step: 'failed', retry: undefined },
+    { type: 'turn.updated', step: undefined, retry: 1 },
+    { type: 'turn.updated', step: undefined, retry: undefined },
+    'item.started:assistant_message:recovered after backoff',
+    'item.ended:assistant_message:recovered after backoff',
+    { type: 'turn.updated', step: 'completed', retry: undefined },
+    'turn.ended',
+  ]);
+  expect(summarize(streamFrames.slice(secondTurnIndex))).toEqual([
+    'turn.started',
+    'item.ended:user_message',
+    { type: 'turn.updated', step: 'failed', retry: undefined },
+    'item.started:assistant_message:recovered after structure recovery',
+    'item.ended:assistant_message:recovered after structure recovery',
+    { type: 'turn.updated', step: 'completed', retry: undefined },
+    'turn.ended',
+  ]);
+
+  const restTurns = await kap.turns(id);
+  expect(socket.turns(id)).toEqual(restTurns);
+  const turnsPath = `/api/v1/sessions/${id}/agents/main/turns`;
+  const newest = await kap.rest.get<ConversationTurnsPage>(turnsPath, { page_size: 1 });
+  expect(newest.has_more).toBe(true);
+  expect(newest.turns.map((turn) => turn.ordinal)).toEqual([1]);
+  const older = await kap.rest.get<ConversationTurnsPage>(turnsPath, { page_size: 1, before_ordinal: newest.turns[0]!.ordinal });
+  expect(older.has_more).toBe(false);
+  expect([...older.turns, ...newest.turns]).toEqual(restTurns);
+
+  await kap.restart();
+  expect(await kap.turns(id)).toEqual(restTurns);
 });
 
 kapTest('reports the project root and where the agent works on every view of a session', { timeout: 30_000 }, async ({ kap }) => {

@@ -1,4 +1,5 @@
 import {
+  CoreLoopEvent,
   IAgentBlobService,
   IAgentLoopService,
   IEventBus,
@@ -12,14 +13,15 @@ import {
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
 import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear, ContextUndo } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
-import { AssistantDelta, ThinkingDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { TurnStepRetrying, TurnStepStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { TaskStarted } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { EventBusService } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
-import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, StreamedMessagePart } from '@moonshot-ai/core/llm/message';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 import { EventDispatcherService } from '@moonshot-ai/agent-core-v2/state/eventDispatcherService';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import type { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
@@ -1025,6 +1027,8 @@ function emptyView<T>(): CollectionView<T> {
 }
 
 interface FeedHarness {
+  readonly bus: EventBusService;
+  readonly agentContext: ReturnType<typeof makeAgentScopeContext>['agentContext'];
   readonly dispatcher: EventDispatcherService;
   readonly feed: ConversationFeed;
   readonly events: ConversationEvent[];
@@ -1075,6 +1079,8 @@ function feedHarness(records: readonly WireRecord[], blobs: IAgentBlobService = 
   const events: ConversationEvent[] = [];
   feed.subscribe((event) => events.push(event));
   return {
+    bus,
+    agentContext: scope.agentContext,
     dispatcher,
     feed,
     events,
@@ -1107,6 +1113,122 @@ const userPrompt = (id: string, text: string): ContextAppendMessage =>
   new ContextAppendMessage({ agentId: 'main', message: { role: 'user', id, content: [{ type: 'text', text }], origin: { kind: 'user' } } });
 
 const loopEvent = (event: LoopRecordedEvent): ContextAppendLoopEvent => new ContextAppendLoopEvent({ agentId: 'main', event });
+
+const emitCore = (h: FeedHarness, event: LoopEmitted): void => {
+  h.bus.publish(new CoreLoopEvent({ agentId: 'main', event }), h.agentContext);
+};
+
+const streamPart = (
+  h: FeedHarness,
+  part: StreamedMessagePart,
+  options: { turnId?: number; step?: number; block?: number } = {},
+): void => {
+  emitCore(h, {
+    type: 'llm.delta.part',
+    turnId: options.turnId ?? 0,
+    step: options.step ?? 1,
+    block: options.block,
+    part,
+  });
+};
+
+const retryAttempt = (
+  h: FeedHarness,
+  options: { turnId?: number; step?: number; fromUuid: string; reason: 'backoff' | 'recovery' },
+): void => {
+  const turnId = options.turnId ?? 0;
+  const step = options.step ?? 1;
+  const error = {
+    kind: 'rate_limit',
+    message: 'rate limited',
+    statusCode: 429,
+    requestId: null,
+    retryAfterMs: null,
+    headers: null,
+    retryable: true,
+  } as const;
+  if (options.reason === 'recovery') {
+    emitCore(h, { type: 'llm.retry', turnId, step, reason: 'recovery', strategy: 'structure', action: 'strict', error });
+  } else {
+    emitCore(h, {
+      type: 'llm.retry',
+      turnId,
+      step,
+      reason: 'backoff',
+      error,
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 10,
+      delayMs: 1,
+    });
+  }
+  void h.dispatcher.dispatch(loopEvent({ type: 'step.end', uuid: options.fromUuid, turnId: String(turnId), step, finishReason: 'error' }));
+  if (options.reason !== 'recovery') {
+    void h.dispatcher.dispatch(new TurnStepRetrying({
+      agentId: 'main',
+      turnId,
+      step,
+      stepId: options.fromUuid,
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 10,
+      delayMs: 1,
+      errorName: 'status',
+      errorMessage: 'rate limited',
+      statusCode: 429,
+    }));
+  }
+};
+
+const beginAttempt = (
+  h: FeedHarness,
+  uuid: string,
+  options: { turnId?: number; step?: number } = {},
+): void => {
+  const turnId = options.turnId ?? 0;
+  const step = options.step ?? 1;
+  emitCore(h, {
+    type: 'llm.requested',
+    turnId,
+    step,
+    provider: 'testkit',
+    model: 'testkit-model',
+    systemPromptHash: 'system',
+    toolsHash: 'tools',
+    messageCount: 1,
+    attempt: '2',
+  });
+  void h.dispatcher.dispatch(new TurnStepStarted({ agentId: 'main', turnId, step, stepId: uuid }));
+  void h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid, turnId: String(turnId), step }));
+};
+
+const frameSummary = (events: readonly ConversationEvent[]): unknown[] => {
+  const summary: unknown[] = [];
+  for (const event of events) {
+    if (event.type === 'item.started' || event.type === 'item.ended') {
+      summary.push(`${event.type}:${event.item.item_id}`);
+      continue;
+    }
+    if (event.type === 'item.removed') {
+      summary.push(`${event.type}:${event.item_id}`);
+      continue;
+    }
+    if (event.type === 'item.delta') {
+      summary.push(`${event.type}:${event.item_id}:${event.field}:${event.delta}`);
+      continue;
+    }
+    if (event.type === 'turn.updated') {
+      summary.push({
+        type: event.type,
+        step: event.step === undefined ? undefined : { index: event.step.index, outcome: event.step.outcome },
+        retry: event.retry?.attempt,
+      });
+      continue;
+    }
+    summary.push(event.type);
+  }
+  return summary;
+};
 
 const updated = (
   fields: Readonly<Record<string, unknown>>,
@@ -1316,8 +1438,8 @@ describe('conversation feed', () => {
     void h.dispatcher.dispatch(prompt(0, 'p1'));
     void h.dispatcher.dispatch(userPrompt('p1', 'stream'));
     void h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }));
-    void h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'hi' }));
-    void h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 0, delta: ' there' }));
+    streamPart(h, { type: 'text', text: 'hi' }, { block: 0 });
+    streamPart(h, { type: 'text', text: ' there' }, { block: 0 });
 
     expect(h.events.map((event) => ('item' in event ? `${event.type}:${event.item.item_id}` : event.type))).toEqual([
       'turn.started',
@@ -1329,12 +1451,16 @@ describe('conversation feed', () => {
     h.dispatcher.dispose();
   });
 
-  it('ends a streamed item once, from the recorded step, with the duration the engine measured', async () => {
+  it('ends a streamed item once, from the recorded step, with the duration the engine measured, and ignores hidden thinking and media parts', async () => {
     const h = feedHarness([]);
     await runningTurn(h);
 
-    await h.dispatcher.dispatch(new ThinkingDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'plan' }));
-    await h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 1, delta: 'answer' }));
+    streamPart(h, { type: 'think', think: 'secret draft', hidden: true }, { block: 0 });
+    streamPart(h, { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } }, { block: 1 });
+    expect(h.events).toEqual([]);
+
+    streamPart(h, { type: 'think', think: 'plan' }, { block: 0 });
+    streamPart(h, { type: 'text', text: 'answer' }, { block: 1 });
     await flushed();
     expect(h.events.map((event) => event.type)).toEqual(['item.started', 'item.started']);
 
@@ -1348,22 +1474,136 @@ describe('conversation feed', () => {
     h.dispatcher.dispose();
   });
 
-  it('removes the reply a failed attempt streamed once a retry of its step begins', async () => {
+  it('flushes the failed step and drops partial live items after the journal step.end and before the backoff retry state', async () => {
     const h = feedHarness([]);
     await runningTurn(h);
 
-    await h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'Affected: eu-west ' }));
-    await h.dispatcher.dispatch(loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', block: 0, part: { type: 'text', text: 'Affected: eu-west ' } }));
-    await h.dispatcher.dispatch(loopEvent({ type: 'step.end', uuid: 's1', turnId: '0', step: 1, finishReason: 'error' }));
-    await h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's2', turnId: '0', step: 1 }));
-    await h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'Affected regions are eu-west and us-east.' }));
+    streamPart(h, { type: 'text', text: 'Affected: eu-west ' }, { block: 0 });
+    streamPart(h, { type: 'function', id: 'call-retry', name: 'Bash', arguments: '{"command":', _streamIndex: 0 });
+    streamPart(h, { type: 'tool_call_part', index: 0, argumentsPart: '"ls"}' });
+
+    retryAttempt(h, { fromUuid: 's1', reason: 'backoff' });
+
+    expect(frameSummary(h.events)).toEqual([
+      'item.started:s1:0',
+      'item.started:call-retry',
+      'item.delta:call-retry:input_text:"ls"}',
+      'item.removed:s1:0',
+      'item.removed:call-retry',
+      { type: 'turn.updated', step: { index: 1, outcome: 'failed' }, retry: undefined },
+    ]);
+
+    streamPart(h, { type: 'tool_call_part', index: 0, argumentsPart: 'ignored-after-retry' });
+    await flushed();
+    expect(frameSummary(h.events.slice(6))).toEqual([
+      { type: 'turn.updated', step: undefined, retry: 1 },
+    ]);
+
+    beginAttempt(h, 's2');
+    streamPart(h, { type: 'text', text: 'Affected regions are eu-west and us-east.' }, { block: 0 });
+    await h.dispatcher.dispatch(loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's2', block: 0, part: { type: 'text', text: 'Affected regions are eu-west and us-east.' } }));
+    await h.dispatcher.dispatch(loopEvent({ type: 'step.end', uuid: 's2', turnId: '0', step: 1, finishReason: 'end_turn' }));
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }));
     await flushed();
 
-    expect(h.events.flatMap((event) => {
-      if (event.type === 'item.started' || event.type === 'item.ended') return [`${event.type}:${event.item.item_id}`];
-      return event.type === 'item.removed' ? [`${event.type}:${event.item_id}`] : [];
-    })).toEqual(['item.started:s1:0', 'item.ended:s1:0', 'item.removed:s1:0', 'item.started:s2:0']);
+    expect(frameSummary(h.events.slice(7))).toEqual([
+      { type: 'turn.updated', step: undefined, retry: undefined },
+      'item.started:s2:0',
+      'item.ended:s2:0',
+      { type: 'turn.updated', step: { index: 1, outcome: 'completed' }, retry: undefined },
+      'turn.ended',
+    ]);
+    const page = (await h.feed.page(undefined, 20)).turns;
+    expect(page[0]?.items.map((item) => item.item_id)).toEqual(['p1', 's2:0']);
+    expect(page[0]?.retry).toBeUndefined();
+
+    const replayed = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'run it').serialize(),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'step.end', uuid: 's1', turnId: '0', step: 1, finishReason: 'error' }).serialize(),
+      loopEvent({ type: 'step.begin', uuid: 's2', turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's2', block: 0, part: { type: 'text', text: 'Affected regions are eu-west and us-east.' } }).serialize(),
+      loopEvent({ type: 'step.end', uuid: 's2', turnId: '0', step: 1, finishReason: 'end_turn' }).serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
+    await replayed.dispatcher.restore();
+    await replayed.feed.ready;
+    expect(replayed.events).toEqual([]);
+    const [replayedTurn] = (await replayed.feed.page(undefined, 20)).turns;
+    expect(replayedTurn).toMatchObject({ status: 'ended', outcome: 'completed' });
+    expect(replayedTurn?.retry).toBeUndefined();
+    expect(replayedTurn?.items.map((item) => item.item_id)).toEqual(['p1', 's2:0']);
+    expect(replayedTurn?.items.map((item) => 'text' in item ? item.text : '')).toEqual(['run it', 'Affected regions are eu-west and us-east.']);
+    expect(replayedTurn?.steps.map((step) => [step.index, step.outcome, step.finish_reason])).toEqual([[1, 'completed', 'end_turn']]);
+    replayed.dispatcher.dispose();
+    h.dispatcher.dispose();
+  });
+
+  it('resets partial live items on a recovery retry without emitting a backoff retry frame', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+
+    streamPart(h, { type: 'text', text: 'partial before recovery' }, { block: 0 });
+    retryAttempt(h, { fromUuid: 's1', reason: 'recovery' });
+    await flushed();
+
+    expect(frameSummary(h.events)).toEqual([
+      'item.started:s1:0',
+      'item.removed:s1:0',
+      { type: 'turn.updated', step: { index: 1, outcome: 'failed' }, retry: undefined },
+    ]);
+
+    beginAttempt(h, 's2');
+    streamPart(h, { type: 'text', text: 'recovered' }, { block: 0 });
+    await flushed();
+
+    expect(frameSummary(h.events.slice(3))).toEqual(['item.started:s2:0']);
     expect((await h.feed.page(undefined, 20)).turns[0]?.items.map((item) => item.item_id)).toEqual(['p1', 's2:0']);
+    h.dispatcher.dispose();
+  });
+
+  it('scopes streamed tool call index mappings to their step and clears them on step and turn boundaries', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+
+    streamPart(h, { type: 'tool_call_part', index: 7, argumentsPart: 'orphan' });
+    streamPart(h, { type: 'function', id: 'call-a', name: 'Bash', arguments: null, _streamIndex: 0 });
+    streamPart(h, { type: 'function', id: 'call-b', name: 'Read', arguments: '{"path":', _streamIndex: 1 });
+    streamPart(h, { type: 'tool_call_part', index: 0, argumentsPart: '{"command":"ls"}' });
+    streamPart(h, { type: 'tool_call_part', index: 1, argumentsPart: '"a.ts"}' });
+
+    expect(frameSummary(h.events)).toEqual([
+      'item.started:call-a',
+      'item.started:call-b',
+      'item.delta:call-a:input_text:{"command":"ls"}',
+      'item.delta:call-b:input_text:"a.ts"}',
+    ]);
+
+    emitCore(h, { type: 'step.ended', turnId: 0, step: 1, outcome: { type: 'continue' } });
+    await h.dispatcher.dispatch(loopEvent({ type: 'step.end', uuid: 's1', turnId: '0', step: 1, finishReason: 'tool_use' }));
+    emitCore(h, { type: 'step.started', turnId: 0, step: 2, stepId: 's2' });
+    await h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's2', turnId: '0', step: 2 }));
+    await flushed();
+    h.events.length = 0;
+
+    streamPart(h, { type: 'tool_call_part', index: 0, argumentsPart: 'stale-step' }, { step: 2 });
+    expect(h.events).toEqual([]);
+
+    streamPart(h, { type: 'function', id: 'call-c', name: 'Bash', arguments: null, _streamIndex: 0 }, { step: 2 });
+    emitCore(h, { type: 'turn.ended', turnId: 0, outcome: { type: 'done' } });
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }));
+    await flushed();
+
+    await h.dispatcher.dispatch(prompt(1, 'p2'));
+    await h.dispatcher.dispatch(userPrompt('p2', 'next turn'));
+    emitCore(h, { type: 'step.started', turnId: 1, step: 1, stepId: 's3' });
+    await h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's3', turnId: '1', step: 1 }));
+    await flushed();
+    h.events.length = 0;
+
+    streamPart(h, { type: 'tool_call_part', index: 0, argumentsPart: 'stale-turn' }, { turnId: 1, step: 1 });
+    expect(h.events).toEqual([]);
     h.dispatcher.dispose();
   });
 
@@ -1404,8 +1644,8 @@ describe('conversation feed', () => {
     await runningTurn(h);
 
     const display = { kind: 'command', command: 'ls' } as const;
-    await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', name: 'Bash', argumentsPart: '{"command":' }));
-    await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', argumentsPart: '"ls"}' }));
+    streamPart(h, { type: 'function', id: 'call-1', name: 'Bash', arguments: '{"command":', _streamIndex: 0 });
+    streamPart(h, { type: 'tool_call_part', index: 0, argumentsPart: '"ls"}' });
     await h.dispatcher.dispatch(new InteractionRequestEvent({
       agentId: 'main',
       id: 'i1',
