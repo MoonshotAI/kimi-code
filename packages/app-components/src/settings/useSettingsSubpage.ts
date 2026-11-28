@@ -66,7 +66,7 @@ export function useSettingsSubpage<T>(scroller?: () => HTMLElement | null | unde
     fitHeight.value = null;
   }
 
-  if (getCurrentInstance()) {
+  if (scroller !== undefined && getCurrentInstance()) {
     provide(SettingsSubpageHostKey, {
       fit: () => void fit(),
       release,

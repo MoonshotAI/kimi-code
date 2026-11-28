@@ -53,6 +53,7 @@ export interface UiState {
   browserAgentDownloadDirectory?: string;
   browserAgentDownloadLimitBytes?: number | null;
   browserDownloadsAccess?: 'granted' | 'denied';
+  localNetworkPermissionProbed?: boolean;
   browserHistory?: BrowserHistoryEntry[];
   browserDownloads?: BrowserDownloadRecord[];
 }
@@ -260,6 +261,14 @@ export function getPreventSystemSleep(file?: string): SleepPreventionMode {
 
 export function setPreventSystemSleep(mode: SleepPreventionMode, file: string = defaultStateFile()): void {
   writeUiState({ preventSystemSleep: mode }, file);
+}
+
+export function getLocalNetworkPermissionProbed(file?: string): boolean {
+  return loadUiState(file).localNetworkPermissionProbed === true;
+}
+
+export function setLocalNetworkPermissionProbed(probed: boolean, file: string = defaultStateFile()): void {
+  writeUiState({ localNetworkPermissionProbed: probed }, file);
 }
 
 export function getPreventLidSleep(file?: string): boolean {

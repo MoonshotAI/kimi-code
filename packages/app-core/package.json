@@ -17,7 +17,8 @@
     "./native-menu": "./src/nativeMenu.ts",
     "./quick-model-menu": "./src/quickModelMenu.ts",
     "./browser-reference": "./src/browserReference.ts",
-    "./shortcut-keys": "./src/lib/shortcutKeys.ts"
+    "./shortcut-keys": "./src/lib/shortcutKeys.ts",
+    "./system-permissions": "./src/lib/systemPermissions.ts"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.3.0",

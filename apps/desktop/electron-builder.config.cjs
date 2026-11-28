@@ -140,6 +140,7 @@ module.exports = {
     { from: path.resolve(path.dirname(require.resolve('fabric')), '../LICENSE'), to: 'third-party-notices/fabric-LICENSE.txt' },
     { from: 'native/screenshot-window-list/dist', to: 'screenshot-window-list', filter: ['screenshot-window-list', '*.exe', '*.node'] },
     { from: 'native/clamshell-tool/dist', to: 'clamshell-tool', filter: ['clamshell-tool'] },
+    { from: 'native/local-network/dist', to: 'local-network', filter: ['*.node'] },
     { from: 'build/lproj/', to: '.' },
     { from: 'build/', to: 'build/', filter: ['tray*'] },
   ],

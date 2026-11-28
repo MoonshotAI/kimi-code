@@ -120,6 +120,7 @@ export { default as BrowserTabTitleSetting } from './settings/BrowserTabTitleSet
 export { default as FontSettingsPage } from './settings/FontSettingsPage.vue';
 export { default as FontSettingsRow } from './settings/FontSettingsRow.vue';
 export { default as GlobalAgentsMdSetting } from './settings/GlobalAgentsMdSetting.vue';
+export { default as SystemPermissionsSetting } from './settings/SystemPermissionsSetting.vue';
 export { default as SettingsSubpage } from './settings/SettingsSubpage.vue';
 export {
   SettingsSubpageHostKey,

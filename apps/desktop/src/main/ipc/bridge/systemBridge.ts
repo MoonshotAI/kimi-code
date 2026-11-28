@@ -12,6 +12,12 @@ import {
 import type { ScreenshotGuidance, ScreenshotGuidanceAction } from '../../../shared/screenshot-guidance';
 import type { ProviderModelsFetchResult } from '../../system/provider-models-fetch';
 import type { FeedbackDiagnosticsArchive } from '../../../shared/feedback-diagnostics';
+import {
+  isSystemPermissionsSnapshot,
+  type SystemPermissionId,
+  type SystemPermissionsQuery,
+  type SystemPermissionsSnapshot,
+} from '@moonshot-ai/app-core/system-permissions';
 
 export type DialogOptions = Record<string, unknown>;
 
@@ -120,6 +126,9 @@ export type SystemBridge = Omit<NativeTerminalBridge, 'inspectNativeTerminals'> 
   getPreventSystemSleep: () => Promise<boolean>;
   getPreventSleepState: () => Promise<PreventSleepState>;
   setPreventLidSleep: (enabled: boolean) => Promise<PreventSleepState>;
+  getSystemPermissions: (query: SystemPermissionsQuery) => Promise<SystemPermissionsSnapshot>;
+  requestSystemPermission: (id: SystemPermissionId, query: SystemPermissionsQuery) => Promise<SystemPermissionsSnapshot>;
+  openSystemPermissionSettings: (id: SystemPermissionId, query: SystemPermissionsQuery) => Promise<SystemPermissionsSnapshot>;
   log: (level: 'info' | 'warn' | 'error', message: string, detail?: unknown) => void;
   reportStartupMilestone: (milestone: 'ui-mounted' | 'ui-ready' | 'boot-stage', stage?: string) => void;
   track: (event: string, properties?: Record<string, unknown>) => void;
@@ -137,6 +146,16 @@ export type SystemBridge = Omit<NativeTerminalBridge, 'inspectNativeTerminals'> 
     timeoutMs: number;
   }) => Promise<ProviderModelsFetchResult | null>;
 };
+
+function emptySystemPermissionsSnapshot(): SystemPermissionsSnapshot {
+  return { platform: process.platform, computerUseInstalled: false, items: [] };
+}
+
+async function invokeSystemPermissions(channel: string, ...args: unknown[]): Promise<SystemPermissionsSnapshot> {
+  const result: unknown = await ipcRenderer.invoke(channel, ...args);
+  if (!isSystemPermissionsSnapshot(result)) throw new Error('system-permissions: invalid response');
+  return result;
+}
 
 export const systemBridge: SystemBridge = {
   inspectNativeTerminals: async ids => {
@@ -178,6 +197,18 @@ export const systemBridge: SystemBridge = {
   setPreventLidSleep: async (enabled) => {
     if (typeof enabled !== 'boolean') return { system: 'allow-sleep', lid: false, lidSupported: false };
     return ipcRenderer.invoke('kimi:set-prevent-lid-sleep', enabled).then(asPreventSleepState);
+  },
+  getSystemPermissions: async (query) => {
+    if (typeof query !== 'object' || query === null) return emptySystemPermissionsSnapshot();
+    return invokeSystemPermissions('kimi:system-permissions-get-all', query);
+  },
+  requestSystemPermission: async (id, query) => {
+    if (typeof id !== 'string' || typeof query !== 'object' || query === null) return emptySystemPermissionsSnapshot();
+    return invokeSystemPermissions('kimi:system-permissions-request', id, query);
+  },
+  openSystemPermissionSettings: async (id, query) => {
+    if (typeof id !== 'string' || typeof query !== 'object' || query === null) return emptySystemPermissionsSnapshot();
+    return invokeSystemPermissions('kimi:system-permissions-open-settings', id, query);
   },
   log: (level, message, detail) => {
     if (level !== 'info' && level !== 'warn' && level !== 'error') return;

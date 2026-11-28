@@ -81,6 +81,7 @@ export * from './storage';
 export * from './stripSurroundingQuotes';
 export * from './submenuPlacement';
 export * from './swarmMode';
+export * from './systemPermissions';
 export * from './taskOutput';
 export * from './toolText';
 export * from './towerMode';

@@ -8,10 +8,12 @@
   "type": "module",
   "main": "out/main.cjs",
   "scripts": {
-    "predev": "npm run build:native:screenshot && npm run build:native:clamshell",
+    "predev": "npm run build:native",
+    "build:native": "npm run build:native:screenshot && npm run build:native:clamshell && npm run build:native:local-network",
     "build:native:screenshot": "node native/screenshot-window-list/build.mjs",
     "build:native:clamshell": "node native/clamshell-tool/build.mjs",
-    "build": "npm run build:native:screenshot && npm run build:native:clamshell && tsdown",
+    "build:native:local-network": "node native/local-network/build.mjs",
+    "build": "npm run build:native && tsdown",
     "build:renderer": "vite build --config vite.renderer.config.ts",
     "build:web": "vite build --config vite.web.config.ts",
     "dev:web": "vite --config vite.web.config.ts",
@@ -25,7 +27,7 @@
     "e2e:headless": "node e2e/run.mjs",
     "postinstall": "node scripts/rebuild-native.mjs",
     "dist": "npm run build:renderer && npm run dist:prebuilt-renderer --",
-    "dist:prebuilt-renderer": "npm run build:native:screenshot && npm run build:native:clamshell && tsdown && electron-builder --config electron-builder.config.cjs"
+    "dist:prebuilt-renderer": "npm run build:native && tsdown && electron-builder --config electron-builder.config.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -7,7 +7,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
-import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
+import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, SystemPermissionsSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
 import type { FontTarget } from '@moonshot-ai/app-core/composables';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
@@ -744,8 +744,11 @@ async function requestClose(): Promise<void> {
 const bodyRef = ref<HTMLElement | null>(null);
 const fontPage = useSettingsSubpage<FontTarget>(() => bodyRef.value);
 const fontPageTarget = fontPage.page;
+const systemPermissionsSettingRef = ref<InstanceType<typeof SystemPermissionsSetting> | null>(null);
+const systemPermissionsOpen = ref(false);
 watch(activeTab, () => {
   fontPage.reset();
+  systemPermissionsSettingRef.value?.reset();
   globalAgentsMdSettingRef.value?.reset();
 });
 
@@ -889,7 +892,7 @@ defineExpose({ confirmDiscard });
         <div ref="bodyRef" class="body" :class="{ scrolling: bodyScrolling }" @scroll="onBodyScroll">
         <section v-show="activeTab === 'general'" class="panel">
           <FontSettingsPage v-if="fontPageTarget" :key="fontPageTarget" :target="fontPageTarget" @back="fontPage.back()" />
-          <div v-show="!fontPageTarget" class="panel-sections">
+          <div v-show="!fontPageTarget && !systemPermissionsOpen" class="panel-sections">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.appearance') }}</h3>
             <div class="settings-group">
@@ -1050,7 +1053,16 @@ defineExpose({ confirmDiscard });
             </div>
             </div>
           </section>
+          </div>
 
+          <SystemPermissionsSetting
+            v-if="isMacosDesktop"
+            ref="systemPermissionsSettingRef"
+            :scroller="() => bodyRef"
+            @open-change="systemPermissionsOpen = $event"
+          />
+
+          <div v-show="!fontPageTarget && !systemPermissionsOpen">
           <section v-if="openInAppOptions" class="sec">
             <h3 class="sec-title">{{ t('settings.openWith') }}</h3>
             <div class="settings-group">

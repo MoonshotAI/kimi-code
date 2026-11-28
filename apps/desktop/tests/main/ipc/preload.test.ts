@@ -109,6 +109,9 @@ const WHITELIST = [
   'getVibrancy',
   'getPreventSystemSleep',
   'getPreventSleepState',
+  'getSystemPermissions',
+  'requestSystemPermission',
+  'openSystemPermissionSettings',
   'getRuntimeEnvironmentOverrides',
   'getRemoteControlRestoreState',
   'setRemoteControlRestoreState',
@@ -311,6 +314,33 @@ describe('kimiDesktop preload bridge', () => {
     await expect(exposed.setPreventLidSleep(true)).resolves.toEqual({ system: 'prevent-app-suspension', lid: true, lidSupported: true });
     expect(invoke).toHaveBeenCalledWith('kimi:set-prevent-lid-sleep', true);
     await expect(exposed.setPreventLidSleep('yes')).resolves.toEqual({ system: 'allow-sleep', lid: false, lidSupported: false });
+  });
+
+  it('wires system permission methods and validates snapshots', async () => {
+    await import('../../../src/main/ipc/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+    const query = { computerUseInstalled: true, notificationPermission: 'denied' };
+    const snapshot = { platform: 'darwin', computerUseInstalled: true, items: [] };
+
+    invoke.mockResolvedValueOnce(snapshot);
+    await expect(exposed.getSystemPermissions(query)).resolves.toEqual(snapshot);
+    expect(invoke).toHaveBeenLastCalledWith('kimi:system-permissions-get-all', query);
+
+    invoke.mockResolvedValueOnce(snapshot);
+    await expect(exposed.requestSystemPermission('local-network', query)).resolves.toEqual(snapshot);
+    expect(invoke).toHaveBeenLastCalledWith('kimi:system-permissions-request', 'local-network', query);
+
+    invoke.mockResolvedValueOnce(snapshot);
+    await expect(exposed.openSystemPermissionSettings('cu-accessibility', query)).resolves.toEqual(snapshot);
+    expect(invoke).toHaveBeenLastCalledWith('kimi:system-permissions-open-settings', 'cu-accessibility', query);
+
+    invoke.mockResolvedValueOnce({ platform: 'darwin', items: [{ id: 'camera', status: 'bogus' }] });
+    await expect(exposed.getSystemPermissions(query)).rejects.toThrow('invalid response');
+    await expect(exposed.getSystemPermissions(null as never)).resolves.toEqual({
+      platform: process.platform,
+      computerUseInstalled: false,
+      items: [],
+    });
   });
 
   it('wires each whitelisted method to the correct ipcRenderer channel', async () => {
