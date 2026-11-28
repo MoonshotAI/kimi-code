@@ -38,6 +38,7 @@ function directoryStat(): HostFileStat {
 function createBackend(options: {
   readonly environmentId: string;
   readonly homeDir: string;
+  readonly osKind?: string;
   readonly spawn?: IHostProcessService['spawn'];
 }): FakeEnvironment {
   const processService: IHostProcessService = {
@@ -65,7 +66,10 @@ function createBackend(options: {
   return Object.assign(
     new FakeEnvironment(
       { environmentId: options.environmentId, generation: 'test' },
-      { capabilities: ['fs', 'process'], host: { homeDir: options.homeDir } },
+      {
+        capabilities: ['fs', 'process'],
+        host: { homeDir: options.homeDir, ...(options.osKind === undefined ? {} : { osKind: options.osKind }) },
+      },
     ),
     { process: processService, fs },
   );
@@ -148,6 +152,44 @@ describe('rg-unavailable guidance', () => {
             '  Other:   https://github.com/BurntSushi/ripgrep#installation\n' +
             '\n' +
             `Alternatively, drop a static rg binary at ${LOCAL_SHARE_BIN_RG}`,
+        );
+      });
+
+      it('shows OpenHarmony install and self-sign guidance for a local OpenHarmony host', async () => {
+        ensureRgPathMock.mockRejectedValue(new Error('offline'));
+        const result = await execute(
+          createBackend({ environmentId: 'local', homeDir: '/home/test', osKind: 'openharmony' }),
+        );
+
+        expect(result.isError).toBe(true);
+        expect(outputOf(result)).toBe(
+          'ripgrep (rg) is not available and the automatic bootstrap failed.\n' +
+            '\n' +
+            'Error: offline\n' +
+            '\n' +
+            'Fix options:\n' +
+            '  OpenHarmony: install the HNP package or download rg from https://atomgit.com/OpenHarmonyPCDeveloper/ohos-ripgrep\n' +
+            '\n' +
+            `Alternatively, drop an OpenHarmony rg binary at ${LOCAL_SHARE_BIN_RG} (unsigned binaries are self-signed automatically)`,
+        );
+      });
+
+      it('shows OpenHarmony install and self-sign guidance for a remote OpenHarmony host', async () => {
+        ensureRgPathMock.mockRejectedValue(new Error('offline'));
+        const result = await execute(
+          createBackend({ environmentId: 'remote-ohos', homeDir: '/home/remote', osKind: 'openharmony' }),
+        );
+
+        expect(result.isError).toBe(true);
+        expect(outputOf(result)).toBe(
+          'ripgrep (rg) is not available on environment "remote-ohos" and the automatic bootstrap failed.\n' +
+            '\n' +
+            'Error: offline\n' +
+            '\n' +
+            'Fix options (install on the target):\n' +
+            '  OpenHarmony: install the HNP package or download rg from https://atomgit.com/OpenHarmonyPCDeveloper/ohos-ripgrep\n' +
+            '\n' +
+            'Alternatively, drop an OpenHarmony rg binary at /home/remote/.kimi-code/bin/rg on the target (unsigned binaries are self-signed automatically)',
         );
       });
     });

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { extract as extractTar } from 'tar';
@@ -11,17 +11,26 @@ import {
   detectRemoteTarget,
   detectTarget,
   ensureRgPath,
+  extractRgFromTarGz,
   extractRgFromZip,
   findExistingRg,
+  markRemoteRgExecutable,
   rgUnavailableMessage,
   verifyArchiveChecksum,
   type RgProbe,
 } from '#/os/backends/node-local/tools/rgLocator';
+import {
+  hasOhosElfCodeSign,
+  selfSignOhosElf,
+} from '#/os/backends/node-local/tools/ohosElfCodeSign';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment } from '#/environment/environment';
 import { stubRgProbe } from '../../../stubs';
 
-vi.mock('tar', () => ({ extract: vi.fn() }));
+vi.mock('tar', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('tar')>();
+  return { ...actual, extract: vi.fn() };
+});
 
 function probeWith(
   resolveExitCode: (args: readonly string[]) => number,
@@ -252,9 +261,66 @@ describe('detectTarget', () => {
     expect(detectRemoteTarget('Windows', 'x64')).toBe('x86_64-pc-windows-msvc');
     expect(detectRemoteTarget('Windows', 'arm64')).toBe('aarch64-pc-windows-msvc');
   });
+  it('openharmony arm64 -> aarch64-unknown-linux-ohos', () => {
+    setPlatform('arm64', 'openharmony');
+    expect(detectTarget()).toBe('aarch64-unknown-linux-ohos');
+  });
+  it('openharmony x64 -> undefined', () => {
+    setPlatform('x64', 'openharmony');
+    expect(detectTarget()).toBeUndefined();
+  });
+  it('openharmony remote targets use OpenHarmony archives', () => {
+    expect(detectRemoteTarget('openharmony', 'arm64')).toBe('aarch64-unknown-linux-ohos');
+    expect(detectRemoteTarget('openharmony', 'x64')).toBeUndefined();
+  });
   it('unsupported arch -> undefined', () => {
     setPlatform('mips', 'linux');
     expect(detectTarget()).toBeUndefined();
+  });
+});
+
+describe('markRemoteRgExecutable', () => {
+  const binPath = '/home/remote/.kimi-code/bin/rg';
+
+  it('stops after bare chmod succeeds', async () => {
+    const probe = probeWith(() => 0);
+    await markRemoteRgExecutable(probe, binPath, 'openharmony');
+    expect(probe.exec).toHaveBeenCalledTimes(1);
+    expect(probe.exec).toHaveBeenCalledWith(['chmod', '755', binPath]);
+  });
+
+  it('falls back to /system/bin/chmod on OpenHarmony when bare chmod exits non-zero', async () => {
+    const probe = probeWith((args) => (args[0] === '/system/bin/chmod' ? 0 : 127));
+    await markRemoteRgExecutable(probe, binPath, 'openharmony');
+    expect(probe.exec).toHaveBeenNthCalledWith(1, ['chmod', '755', binPath]);
+    expect(probe.exec).toHaveBeenNthCalledWith(2, ['/system/bin/chmod', '755', binPath]);
+  });
+
+  it('falls back to /system/bin/chmod on OpenHarmony when bare chmod fails to spawn', async () => {
+    const probe = {
+      exec: vi.fn(async (args: readonly string[]) => {
+        if (args[0] === 'chmod') throw Object.assign(new Error('spawn chmod EACCES'), { code: 'EACCES' });
+        return { exitCode: 0 };
+      }),
+    };
+    await markRemoteRgExecutable(probe, binPath, 'openharmony');
+    expect(probe.exec).toHaveBeenNthCalledWith(2, ['/system/bin/chmod', '755', binPath]);
+  });
+
+  it('throws when both chmod paths fail on OpenHarmony', async () => {
+    const probe = probeWith(() => -1);
+    await expect(markRemoteRgExecutable(probe, binPath, 'openharmony')).rejects.toThrow(
+      /failed to mark .* executable on the target/,
+    );
+    expect(probe.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not try /system/bin/chmod on non-OpenHarmony targets', async () => {
+    const probe = probeWith(() => 1);
+    await expect(markRemoteRgExecutable(probe, binPath, 'Linux')).rejects.toThrow(
+      /failed to mark .* executable on the target/,
+    );
+    expect(probe.exec).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -310,6 +376,8 @@ describe('ensureRgPath download branch', () => {
   let fakeShare: string;
   let savedFetch: typeof globalThis.fetch | undefined;
   let savedPath: string | undefined;
+  let savedArch: string;
+  let savedPlatform: string;
   beforeEach(() => {
     fakeShare = join(
       tmpdir(),
@@ -319,6 +387,10 @@ describe('ensureRgPath download branch', () => {
     savedFetch = globalThis.fetch;
     savedPath = process.env['PATH'];
     process.env['PATH'] = '';
+    savedArch = process.arch;
+    savedPlatform = process.platform;
+    Object.defineProperty(process, 'arch', { value: 'x64' });
+    Object.defineProperty(process, 'platform', { value: 'linux' });
   });
   afterEach(() => {
     rmSync(fakeShare, { recursive: true, force: true });
@@ -332,6 +404,8 @@ describe('ensureRgPath download branch', () => {
     } else {
       process.env['PATH'] = savedPath;
     }
+    Object.defineProperty(process, 'arch', { value: savedArch });
+    Object.defineProperty(process, 'platform', { value: savedPlatform });
     vi.restoreAllMocks();
   });
 
@@ -645,5 +719,248 @@ describe('ensureRgPath Windows download branch', () => {
     await expect(
       ensureRgPath(noRgProbe(), { shareDir: fakeShare, allowCachedFallback: true }),
     ).rejects.toThrow(/HTTP 502 Bad Gateway/);
+  });
+});
+
+function buildUnsignedElf64(payload: Buffer): Buffer {
+  const shstr = Buffer.from('\0.text\0.shstrtab\0', 'utf8');
+  const textOffset = 64;
+  const shstrOffset = textOffset + payload.length;
+  const shoff = shstrOffset + shstr.length;
+  const elf = Buffer.alloc(shoff + 3 * 64);
+  elf.writeUInt32LE(0x464c457f, 0);
+  elf.writeUInt8(2, 4);
+  elf.writeUInt8(1, 5);
+  elf.writeUInt8(1, 6);
+  elf.writeUInt16LE(3, 16);
+  elf.writeUInt16LE(183, 18);
+  elf.writeUInt32LE(1, 20);
+  elf.writeBigUInt64LE(BigInt(shoff), 40);
+  elf.writeUInt16LE(64, 52);
+  elf.writeUInt16LE(64, 58);
+  elf.writeUInt16LE(3, 60);
+  elf.writeUInt16LE(2, 62);
+  payload.copy(elf, textOffset);
+  shstr.copy(elf, shstrOffset);
+  elf.writeUInt32LE(1, shoff + 64);
+  elf.writeUInt32LE(1, shoff + 68);
+  elf.writeBigUInt64LE(BigInt(textOffset), shoff + 88);
+  elf.writeBigUInt64LE(BigInt(payload.length), shoff + 96);
+  elf.writeUInt32LE(7, shoff + 128);
+  elf.writeUInt32LE(3, shoff + 132);
+  elf.writeBigUInt64LE(BigInt(shstrOffset), shoff + 152);
+  elf.writeBigUInt64LE(BigInt(shstr.length), shoff + 160);
+  return elf;
+}
+
+async function buildOhosRgTarGz(dir: string, rgBytes: Buffer): Promise<Buffer> {
+  const actual = await vi.importActual<typeof import('tar')>('tar');
+  mkdirSync(join(dir, 'bin'), { recursive: true });
+  writeFileSync(join(dir, 'bin', 'rg'), rgBytes, { mode: 0o755 });
+  writeFileSync(join(dir, 'hnp.json'), '{"type":"hnp-config","name":"ripgrep","version":"15.1.0"}');
+  const chunks: Buffer[] = [];
+  const stream = actual.create({ gzip: true, cwd: dir, portable: true }, ['bin', 'hnp.json']);
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+describe('ensureRgPath OpenHarmony branch', () => {
+  let fakeShare: string;
+  let savedFetch: typeof globalThis.fetch | undefined;
+  let savedPath: string | undefined;
+  let savedArch: string;
+  let savedPlatform: string;
+
+  beforeEach(() => {
+    fakeShare = join(
+      tmpdir(),
+      `kimi-rg-ohos-${String(Date.now())}-${String(Math.random()).slice(2)}`,
+    );
+    mkdirSync(join(fakeShare, 'bin'), { recursive: true });
+    savedFetch = globalThis.fetch;
+    savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
+    savedArch = process.arch;
+    savedPlatform = process.platform;
+    Object.defineProperty(process, 'arch', { value: 'arm64' });
+    Object.defineProperty(process, 'platform', { value: 'openharmony' });
+  });
+
+  afterEach(() => {
+    rmSync(fakeShare, { recursive: true, force: true });
+    if (savedFetch === undefined) {
+      delete (globalThis as unknown as { fetch?: typeof fetch }).fetch;
+    } else {
+      globalThis.fetch = savedFetch;
+    }
+    if (savedPath === undefined) {
+      delete process.env['PATH'];
+    } else {
+      process.env['PATH'] = savedPath;
+    }
+    Object.defineProperty(process, 'arch', { value: savedArch });
+    Object.defineProperty(process, 'platform', { value: savedPlatform });
+    vi.restoreAllMocks();
+  });
+
+  it('requests the pinned ohos-ripgrep archive over HTTPS and enforces its SHA-256', async () => {
+    const tarBuf = await buildOhosRgTarGz(
+      join(fakeShare, 'fixture'),
+      buildUnsignedElf64(Buffer.from('fixture rg')),
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      body: bodyFromBuffer(tarBuf),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      ensureRgPath(noRgProbe(), { shareDir: fakeShare, allowCachedFallback: true }),
+    ).rejects.toThrow(/checksum mismatch for ripgrep-15\.1\.0-aarch64-unknown-linux-ohos\.tar\.gz/);
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe(
+      'https://raw.atomgit.com/OpenHarmonyPCDeveloper/ohos-ripgrep/blobs/82766f57856322add0eb7bb393b1393ef58190c8/output/ripgrep_15.1.0.tar.gz',
+    );
+    expect(existsSync(join(fakeShare, 'bin', 'rg'))).toBe(false);
+  });
+
+  it('extracts bin/rg from an OpenHarmony tar.gz archive and rejects archives missing it', async () => {
+    const actual = await vi.importActual<typeof import('tar')>('tar');
+    vi.mocked(extractTar).mockImplementation(actual.extract);
+    const payload = Buffer.from('ohos rg payload from archive');
+    const archivePath = join(fakeShare, 'ripgrep_15.1.0.tar.gz');
+    writeFileSync(
+      archivePath,
+      await buildOhosRgTarGz(join(fakeShare, 'fixture'), buildUnsignedElf64(payload)),
+    );
+
+    const extracted = await extractRgFromTarGz(archivePath, join('bin', 'rg'), join(fakeShare, 'out'));
+    const extractedBytes = readFileSync(extracted);
+    expect(extractedBytes.subarray(64, 64 + payload.length)).toEqual(payload);
+
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const fromWinClient = await extractRgFromTarGz(
+      archivePath,
+      join('bin', 'rg'),
+      join(fakeShare, 'out-win-client'),
+    );
+    expect(readFileSync(fromWinClient).subarray(64, 64 + payload.length)).toEqual(payload);
+    Object.defineProperty(process, 'platform', { value: 'openharmony' });
+
+    await expect(
+      extractRgFromTarGz(archivePath, join('missing', 'rg'), join(fakeShare, 'out-missing')),
+    ).rejects.toThrow(/CDN content may have changed/);
+  });
+
+  it('self-signs an unsigned rg dropped into the share bin without network access', async () => {
+    const cached = join(fakeShare, 'bin', 'rg');
+    const payload = Buffer.from('manually dropped unsigned ohos rg');
+    writeFileSync(cached, buildUnsignedElf64(payload));
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const resolution = await ensureRgPath(noRgProbe(), {
+      shareDir: fakeShare,
+      allowCachedFallback: true,
+    });
+
+    expect(resolution).toEqual({ path: cached, source: 'share-bin-cached' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const signed = readFileSync(cached);
+    expect(hasOhosElfCodeSign(signed)).toBe(true);
+    expect(signed.subarray(64, 64 + payload.length)).toEqual(payload);
+    expect(statSync(cached).mode & 0o777).toBe(savedPlatform === 'openharmony' ? 0o770 : 0o755);
+  });
+
+  it('self-signs an unsigned rg found on PATH into the share bin without modifying PATH', async () => {
+    const pathDir = join(fakeShare, 'system-bin');
+    mkdirSync(pathDir, { recursive: true });
+    const systemRg = join(pathDir, 'rg');
+    const unsigned = buildUnsignedElf64(Buffer.from('unsigned rg on PATH'));
+    writeFileSync(systemRg, unsigned, { mode: 0o755 });
+    process.env['PATH'] = pathDir;
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const resolution = await ensureRgPath(noRgProbe(), {
+      shareDir: fakeShare,
+      allowCachedFallback: true,
+    });
+
+    expect(resolution).toEqual({ path: join(fakeShare, 'bin', 'rg'), source: 'share-bin-cached' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readFileSync(systemRg)).toEqual(unsigned);
+    expect(hasOhosElfCodeSign(readFileSync(join(fakeShare, 'bin', 'rg')))).toBe(true);
+    expect(statSync(join(fakeShare, 'bin', 'rg')).mode & 0o777).toBe(
+      savedPlatform === 'openharmony' ? 0o770 : 0o755,
+    );
+  });
+
+  it('leaves an already-signed cached rg byte-identical', async () => {
+    const cached = join(fakeShare, 'bin', 'rg');
+    const alreadySigned = selfSignOhosElf(buildUnsignedElf64(Buffer.from('pre-signed rg')));
+    writeFileSync(cached, alreadySigned);
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const resolution = await ensureRgPath(noRgProbe(), {
+      shareDir: fakeShare,
+      allowCachedFallback: true,
+    });
+
+    expect(resolution).toEqual({ path: cached, source: 'share-bin-cached' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readFileSync(cached)).toEqual(alreadySigned);
+  });
+
+  it('uses the OpenHarmony archive and cache path for a remote OpenHarmony environment', async () => {
+    const environment = new FakeEnvironment(
+      { environmentId: 'remote-ohos', generation: 'g1' },
+      {
+        capabilities: ['fs', 'process'],
+        host: { osKind: 'openharmony', osArch: 'arm64', homeDir: '/home/remote' },
+      },
+    );
+    const writeBytes = vi.fn(async () => {});
+    Object.assign(environment, {
+      fs: {
+        mkdir: vi.fn(async () => {}),
+        writeBytes,
+        rename: vi.fn(async () => {}),
+        remove: vi.fn(async () => {}),
+      },
+      process: {},
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      body: bodyFromBuffer(Buffer.from('tampered remote archive')),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const probe = noRgProbe();
+
+    await expect(
+      ensureRgPath(probe, { environment, allowCachedFallback: true }),
+    ).rejects.toThrow(/checksum mismatch for ripgrep-15\.1\.0-aarch64-unknown-linux-ohos\.tar\.gz/);
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe(
+      'https://raw.atomgit.com/OpenHarmonyPCDeveloper/ohos-ripgrep/blobs/82766f57856322add0eb7bb393b1393ef58190c8/output/ripgrep_15.1.0.tar.gz',
+    );
+    expect(probe.exec).toHaveBeenCalledWith(['/home/remote/.kimi-code/bin/rg', '--version']);
+    expect(writeBytes).not.toHaveBeenCalled();
+
+    const cachedProbe = probeWith((args) => (args[0] === 'rg' ? -1 : 0));
+    const cached = await ensureRgPath(cachedProbe, { environment, allowCachedFallback: true });
+    expect(cached).toEqual({
+      path: '/home/remote/.kimi-code/bin/rg',
+      source: 'share-bin-cached',
+    });
   });
 });
