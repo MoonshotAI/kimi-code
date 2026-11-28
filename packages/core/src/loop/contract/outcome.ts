@@ -15,11 +15,71 @@ export const CRASHED: Cause = { by: 'loop', reason: 'crashed' };
 
 export const CLOSED: Cause = { by: 'loop', reason: 'closed' };
 
+export const MAX_STEPS_REASON = 'max_steps';
+
+export interface LoopErrorOptions {
+  readonly name?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+  readonly retryable?: boolean;
+}
+
+export class LoopError extends Error {
+  readonly details?: Readonly<Record<string, unknown>>;
+  readonly retryable?: boolean;
+
+  constructor(
+    readonly code: string,
+    message: string,
+    options: LoopErrorOptions = {},
+  ) {
+    super(message);
+    this.name = options.name ?? 'LoopError';
+    this.details = options.details;
+    this.retryable = options.retryable;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      code: this.code,
+      name: this.name,
+      message: this.message,
+      ...(this.details === undefined ? {} : { details: this.details }),
+      ...(this.retryable === undefined ? {} : { retryable: this.retryable }),
+    };
+  }
+}
+
+export function createMaxStepsExceededError(maxSteps: number): LoopError {
+  return new LoopError(
+    'loop.max_steps_exceeded',
+    `Turn exceeded maxSteps=${maxSteps}. If max_steps_per_turn is too small, raise it in config.toml (loop_control.max_steps_per_turn), or run "/update-config" to update it, then "/reload".`,
+    { details: { maxSteps }, retryable: false },
+  );
+}
+
+export function createProviderFilteredError(): LoopError {
+  return new LoopError('provider.filtered', 'Provider safety policy blocked the response.', {
+    name: 'ProviderFilteredError',
+    details: { finishReason: 'filtered' },
+    retryable: false,
+  });
+}
+
 export type TurnOutcome =
   | { readonly type: 'done'; readonly cause?: Cause }
   | { readonly type: 'failed'; readonly error?: unknown }
   | { readonly type: 'aborted'; readonly reason?: unknown }
   | { readonly type: 'blocked'; readonly at: 'turn.starting' | 'step.starting' | StepEndingPoint; readonly cause: Cause };
+
+export function convergeTurnOutcome(outcome: TurnOutcome, filtered: boolean): TurnOutcome {
+  if (outcome.type === 'aborted' || outcome.type === 'failed') return outcome;
+  if (filtered) return { type: 'failed', error: createProviderFilteredError() };
+  if (outcome.cause?.reason === MAX_STEPS_REASON) {
+    const maxSteps = outcome.cause.details?.['maxSteps'];
+    return { type: 'failed', error: createMaxStepsExceededError(typeof maxSteps === 'number' ? maxSteps : 0) };
+  }
+  return outcome;
+}
 
 export type StepEndingPoint = 'step.stopping' | 'step.continuing';
 

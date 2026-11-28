@@ -6,7 +6,11 @@ import {
   LoopJournal,
   restoreLoopJournal,
 } from '#/agent/loop/journal';
-import { createLoop } from '@moonshot-ai/core/loop/index';
+import {
+  createLoop,
+  createMaxStepsExceededError,
+  createProviderFilteredError,
+} from '@moonshot-ai/core/loop/index';
 import { successfulExecutor } from './core/executor';
 import { usableOutputOf } from '@moonshot-ai/core/llm/policy/settle';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
@@ -523,5 +527,72 @@ describe('loop journal restore', () => {
     journal.settleTools([baselineTools[0]!]);
     expect(records.filter((record) => record.type === 'tools.settled')).toHaveLength(2);
     expect(journal.snapshot().input.profile?.tools).toEqual([baselineTools[0]!]);
+  });
+});
+
+describe('loop journal terminal records', () => {
+  it('keeps filtered step.end finishReason and writes coded turn.ended errors without a dispatcher', () => {
+    const records: WireRecord[] = [];
+    const journal = new LoopJournal(memoryWire(records), 'main');
+    const filteredAssistant = createAssistantMessage([{ type: 'text', text: 'partial' }], [], {
+      source: 'llm',
+      finish: { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+    });
+
+    journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal', message: prompt('p0') });
+    journal.append({ type: 'step.started', turnId: 0, step: 1, stepId: 'step-filtered' });
+    journal.append({ type: 'message.appended', turnId: 0, step: 1, source: 'llm', message: filteredAssistant });
+    journal.append({ type: 'step.ended', turnId: 0, step: 1, outcome: { type: 'done' } });
+    journal.append({
+      type: 'turn.ended',
+      turnId: 0,
+      outcome: { type: 'failed', error: createProviderFilteredError() },
+      stopReason: 'filtered',
+      continuation: 'none',
+    });
+    journal.append({ type: 'turn.started', turnId: 1, trigger: 'normal', message: prompt('p1') });
+    journal.append({
+      type: 'turn.ended',
+      turnId: 1,
+      outcome: { type: 'failed', error: createMaxStepsExceededError(2) },
+      continuation: 'none',
+    });
+    journal.append({ type: 'turn.started', turnId: 2, trigger: 'normal', message: prompt('p2') });
+    journal.append({
+      type: 'turn.ended',
+      turnId: 2,
+      outcome: { type: 'blocked', at: 'turn.starting', cause: { by: 'prompt', reason: 'blocked' } },
+      continuation: 'none',
+    });
+
+    expect(records.filter((record) => record.type === 'context.append_loop_event' && (record['event'] as LoopRecordedEvent).type === 'step.end')).toMatchObject([
+      { event: { type: 'step.end', finishReason: 'filtered', providerFinishReason: 'filtered' } },
+    ]);
+    expect(records.filter((record) => record.type === 'turn.ended')).toMatchObject([
+      {
+        turnId: 0,
+        reason: 'failed',
+        error: {
+          code: 'provider.filtered',
+          name: 'ProviderFilteredError',
+          message: 'Provider safety policy blocked the response.',
+          details: { finishReason: 'filtered' },
+          retryable: false,
+        },
+      },
+      {
+        turnId: 1,
+        reason: 'failed',
+        error: {
+          code: 'loop.max_steps_exceeded',
+          name: 'LoopError',
+          message: 'Turn exceeded maxSteps=2. If max_steps_per_turn is too small, raise it in config.toml (loop_control.max_steps_per_turn), or run "/update-config" to update it, then "/reload".',
+          details: { maxSteps: 2 },
+          retryable: false,
+        },
+      },
+      { turnId: 2, reason: 'blocked' },
+    ]);
+    expect(records.filter((record) => record.type === 'turn.ended')[2]?.['error']).toBeUndefined();
   });
 });

@@ -5,11 +5,12 @@ import { createUserMessage, type ToolCall } from '@moonshot-ai/core/llm/message'
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { LlmOutcome, LlmRunEvent } from '@moonshot-ai/core/llm/response';
 import { contentsOf } from '@moonshot-ai/core/llm/requester';
-import type { Loop } from '@moonshot-ai/core/loop/index';
+import type { Loop, LoopEmitted } from '@moonshot-ai/core/loop/index';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';
 import type { LlmRecovery, LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
-import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
+import { call, finishWith, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -973,6 +974,12 @@ describe('Agent loop', () => {
   });
 
   it('fails the turn after a filtered step completes', async () => {
+    const coreEnds: LoopEmitted[] = [];
+    const subscription = ctx.get(IEventBus).subscribe(CoreLoopEvent, (envelope) => {
+      if (envelope.event.type === 'step.ended' || envelope.event.type === 'turn.ended') {
+        coreEnds.push(envelope.event);
+      }
+    });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'blocked' }],
       finishReason: 'filtered',
@@ -1019,7 +1026,7 @@ describe('Agent loop', () => {
       [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 8, "time": "<time>" }
       [emit] core.loop.event             { "time": "<time>", "agentId": "main", "event": { "type": "step.ended", "turnId": 0, "step": 1, "outcome": { "type": "done" }, "timing": {}, "llmTiming": {} } }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "filtered", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "filtered", "rawFinishReason": "content_filter" }, "time": "<time>" }
-      [emit] core.loop.event             { "time": "<time>", "agentId": "main", "event": { "type": "turn.ended", "turnId": 0, "outcome": { "type": "done" }, "continuation": "none", "stopReason": "filtered" } }
+      [emit] core.loop.event             { "time": "<time>", "agentId": "main", "event": { "type": "turn.ended", "turnId": 0, "outcome": { "type": "failed", "error": { "details": { "finishReason": "filtered" }, "retryable": false, "code": "provider.filtered", "name": "ProviderFilteredError" } }, "continuation": "none", "stopReason": "filtered" } }
       [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ], "continuation": "none", "time": "<time>" }
       [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "interruptReason": "filtered", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ], "continuation": "none" }
     `);
@@ -1031,6 +1038,68 @@ describe('Agent loop', () => {
     expect(stepCompleted?.args).toMatchObject({
       finishReason: 'filtered',
     });
+    subscription.dispose();
+    expect(coreEnds).toMatchObject([
+      { type: 'step.ended', outcome: { type: 'done' } },
+      {
+        type: 'turn.ended',
+        outcome: {
+          type: 'failed',
+          error: {
+            code: 'provider.filtered',
+            name: 'ProviderFilteredError',
+            message: 'Provider safety policy blocked the response.',
+            details: { finishReason: 'filtered' },
+            retryable: false,
+          },
+        },
+        stopReason: 'filtered',
+      },
+    ]);
+  });
+
+  testWithProvider('keeps afterStep stopTurn ahead of a provider filtered finish', async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const agentLoop = agent.get(IAgentLoopService);
+    const hook = agentLoop.hooks.onDidFinishStep.register('stop-filtered', async (hookCtx, next) => {
+      hookCtx.stopTurn = true;
+      hookCtx.stopReason = 'guard_stop';
+      await next();
+    });
+    model.script(finishWith('filtered', say('partial')));
+    try {
+      const { turn } = submitTurn(agentLoop, 'Hello');
+      await expect(turn.result).resolves.toEqual({
+        type: 'completed',
+        steps: 1,
+        truncated: false,
+        stopReason: 'guard_stop',
+      });
+      await agent.expectResumeMatches();
+    } finally {
+      hook.dispose();
+    }
+  });
+
+  testWithProvider('keeps afterStep hook failures ahead of a provider filtered finish', async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const agentLoop = agent.get(IAgentLoopService);
+    const hookError = new Error('afterStep exploded');
+    const hook = agentLoop.hooks.onDidFinishStep.register('fail-filtered', async () => {
+      throw hookError;
+    });
+    model.script(finishWith('filtered', say('partial')));
+    try {
+      const { turn } = submitTurn(agentLoop, 'Hello');
+      await expect(turn.result).resolves.toEqual({
+        type: 'failed',
+        steps: 1,
+        error: hookError,
+      });
+      await agent.expectResumeMatches();
+    } finally {
+      hook.dispose();
+    }
   });
 
   it('marks a completed turn as truncated when the provider stops at max tokens', async () => {
