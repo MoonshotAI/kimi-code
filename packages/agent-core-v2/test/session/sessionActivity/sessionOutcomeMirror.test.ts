@@ -1,3 +1,4 @@
+import { CLOSED, STEERED, type LoopEmitted, type TurnOutcome } from '@moonshot-ai/core/loop/index';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -11,11 +12,12 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter, Event } from '#/_base/event';
+import { abortError, userCancellationReason } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded, turnKey, type TurnModelState } from '#/agent/loop/turnOps';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
+import { turnKey, type TurnModelState } from '#/agent/loop/turnOps';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -182,30 +184,71 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     host.dispose();
   });
 
-  const started = (turnId = 1) =>
-    lifecycle.bus.publish(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
-  const ended = (reason: TurnEnded['reason'], interruptReason?: TurnEnded['interruptReason'], turnId = 1) =>
-    lifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId, reason, interruptReason }));
+  const emit = (event: LoopEmitted, target = lifecycle) =>
+    target.bus.publish(new CoreLoopEvent({ agentId: 'main', event }));
+  const started = (turnId = 1, target = lifecycle) =>
+    emit({ type: 'step.started', turnId, step: 1, stepId: `step-${turnId}-1` }, target);
+  const ended = (outcome: TurnOutcome, turnId = 1, target = lifecycle) =>
+    emit({ type: 'turn.ended', turnId, outcome }, target);
 
   it('persists completed/failed/user-cancelled, never programmatic aborts', async () => {
     lifecycle.addMain();
     await tick();
-    ended('completed');
-    ended('failed');
-    ended('blocked');
-    ended('cancelled', 'user_cancelled');
-    ended('cancelled', 'aborted');
-    expect(writes).toEqual(['completed', 'failed', 'cancelled']);
+    started(1);
+    ended({ type: 'done' }, 1);
+    started(2);
+    ended({ type: 'failed', error: new Error('boom') }, 2);
+    started(3);
+    ended({ type: 'blocked', at: 'step.starting', cause: { by: 'step', reason: 'blocked' } }, 3);
+    started(4);
+    ended({ type: 'aborted', reason: userCancellationReason() }, 4);
+    started(5);
+    ended({ type: 'aborted', reason: abortError('parent aborted') }, 5);
+    started(6);
+    ended({ type: 'aborted', reason: CLOSED }, 6);
+    started(7);
+    ended({ type: 'aborted' }, 7);
+    expect(writes).toEqual([
+      'completed',
+      undefined,
+      'failed',
+      undefined,
+      'failed',
+      undefined,
+      'cancelled',
+      undefined,
+    ]);
+  });
+
+  it('persists steered and promptOnly turns as completed', async () => {
+    lifecycle.addMain();
+    await tick();
+    started(1);
+    ended({ type: 'done', cause: STEERED }, 1);
+    emit({ type: 'turn.started', turnId: 2, trigger: 'notify', promptOnly: true });
+    ended({ type: 'done', cause: { by: 'loop', reason: 'prompt_only' } }, 2);
+    expect(writes).toEqual(['completed', undefined, 'completed']);
+  });
+
+  it('ignores gate-blocked pseudo-turns without clearing the stored outcome', async () => {
+    lifecycle.addMain();
+    await tick();
+    started(1);
+    ended({ type: 'done' }, 1);
+    emit({ type: 'turn.started', turnId: 2, trigger: 'normal' });
+    ended({ type: 'blocked', at: 'turn.starting', cause: { by: 'prompt', reason: 'blocked' } }, 2);
+    expect(writes).toEqual(['completed']);
   });
 
   it('clears the stored outcome when a new turn starts', async () => {
     lifecycle.addMain();
     await tick();
-    ended('failed');
+    started(1);
+    ended({ type: 'failed', error: new Error('boom') }, 1);
     expect(writes).toEqual(['failed']);
-    started();
+    started(2);
     expect(writes).toEqual(['failed', undefined]);
-    started();
+    started(2);
     expect(writes).toEqual(['failed', undefined]);
   });
 
@@ -213,16 +256,19 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     lifecycle.addMain();
     await tick();
     failNextWrite = true;
-    ended('failed');
+    started(1);
+    ended({ type: 'failed', error: new Error('boom') }, 1);
     await tick();
-    ended('failed');
+    started(2);
+    ended({ type: 'failed', error: new Error('boom') }, 2);
     expect(writes).toEqual(['failed']);
   });
 
   it('dedupes against the durable value adopted at startup', async () => {
     lifecycle.addMain();
     await tick();
-    ended('failed');
+    started(1);
+    ended({ type: 'failed', error: new Error('boom') }, 1);
     expect(writes).toEqual(['failed']);
     const second = host.child(LifecycleScope.Session, 'session-b', [
       stubPair(ISessionMetadata, {
@@ -234,19 +280,21 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     ]);
     const secondLifecycle = second.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
     second.accessor.get(ISessionOutcomeMirror);
+    secondLifecycle.lastEnded = { turnId: 1, reason: 'failed' };
     secondLifecycle.addMain();
     await tick();
-    secondLifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'failed' }));
+    for (const hook of secondLifecycle.restoreHooks) await hook(undefined, async () => {});
     expect(writes).toEqual(['failed']);
-    secondLifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'completed' }));
-    expect(writes).toEqual(['failed', 'completed']);
+    started(2, secondLifecycle);
+    ended({ type: 'done' }, 2, secondLifecycle);
+    expect(writes).toEqual(['failed', undefined, 'completed']);
   });
 
   it('a live turn ending writes with the recency bump, never the backfill channel', async () => {
     lifecycle.addMain();
     await tick();
-    started();
-    ended('completed');
+    started(1);
+    ended({ type: 'done' }, 1);
     lifecycle.lastEnded = { turnId: 1, reason: 'completed' };
     lifecycle.removeMain();
     lifecycle.addMain();
@@ -260,7 +308,9 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     lifecycle.addMain();
     await tick();
     expect(writes).toEqual(['failed']);
-    ended('failed');
+    expect(touches).toEqual([false]);
+    emit({ type: 'turn.started', turnId: 4, trigger: 'normal' });
+    ended({ type: 'blocked', at: 'turn.starting', cause: { by: 'prompt', reason: 'blocked' } }, 4);
     expect(writes).toEqual(['failed']);
   });
 
@@ -275,7 +325,8 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   it('does not backfill over a newer persisted outcome', async () => {
     lifecycle.addMain();
     await tick();
-    ended('completed');
+    started(1);
+    ended({ type: 'done' }, 1);
     lifecycle.lastEnded = { turnId: 9, reason: 'failed' };
     lifecycle.removeMain();
     lifecycle.addMain();
@@ -286,7 +337,8 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   it('clears the persisted outcome when an undo rewinds the turn', async () => {
     lifecycle.addMain();
     await tick();
-    ended('cancelled', 'user_cancelled');
+    started(1);
+    ended({ type: 'aborted', reason: userCancellationReason() }, 1);
     expect(writes).toEqual(['cancelled']);
     lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 1 }));
     expect(writes).toEqual(['cancelled', undefined]);
@@ -302,7 +354,8 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   it('keeps the persisted outcome when an undo rewinds only a later turn', async () => {
     lifecycle.addMain();
     await tick();
-    ended('cancelled', 'user_cancelled', 1);
+    started(1);
+    ended({ type: 'aborted', reason: userCancellationReason() }, 1);
     expect(writes).toEqual(['cancelled']);
     lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 2 }));
     expect(writes).toEqual(['cancelled']);
@@ -311,11 +364,13 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   it('tracks the narrated turn across equal outcomes for the undo range check', async () => {
     lifecycle.addMain();
     await tick();
-    ended('completed', undefined, 1);
-    ended('completed', undefined, 2);
-    expect(writes).toEqual(['completed']);
+    started(1);
+    ended({ type: 'done' }, 1);
+    started(2);
+    ended({ type: 'done' }, 2);
+    expect(writes).toEqual(['completed', undefined, 'completed']);
     lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 2 }));
-    expect(writes).toEqual(['completed', undefined]);
+    expect(writes).toEqual(['completed', undefined, 'completed', undefined]);
   });
 
   it('clears a stale persisted outcome when the replayed wire has no ended turn', async () => {
@@ -362,11 +417,13 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   it('reattaches when the main agent is disposed and recreated', async () => {
     lifecycle.addMain();
     await tick();
-    ended('failed');
+    started(1);
+    ended({ type: 'failed', error: new Error('boom') }, 1);
     expect(writes).toEqual(['failed']);
     lifecycle.removeMain();
     lifecycle.addMain();
-    ended('completed');
-    expect(writes).toEqual(['failed', 'completed']);
+    started(2);
+    ended({ type: 'done' }, 2);
+    expect(writes).toEqual(['failed', undefined, 'completed']);
   });
 });

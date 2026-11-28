@@ -1,9 +1,10 @@
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { isUserCancellation } from '#/_base/utils/abort';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventBus } from '#/app/event/eventBus';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
+import { onCoreTurnLifecycle } from '#/agent/loop/coreLoopEvent';
+import { turnKey } from '#/agent/loop/turnOps';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -72,24 +73,25 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
       );
     }
     subscription.add(
-      bus.subscribe(TurnEnded, (event) => {
-        if (event.reason === 'completed') {
-          this.write('completed', { turnId: event.turnId });
-          return;
-        }
-        if (event.reason === 'failed' || event.reason === 'blocked') {
-          this.write('failed', { turnId: event.turnId });
-          return;
-        }
-        if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
-          this.write('cancelled', { turnId: event.turnId });
-        }
-      }),
-    );
-    subscription.add(
-      bus.subscribe(TurnStarted, () => {
-        this.turnStartedHere = true;
-        this.write(undefined);
+      onCoreTurnLifecycle(bus, {
+        onStarted: () => {
+          this.turnStartedHere = true;
+          this.write(undefined);
+        },
+        onEnded: (event) => {
+          const { outcome } = event;
+          if (outcome.type === 'done') {
+            this.write('completed', { turnId: event.turnId });
+            return;
+          }
+          if (outcome.type === 'failed' || outcome.type === 'blocked') {
+            this.write('failed', { turnId: event.turnId });
+            return;
+          }
+          if (outcome.type === 'aborted' && isUserCancellation(outcome.reason)) {
+            this.write('cancelled', { turnId: event.turnId });
+          }
+        },
       }),
     );
     subscription.add(
