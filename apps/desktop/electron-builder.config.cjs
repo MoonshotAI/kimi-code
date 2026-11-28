@@ -75,6 +75,23 @@ function patchCanaryUpdateConfig(context) {
   console.log('[afterPack] canary updaterCacheDirName=kimi-code-canary-updater written into app-update.yml');
 }
 
+async function rewriteMacMainExecutableUuid(context) {
+  if (context.electronPlatformName !== 'darwin') return;
+  const [{ Arch }, { formatUuid, rewriteMachOUuidFile }] = await Promise.all([
+    import('electron-builder'),
+    import('./scripts/macho-uuid.mjs'),
+  ]);
+  const { appInfo } = context.packager;
+  const appDir = path.join(context.appOutDir, `${appInfo.productFilename}.app`);
+  const executablePath = path.join(appDir, 'Contents', 'MacOS', appInfo.productFilename);
+  const { changed, uuids } = await rewriteMachOUuidFile(executablePath, {
+    appId: appInfo.id,
+    arch: Arch[context.arch],
+  });
+  const summary = uuids.map(({ arch, uuid }) => `${arch}=${formatUuid(uuid)}`).join(', ');
+  console.log(`[afterPack] ${changed ? 'rewrote' : 'verified'} main executable LC_UUID for ${appInfo.id}: ${summary}`);
+}
+
 const LINUX_METAINFO_TEMPLATE = 'com.kimi.code.desktop.metainfo.xml';
 const LINUX_METAINFO_NAME = canary ? 'com.kimi.code.desktop.canary.metainfo.xml' : LINUX_METAINFO_TEMPLATE;
 
@@ -105,6 +122,7 @@ module.exports = {
     await embedTahoeIconCatalog(context);
     patchCanaryUpdateConfig(context);
     injectLinuxMetainfo(context);
+    await rewriteMacMainExecutableUuid(context);
   },
 
   protocols: canary || preview ? [] : [{ name: 'Kimi Code', role: 'Viewer', schemes: ['kimi-code'] }],
