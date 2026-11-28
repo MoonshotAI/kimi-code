@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { PNG } from 'pngjs';
 
@@ -124,8 +126,29 @@ describe('Preview distribution', () => {
     vi.stubEnv('KIMI_DESKTOP_PREVIEW', 'true');
     const config = require(configPath);
     const exists = vi.spyOn(fs, 'existsSync').mockReturnValue(false);
-    await config.afterPack({ electronPlatformName: 'darwin' });
-    expect(exists).not.toHaveBeenCalled();
+    const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-afterpack-'));
+    try {
+      const executable = path.join(appOutDir, 'Kimi Code Preview.app', 'Contents', 'MacOS', 'Kimi Code Preview');
+      fs.mkdirSync(path.dirname(executable), { recursive: true });
+      const macho = Buffer.alloc(56);
+      macho.writeUInt32LE(0xfeedfacf, 0);
+      macho.writeUInt32LE(0x0100000c, 4);
+      macho.writeUInt32LE(2, 12);
+      macho.writeUInt32LE(1, 16);
+      macho.writeUInt32LE(24, 20);
+      macho.writeUInt32LE(0x1b, 32);
+      macho.writeUInt32LE(24, 36);
+      fs.writeFileSync(executable, macho);
+      await config.afterPack({
+        electronPlatformName: 'darwin',
+        appOutDir,
+        arch: 3,
+        packager: { appInfo: { id: 'com.kimi.code.desktop.preview', productFilename: 'Kimi Code Preview' } },
+      });
+      expect(exists).not.toHaveBeenCalledWith(expect.stringContaining('AppIcon.icon'));
+    } finally {
+      fs.rmSync(appOutDir, { recursive: true, force: true });
+    }
   });
 
   it.each(['', '-dark'])('ships a green Preview Dock icon with the original geometry for theme "%s"', async (theme) => {
