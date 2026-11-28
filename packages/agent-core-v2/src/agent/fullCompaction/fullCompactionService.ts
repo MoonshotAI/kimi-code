@@ -652,7 +652,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const startedAt = Date.now();
     this.loopService.flushReminders();
     const originalRaw = [...this.loopService.rawHistory()];
-    const originalHistory = originalRaw.map((entry) => contextFromHistoryEntry(entry));
+    const originalHistory = this.loopService.previewRequestContent().messages.map((entry) => contextFromHistoryEntry(entry));
     const tokensBefore = this.historyRequestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.loopService.data().thinkingLevel;

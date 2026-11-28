@@ -4,6 +4,7 @@ export * from './contract/inbox';
 export * from './contract/outcome';
 export * from './contract/profile';
 export { createMaxStepsHook, MAX_STEPS_REASON } from '#/hook/loop/builtin';
+export { pairedRequestMessages } from './request';
 export type {
   FullLoopLlmRequester,
   LoopLlmRunObservation,

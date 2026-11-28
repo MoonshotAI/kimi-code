@@ -21,6 +21,7 @@ export interface LoopState {
   readonly turn?: LoopTurn;
   readonly calls: readonly LoopToolCall[];
   readonly completionPending: boolean;
+  readonly danglingToolCallIds: ReadonlySet<string>;
 }
 
 export function canContinue(messages: readonly Message[]): boolean {

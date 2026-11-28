@@ -1,5 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
-import { call, say } from '@moonshot-ai/testkit/model';
+import { batch, call, say } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/message';
@@ -30,6 +30,7 @@ import {
   configServices,
   createTestAgent,
   InMemoryWireRecordPersistence,
+  permissionModeServices,
   providerHttpError,
   testkitAgentFixtures,
   wireRecordPersistenceServices,
@@ -150,12 +151,32 @@ describe('core LoopService integration', () => {
         role: 'user',
         content: [{ type: 'text', text: 'run it' }],
       });
+      const previewBash = preview.messages[1];
+      expect(previewBash?.role === 'assistant' ? previewBash.toolCalls.map((call) => call.id) : []).toEqual([
+        'call_bash',
+      ]);
+      expect(preview.messages[3]).toMatchObject({
+        role: 'tool',
+        toolCallId: 'call_bash',
+        attributes: { durationMs: 1500, note: 'Output truncated.' },
+      });
+      expect(preview.messages[8]).toBe(loop.rawHistory()[8]);
+      const replacedOpen = loop.history()[8];
+      expect(replacedOpen?.role === 'assistant' ? replacedOpen.toolCalls.map((call: ToolCall) => call.id) : []).toEqual([
+        'call_lost',
+      ]);
 
       ctx.mockNextResponse({ type: 'text', text: 'done' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next' }] });
       await ctx.untilTurnEnd();
 
       const sent = ctx.llmCalls.at(-1)!;
+      const sentOpen = sent.history[8];
+      expect(sentOpen?.role === 'assistant' ? sentOpen.toolCalls : []).toEqual([]);
+      const rawOpen = loop.rawHistory()[8];
+      expect(rawOpen?.role === 'assistant' ? rawOpen.toolCalls.map((call) => call.id) : []).toEqual([
+        'call_lost',
+      ]);
       const sentToolNames = sent.tools.map((tool) => tool.name);
       expect(sentToolNames).not.toContain('DeferredPreview');
       expect(sentToolNames).not.toContain('ReadMediaFile');
@@ -1246,5 +1267,93 @@ testkitTest(
     } finally {
       await resumed.dispose();
     }
+  },
+);
+
+const pairedTestkitTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures(permissionModeServices('yolo')));
+
+pairedTestkitTest(
+  'aligns history, request preview, and the next turn request after a partially answered tool batch fails',
+  async ({ agent, model }) => {
+    const loop = agent.get(IAgentLoopService);
+    const makeTool = (name: string): ExecutableTool<{ value: string }> => ({
+      name,
+      description: `${name} test tool`,
+      parameters: {
+        type: 'object',
+        properties: { value: { type: 'string' } },
+        required: ['value'],
+        additionalProperties: false,
+      },
+      resolveExecution: ({ value }) => ({
+        approvalRule: name,
+        execute: async () => ({ output: `${name}:${value}`, note: `${name} note` }),
+      }),
+    });
+    agent.get(IAgentToolRegistryService).register(makeTool('PairOk'));
+    agent.get(IAgentToolRegistryService).register(makeTool('PairFail'));
+    loop.addActiveTool('PairOk');
+    loop.addActiveTool('PairFail');
+    const hook = agent.get(IAgentToolExecutorService).registerHook({
+      beforeExecute: (hookCtx) => {
+        if (hookCtx.call.name === 'PairFail') throw new Error('PairFail rejected before execute');
+      },
+    });
+    try {
+      model.script(
+        batch(
+          call('PairOk', { value: 'kept' }, { id: 'call_pair_ok', text: 'Running both.' }),
+          call('PairFail', { value: 'dangling' }, { id: 'call_pair_dangling' }),
+        ),
+      );
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'run pair' }] });
+      expect(await agent.untilTurnEnd()).toContainEqual(
+        expect.objectContaining({ event: 'turn.ended', args: expect.objectContaining({ reason: 'failed' }) }),
+      );
+    } finally {
+      hook.dispose();
+    }
+
+    const raw = loop.rawHistory();
+    expect(raw.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(raw[1]?.role === 'assistant' ? raw[1].toolCalls.map((entry) => entry.id) : []).toEqual([
+      'call_pair_ok',
+      'call_pair_dangling',
+    ]);
+
+    const history = loop.history();
+    expect(loop.history()).toBe(history);
+    expect(history[1]?.role === 'assistant' ? history[1].toolCalls.map((entry) => entry.id) : []).toEqual([
+      'call_pair_ok',
+    ]);
+    expect(history[2]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_pair_ok',
+      note: 'PairOk note',
+      durationMs: expect.any(Number),
+    });
+
+    const preview = loop.previewRequestContent().messages;
+    expect(preview).toHaveLength(raw.length);
+    expect(preview[1]).not.toBe(raw[1]);
+    expect(preview[1]?.role === 'assistant' ? preview[1].toolCalls.map((entry) => entry.id) : []).toEqual([
+      'call_pair_ok',
+    ]);
+    expect(preview[2]).toBe(raw[2]);
+
+    model.script(say('continued after failed batch'));
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await agent.untilTurnEnd();
+
+    const nextMessages = model.requests('main')[1]!.view.messages;
+    expect(nextMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(nextMessages[1]?.calls.map((entry) => entry.id)).toEqual(['call_pair_ok']);
+    expect(nextMessages[2]).toMatchObject({ role: 'tool', callId: 'call_pair_ok' });
+    expect(nextMessages.some((message) => message.callId === 'call_pair_dangling')).toBe(false);
+    expect(loop.rawHistory()[1]).toBe(raw[1]);
+    const historyAfter = loop.history()[1];
+    expect(historyAfter?.role === 'assistant' ? historyAfter.toolCalls.map((entry) => entry.id) : []).toEqual([
+      'call_pair_ok',
+    ]);
   },
 );

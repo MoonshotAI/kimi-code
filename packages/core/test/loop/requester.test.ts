@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { createLoop, type LoopEmitted } from '#/loop/index';
+import { createLoop, pairedRequestMessages, type LoopEmitted } from '#/loop/index';
 import type { LoopToolContext, LoopToolExecutor } from '#/loop/create-loop';
 import { createMediaDegradeRecovery } from '#/llm/builtin/policy/media-degrade';
-import { createAssistantMessage, createUserMessage, extractText, type Message } from '#/llm/message';
+import {
+  createAssistantMessage,
+  createToolMessage,
+  createUserMessage,
+  extractText,
+  type Message,
+  type ToolCall,
+} from '#/llm/message';
 import { createLlmRequesterExecution, type LlmRunControl } from '#/llm/policy/policy';
 import type { LlmRecoveryRecord } from '#/llm/policy/recovery';
 import type { Protocol } from '#/llm/protocol/protocol';
+import { verifyToolExchanges } from '#/llm/protocol/rules/structure';
 import type { LlmRequest } from '#/llm/request';
 import {
   contentsOf,
@@ -495,6 +503,268 @@ describe('loop event envelope', () => {
       [0, 1, 'call-work', 'succeeded'],
       [1, 1, 'call-work-2', 'succeeded'],
     ]);
+    await loop.close();
+  });
+});
+
+describe('loop request history pairing', () => {
+  const workCall = (id: string, name = 'work'): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
+
+  it('returns the original array reference when every tool call is answered', () => {
+    const messages: Message[] = [
+      createUserMessage('first'),
+      createAssistantMessage([{ type: 'text', text: 'working' }], [workCall('call_pair_a'), workCall('call_pair_b')]),
+      createToolMessage('call_pair_a', 'a ok'),
+      { role: 'system', content: [{ type: 'text', text: 'reminder between calls and results' }] },
+      createToolMessage('call_pair_b', 'b ok'),
+      createAssistantMessage([{ type: 'text', text: 'done' }]),
+      createUserMessage('second'),
+    ];
+    expect(pairedRequestMessages(messages)).toBe(messages);
+    expect(verifyToolExchanges(pairedRequestMessages(messages))).toBe(messages);
+    expect(pairedRequestMessages([])).toEqual([]);
+  });
+
+  it('prunes only unanswered tool calls without mutating inputs or dropping orphan results', () => {
+    const orphan = createToolMessage('call_orphan_result', 'orphan');
+    const partial = createAssistantMessage(
+      [{ type: 'text', text: 'partial output' }],
+      [workCall('call_kept'), workCall('call_dangling')],
+      { partial: true },
+    );
+    const trailing = createAssistantMessage([{ type: 'text', text: 'trailing' }], [workCall('call_trailing_open')]);
+    const messages: Message[] = [
+      createUserMessage('start'),
+      orphan,
+      partial,
+      createToolMessage('call_kept', 'kept result'),
+      createUserMessage('continue'),
+      trailing,
+    ];
+    const snapshot = structuredClone(messages);
+    const paired = pairedRequestMessages(messages);
+
+    expect(paired).not.toBe(messages);
+    expect(paired).toHaveLength(messages.length);
+    expect(paired[0]).toBe(messages[0]);
+    expect(paired[1]).toBe(orphan);
+    expect(paired[2]).not.toBe(partial);
+    expect(paired[2]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial output' }],
+      toolCalls: [workCall('call_kept')],
+    });
+    expect(paired[2]?.role === 'assistant' ? paired[2].attributes : undefined).toBe(partial.attributes);
+    expect(paired[2]?.role === 'assistant' ? paired[2].content : undefined).toBe(partial.content);
+    expect(paired[3]).toBe(messages[3]);
+    expect(paired[4]).toBe(messages[4]);
+    expect(paired[5]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'trailing' }],
+      toolCalls: [],
+    });
+    expect(messages).toEqual(snapshot);
+  });
+
+  it('does not pair tool calls across a subsequent assistant boundary', () => {
+    const messages: Message[] = [
+      createUserMessage('start'),
+      createAssistantMessage([], [workCall('call_unanswered_before_boundary')]),
+      createAssistantMessage([], [workCall('call_answered_after_boundary')]),
+      createToolMessage('call_answered_after_boundary', 'ok'),
+    ];
+    const paired = pairedRequestMessages(messages);
+    expect(paired[1]).toMatchObject({ role: 'assistant', toolCalls: [] });
+    expect(paired[2]).toBe(messages[2]);
+    expect(verifyToolExchanges(paired)).toBe(paired);
+  });
+
+  it('prunes partial tool calls left by a failed llm outcome on the next turn while keeping durable history intact', async () => {
+    const seen: LlmRequest[] = [];
+    let calls = 0;
+    const base = fullRequester((request) => {
+      seen.push(request);
+      calls += 1;
+      if (calls === 1) {
+        return {
+          type: 'failed',
+          error: { kind: 'provider', message: 'stream broke', retryable: false },
+          message: createAssistantMessage(
+            [{ type: 'text', text: 'partial stream' }],
+            [workCall('call_failed_stream_dangling')],
+            { source: 'salvaged', partial: true },
+          ),
+        };
+      }
+      return done('recovered');
+    });
+    const loop = createLoop({ requester: base, executor });
+    const emitted: LoopEmitted[] = [];
+    loop.subscribe((event) => emitted.push(event));
+
+    expect((await loop.runTurn(createUserMessage('first'))).type).toBe('failed');
+    const durablePartial = loop.state.messages[1]!;
+    expect(durablePartial).toMatchObject({
+      role: 'assistant',
+      toolCalls: [workCall('call_failed_stream_dangling')],
+    });
+    expect(loop.state.messages).toHaveLength(2);
+
+    expect((await loop.runTurn(createUserMessage('second'))).type).toBe('done');
+    const nextMessages = seen[1]!.content.messages;
+    expect(verifyToolExchanges(nextMessages)).toBe(nextMessages);
+    expect(nextMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(nextMessages[1]).not.toBe(durablePartial);
+    expect(nextMessages[1]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial stream' }],
+      attributes: { source: 'salvaged', partial: true },
+      toolCalls: [],
+    });
+    expect(loop.state.messages[1]).toBe(durablePartial);
+    expect(loop.state.messages[1]).toMatchObject({
+      role: 'assistant',
+      toolCalls: [workCall('call_failed_stream_dangling')],
+    });
+    const appended = emitted.filter((event) => event.type === 'message.appended');
+    expect(appended[1]).toMatchObject({
+      source: 'partial',
+      message: { toolCalls: [workCall('call_failed_stream_dangling')] },
+    });
+    await loop.close();
+  });
+
+  it('prunes unanswered calls from a failed parallel tool batch while keeping answered calls and durable records', async () => {
+    const seen: LlmRequest[] = [];
+    let calls = 0;
+    const base = fullRequester((request) => {
+      seen.push(request);
+      calls += 1;
+      if (calls === 1) {
+        return {
+          type: 'done',
+          message: createAssistantMessage([{ type: 'text', text: 'running batch' }], [
+            workCall('call_batch_ok', 'okTool'),
+            workCall('call_batch_hook_failed', 'failTool'),
+          ]),
+        };
+      }
+      return done('after failed batch');
+    });
+    const tools = new ToolExecutor<LoopToolContext>([
+      {
+        name: 'okTool',
+        description: 'succeeds',
+        parameters: { type: 'object' },
+        execute: async () => ({ content: [{ type: 'text', text: 'ok result' }] }),
+      },
+      {
+        name: 'failTool',
+        description: 'fails in beforeExecute',
+        parameters: { type: 'object' },
+        execute: async () => ({ content: [{ type: 'text', text: 'unreachable' }] }),
+      },
+    ], {
+      hook: {
+        beforeExecute: ({ call }) => {
+          if (call.name === 'failTool') throw new Error('beforeExecute rejected');
+        },
+      },
+    });
+    const loop = createLoop({ requester: base, executor: tools });
+    const emitted: LoopEmitted[] = [];
+    loop.subscribe((event) => emitted.push(event));
+
+    expect((await loop.runTurn(createUserMessage('run batch'))).type).toBe('failed');
+    expect(loop.state.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    const durableAssistant = loop.state.messages[1]!;
+    expect(durableAssistant.role === 'assistant' ? durableAssistant.toolCalls.map((call) => call.id) : []).toEqual([
+      'call_batch_ok',
+      'call_batch_hook_failed',
+    ]);
+
+    expect((await loop.runTurn(createUserMessage('next'))).type).toBe('done');
+    const nextMessages = seen[1]!.content.messages;
+    expect(verifyToolExchanges(nextMessages)).toBe(nextMessages);
+    expect(nextMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(nextMessages[1]).not.toBe(durableAssistant);
+    expect(nextMessages[1]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'running batch' }],
+      toolCalls: [workCall('call_batch_ok', 'okTool')],
+    });
+    expect(nextMessages[2]).toBe(loop.state.messages[2]);
+    expect(nextMessages[2]).toMatchObject({ role: 'tool', toolCallId: 'call_batch_ok' });
+
+    expect(loop.state.messages[1]).toBe(durableAssistant);
+    expect(durableAssistant.role === 'assistant' ? durableAssistant.toolCalls.map((call) => call.id) : []).toEqual([
+      'call_batch_ok',
+      'call_batch_hook_failed',
+    ]);
+    expect([...loop.state.danglingToolCallIds]).toEqual(['call_batch_hook_failed']);
+    const durableNow = loop.state.messages;
+    expect(pairedRequestMessages(durableNow.slice(0, 4), loop.state.danglingToolCallIds)).toEqual(nextMessages);
+    const appended = emitted
+      .filter((event) => event.type === 'message.appended')
+      .map((event) => `${event.source}:${event.message.role}`);
+    expect(appended).toEqual(['normal:user', 'llm:assistant', 'tool:tool', 'normal:user', 'llm:assistant']);
+    await loop.close();
+  });
+
+  it('prunes open exchanges installed via setContext and preserves references for paired exchanges', async () => {
+    const seen: LlmRequest[] = [];
+    let calls = 0;
+    const base = fullRequester((request) => {
+      seen.push(request);
+      calls += 1;
+      if (calls === 1) {
+        return {
+          type: 'done',
+          message: createAssistantMessage([], [workCall('call_live_answered')]),
+        };
+      }
+      return done('done');
+    });
+    const tools = new ToolExecutor<LoopToolContext>([{
+      name: 'work',
+      description: 'work',
+      parameters: { type: 'object' },
+      execute: async () => ({ content: [{ type: 'text', text: 'live ok' }] }),
+    }]);
+    const seededOpen = createAssistantMessage([{ type: 'text', text: 'seeded open' }], [workCall('call_seed_open')]);
+    const loop = createLoop({
+      requester: base,
+      executor: tools,
+      input: { messages: [createUserMessage('seed'), seededOpen, createUserMessage('after seed')] },
+    });
+    expect(loop.state.danglingToolCallIds.size).toBe(0);
+    expect(pairedRequestMessages(loop.state.messages, loop.state.danglingToolCallIds)).toBe(loop.state.messages);
+    expect(pairedRequestMessages(loop.state.messages)[1]).toMatchObject({ role: 'assistant', toolCalls: [] });
+
+    expect((await loop.runTurn(createUserMessage('live turn'))).type).toBe('done');
+    expect(seen).toHaveLength(2);
+
+    const firstMessages = seen[0]!.content.messages;
+    expect(verifyToolExchanges(firstMessages)).toBe(firstMessages);
+    expect(firstMessages[1]).not.toBe(seededOpen);
+    expect(firstMessages[1]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seeded open' }],
+      toolCalls: [],
+    });
+    expect(firstMessages[0]).toBe(loop.state.messages[0]);
+    expect(firstMessages[2]).toBe(loop.state.messages[2]);
+    expect(firstMessages[3]).toBe(loop.state.messages[3]);
+
+    const secondMessages = seen[1]!.content.messages;
+    expect(verifyToolExchanges(secondMessages)).toBe(secondMessages);
+    const liveAssistantIndex = loop.state.messages.findIndex(
+      (message) => message.role === 'assistant' && message.toolCalls.some((call) => call.id === 'call_live_answered'),
+    );
+    expect(liveAssistantIndex).toBeGreaterThan(0);
+    expect(secondMessages[liveAssistantIndex]).toBe(loop.state.messages[liveAssistantIndex]);
+    expect(secondMessages[liveAssistantIndex + 1]).toBe(loop.state.messages[liveAssistantIndex + 1]);
+    expect(loop.state.messages[1]).toBe(seededOpen);
     await loop.close();
   });
 });

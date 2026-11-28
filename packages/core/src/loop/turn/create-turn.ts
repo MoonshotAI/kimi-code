@@ -552,7 +552,7 @@ class ActorTurn implements Turn {
         {
           turnId: step.batch.turnId,
           step: step.batch.step,
-          messages: [...this.runtime.read().messages],
+          messages: this.runtime.read().messages,
           profile,
           policy: this.runtime.policy.asPolicy(),
           signal: step.scope.signal,
