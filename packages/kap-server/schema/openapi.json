@@ -4973,6 +4973,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "display_name": {
+            "minLength": 1,
+            "type": "string"
+          },
           "has_api_key": {
             "type": "boolean"
           },
@@ -11925,7 +11929,7 @@
         ]
       },
       "post": {
-        "description": "Create a provider manually (type + credentials + model list). Credentials are either `api_key` (stored inline) or `api_key_env` (name of an environment variable to read the key from); they are mutually exclusive — submitting both fails validation. When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.",
+        "description": "Create a provider manually (type + credentials + model list). `id` is the provider key in config.toml and never changes afterwards; `display_name` is an optional name shown in clients instead of the key. Credentials are either `api_key` (stored inline) or `api_key_env` (name of an environment variable to read the key from); they are mutually exclusive — submitting both fails validation. When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.",
         "operationId": "createProvider",
         "requestBody": {
           "content": {
@@ -11943,6 +11947,9 @@
                   },
                   "default_model": {
                     "minLength": 1,
+                    "type": "string"
+                  },
+                  "display_name": {
                     "type": "string"
                   },
                   "id": {
@@ -12118,6 +12125,10 @@
                               "minLength": 1,
                               "type": "string"
                             },
+                            "display_name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
                             "has_api_key": {
                               "type": "boolean"
                             },
@@ -12187,7 +12198,7 @@
         ]
       },
       "put": {
-        "description": "Replace a provider in one save (type + base_url + model list), optionally renaming it via `new_id` (the providers key, model aliases, default_provider and a default_model pointing at an old alias all migrate). `api_key` is tri-state: omitted keeps the stored key, \"\" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider's model aliases are rebuilt from `models` — aliases no longer listed disappear from config.toml, other providers' aliases are untouched. Beyond the rename migration, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.",
+        "description": "Replace a provider in one save (type + base_url + model list). `display_name` is tri-state: omitted keeps the stored name, \"\" clears it so clients show the key, any other value replaces it; clients rename a provider by changing this name. `new_id` is deprecated: it renames the provider key itself, and the providers key, its model aliases, default_provider and a default_model pointing at an old alias all migrate; sessions and other references to the old aliases are not migrated. `api_key` is tri-state: omitted keeps the stored key, \"\" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider's models are rebuilt from `models`: without `new_id`, a model already configured keeps its alias key and a new one gets `<provider>/<model>`; with `new_id`, every alias becomes `<new_id>/<model>`. Aliases no longer listed disappear from config.toml, other providers' aliases are untouched, and a rebuild that would reuse another provider's alias key or give two models the same key fails validation. Beyond the `new_id` migration, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.",
         "operationId": "replaceProvider",
         "parameters": [
           {
@@ -12218,10 +12229,14 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "display_name": {
+                    "type": "string"
+                  },
                   "models": {
                     "$ref": "#/components/schemas/PostProvidersRequestModels"
                   },
                   "new_id": {
+                    "deprecated": true,
                     "pattern": "^[\\p{L}\\p{N}][\\p{L}\\p{N}\\-_ ]*$",
                     "type": "string"
                   },

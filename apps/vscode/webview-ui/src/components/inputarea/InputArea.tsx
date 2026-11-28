@@ -95,7 +95,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const currentModelLabel = currentModelConfig === undefined
     ? "No models available"
     : showProviderGroups
-      ? `${currentModelConfig.name} · ${providerDisplayName(currentModelConfig.provider)}`
+      ? `${currentModelConfig.name} · ${providerDisplayName(currentModelConfig.provider, currentModelConfig.provider_name)}`
       : currentModelConfig.name;
 
   useEffect(() => {
@@ -390,7 +390,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
                           <span className="truncate">{currentModelConfig?.name ?? "No models available"}</span>
                           {currentModelConfig !== undefined && showProviderGroups && (
                             <span className="shrink-[3] truncate text-muted-foreground max-[520px]:hidden">
-                              {" · "}{providerDisplayName(currentModelConfig.provider)}
+                              {" · "}{providerDisplayName(currentModelConfig.provider, currentModelConfig.provider_name)}
                             </span>
                           )}
                         </span>

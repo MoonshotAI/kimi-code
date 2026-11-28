@@ -653,6 +653,7 @@ export class ProviderCatalogService extends Disposable implements IProviderCatal
         throw new Error2(
           CONFIG_INVALID_ERROR_CODE,
           `Provider "${providerId}" referenced by model "${id}" is not configured.`,
+          { details: { model: id, provider: providerId } },
         );
       }
       return {

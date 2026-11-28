@@ -473,6 +473,7 @@ describe('remote chat isolation', () => {
     clientApiMock.deviceApi = vi.fn(() => ({
       listModels: vi.fn(async () => [MANAGED_MODEL]),
       getConfig: vi.fn(async () => ({ defaultModel: 'managed:kimi-code/kimi-k2' })),
+      listProviders: vi.fn(async () => []),
     }));
     await facade.models.loadHostCatalog('devbox');
     clientApiMock.getAuth = vi.fn();

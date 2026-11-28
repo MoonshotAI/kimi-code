@@ -134,7 +134,12 @@ export const configHandlers = {
 export function toWebviewConfig(config: SdkKimiConfig): WebviewKimiConfig {
   const models: ModelConfig[] = Object.entries(config.models ?? {})
     .map(([id, model]) =>
-      toWebviewModel(id, model, config.providers?.[model.provider]?.type ?? model.protocol),
+      toWebviewModel(
+        id,
+        model,
+        config.providers?.[model.provider]?.type ?? model.protocol,
+        config.providers?.[model.provider]?.displayName,
+      ),
     )
     .toSorted((left, right) => left.name.localeCompare(right.name));
   return {
@@ -145,12 +150,18 @@ export function toWebviewConfig(config: SdkKimiConfig): WebviewKimiConfig {
   };
 }
 
-function toWebviewModel(id: string, model: ModelAlias, providerType?: ProviderType): ModelConfig {
+function toWebviewModel(
+  id: string,
+  model: ModelAlias,
+  providerType?: ProviderType,
+  providerName?: string,
+): ModelConfig {
   const effective = effectiveModelAlias(model, providerType);
   return {
     id,
     name: effective.displayName ?? effective.model ?? id,
     provider: effective.provider,
+    provider_name: providerName === "" ? undefined : providerName,
     capabilities: [...(effective.capabilities ?? [])],
     adaptive_thinking: effective.adaptiveThinking,
     support_efforts:

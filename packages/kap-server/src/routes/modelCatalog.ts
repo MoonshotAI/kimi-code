@@ -226,7 +226,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
       description:
-        'Create a provider manually (type + credentials + model list). Credentials are either `api_key` (stored inline) or `api_key_env` (name of an environment variable to read the key from); they are mutually exclusive — submitting both fails validation. When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.',
+        'Create a provider manually (type + credentials + model list). `id` is the provider key in config.toml and never changes afterwards; `display_name` is an optional name shown in clients instead of the key. Credentials are either `api_key` (stored inline) or `api_key_env` (name of an environment variable to read the key from); they are mutually exclusive — submitting both fails validation. When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.',
       tags: ['providers'],
       operationId: 'createProvider',
     },
@@ -246,7 +246,25 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           return;
         }
 
+        const existingModels = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
+        const occupied = req.body.models
+          .map((entry) => `${id}/${entry.model}`)
+          .filter((aliasId) => existingModels[aliasId] !== undefined && existingModels[aliasId].provider !== id);
+        if (occupied.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.VALIDATION_FAILED,
+              `model alias key already owned by another provider: ${occupied.join(', ')}`,
+              req.id,
+            ),
+          );
+          return;
+        }
+
         const provider: ProviderConfig = { type: req.body.type };
+        if (req.body.display_name !== undefined && req.body.display_name !== '') {
+          provider.displayName = req.body.display_name;
+        }
         const credential = reconcileProviderCredentialUpdate(
           {},
           { apiKey: req.body.api_key, apiKeyEnv: req.body.api_key_env },
@@ -316,7 +334,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
       description:
-        'Replace a provider in one save (type + base_url + model list), optionally renaming it via `new_id` (the providers key, model aliases, default_provider and a default_model pointing at an old alias all migrate). `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider\'s model aliases are rebuilt from `models` — aliases no longer listed disappear from config.toml, other providers\' aliases are untouched. Beyond the rename migration, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
+        'Replace a provider in one save (type + base_url + model list). `display_name` is tri-state: omitted keeps the stored name, "" clears it so clients show the key, any other value replaces it; clients rename a provider by changing this name. `new_id` is deprecated: it renames the provider key itself, and the providers key, its model aliases, default_provider and a default_model pointing at an old alias all migrate; sessions and other references to the old aliases are not migrated. `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider\'s models are rebuilt from `models`: without `new_id`, a model already configured keeps its alias key and a new one gets `<provider>/<model>`; with `new_id`, every alias becomes `<new_id>/<model>`. Aliases no longer listed disappear from config.toml, other providers\' aliases are untouched, and a rebuild that would reuse another provider\'s alias key or give two models the same key fails validation. Beyond the `new_id` migration, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
       tags: ['providers'],
       operationId: 'replaceProvider',
     },
@@ -372,11 +390,21 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         provider.apiKey = credential.apiKey;
         provider.apiKeyEnv = credential.apiKeyEnv;
         provider.baseUrl = req.body.base_url;
+        if (req.body.display_name !== undefined) {
+          provider.displayName = req.body.display_name === '' ? undefined : req.body.display_name;
+        }
+
+        const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
+        const ownedByModel = new Map(
+          Object.entries(models)
+            .filter(([, record]) => record.provider === provider_id && record.model !== undefined)
+            .map(([aliasId, record]) => [record.model as string, { aliasId, record }] as const),
+        );
+        const renaming = newId !== provider_id;
+        const aliasIdFor = (model: string): string =>
+          renaming ? `${newId}/${model}` : ownedByModel.get(model)?.aliasId ?? `${newId}/${model}`;
         provider.defaultModel =
-          req.body.default_model !== undefined
-            ?
-              `${newId}/${req.body.default_model}`
-            : undefined;
+          req.body.default_model !== undefined ? aliasIdFor(req.body.default_model) : undefined;
         const nextProviders = Object.fromEntries(
           Object.entries(providers).map(([key, value]) => [
             key === provider_id ? newId : key,
@@ -385,8 +413,19 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         );
         nextProviders[newId] = provider;
 
-        const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
-        const newAliasKeys = new Set(req.body.models.map((entry) => `${newId}/${entry.model}`));
+        const newAliasIds = req.body.models.map((entry) => aliasIdFor(entry.model));
+        const newAliasKeys = new Set(newAliasIds);
+        const shared = newAliasIds.filter((aliasId, index) => newAliasIds.indexOf(aliasId) !== index);
+        if (shared.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.VALIDATION_FAILED,
+              `model alias key would be used by more than one model: ${[...new Set(shared)].join(', ')}`,
+              req.id,
+            ),
+          );
+          return;
+        }
         const colliding = Object.entries(models)
           .filter(([, record]) => record.provider !== provider_id)
           .map(([aliasId]) => aliasId)
@@ -402,27 +441,15 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           return;
         }
 
-        await config.replace(PROVIDERS_SECTION, nextProviders);
-
-        const previousAliasIds = new Set(
-          Object.entries(models)
-            .filter(([, record]) => record.provider === provider_id)
-            .map(([aliasId]) => aliasId),
-        );
         const nextModels = Object.fromEntries(
           Object.entries(models).filter(([, record]) => record.provider !== provider_id),
         );
-        const previousByModel = new Map(
-          Object.values(models)
-            .filter((record) => record.provider === provider_id && record.model !== undefined)
-            .map((record) => [record.model as string, record] as const),
-        );
         for (const entry of req.body.models) {
-          const previous = previousByModel.get(entry.model);
+          const previous = ownedByModel.get(entry.model)?.record;
           let upgrade = previous?.upgrade;
           if (upgrade !== undefined) {
             const targetModel = models[upgrade.model]?.model;
-            const target = targetModel === undefined ? undefined : `${newId}/${targetModel}`;
+            const target = targetModel === undefined ? undefined : aliasIdFor(targetModel);
             upgrade =
               target !== undefined && newAliasKeys.has(target)
                 ? { ...upgrade, model: target }
@@ -444,24 +471,27 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
             entry.support_efforts !== undefined ? [...entry.support_efforts] : undefined;
           alias.adaptiveThinking =
             entry.adaptive_thinking !== undefined ? entry.adaptive_thinking : undefined;
-          nextModels[`${newId}/${entry.model}`] = alias;
+          nextModels[aliasIdFor(entry.model)] = alias;
         }
-        await config.replace(MODELS_SECTION, nextModels);
-
-        if (newId !== provider_id) {
-          const defaultProvider = config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
-          if (defaultProvider === provider_id) {
-            await config.replace(DEFAULT_PROVIDER_SECTION, newId);
+        const sections: Record<string, unknown> = {
+          [PROVIDERS_SECTION]: nextProviders,
+          [MODELS_SECTION]: nextModels,
+        };
+        if (renaming) {
+          if (config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue === provider_id) {
+            sections[DEFAULT_PROVIDER_SECTION] = newId;
           }
           const defaultModel = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
-          if (defaultModel !== undefined && previousAliasIds.has(defaultModel)) {
-            const renamedModel = models[defaultModel]?.model;
-            const renamedAlias = renamedModel !== undefined ? `${newId}/${renamedModel}` : undefined;
-            if (renamedAlias !== undefined && nextModels[renamedAlias] !== undefined) {
-              await config.replace(DEFAULT_MODEL_SECTION, renamedAlias);
-            }
+          const defaultRecord = defaultModel === undefined ? undefined : models[defaultModel];
+          const renamedDefault =
+            defaultRecord?.provider === provider_id && defaultRecord.model !== undefined
+              ? `${newId}/${defaultRecord.model}`
+              : undefined;
+          if (renamedDefault !== undefined && nextModels[renamedDefault] !== undefined) {
+            sections[DEFAULT_MODEL_SECTION] = renamedDefault;
           }
         }
+        await config.replaceSections(sections);
 
         const saved = await core.accessor.get(IProviderCatalogService).getProvider(newId);
         reply.send(okEnvelope({ provider: saved }, req.id));

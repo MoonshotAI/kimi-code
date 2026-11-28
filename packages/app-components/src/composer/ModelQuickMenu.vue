@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import { commitLevel, effectiveThinkingLevel, effortLabel, modelThinkingAvailability, providerDisplayName, segmentsFor } from '@moonshot-ai/app-core/lib';
+import { modelsStore } from '@moonshot-ai/app-client/stores';
 import { searchModelsForMenu } from '@moonshot-ai/app-client/lib';
 import { Icon, useImeComposition } from '@moonshot-ai/app-ui';
 import ModelCapabilityInfo from './ModelCapabilityInfo.vue';
@@ -51,6 +52,7 @@ const props = defineProps<{
 const emit = defineEmits<QuickModelMenuEmits>();
 
 const { t } = useI18n();
+const providerCatalog = modelsStore();
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 
 const rootEl = ref<HTMLElement>();
@@ -92,7 +94,7 @@ const effortValueLabel = computed(() => {
 });
 
 const searchResults = computed(() =>
-  searchModelsForMenu(props.models, query.value, (provider) => providerDisplayName(provider, t)).slice(0, SEARCH_MENU_MAX_ITEMS),
+  searchModelsForMenu(props.models, query.value, (provider) => providerDisplayName(provider, t, providerCatalog.activeProviders)).slice(0, SEARCH_MENU_MAX_ITEMS),
 );
 
 const navRows = computed<NavRow[]>(() => {
@@ -554,7 +556,7 @@ defineExpose({
             @click="onRowClick({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
           >
             <span class="mqm-name">{{ model.displayName ?? model.model }}</span>
-            <span class="mqm-provider">{{ providerDisplayName(model.provider, t) }}</span>
+            <span class="mqm-provider">{{ providerDisplayName(model.provider, t, providerCatalog.activeProviders) }}</span>
             <Icon v-if="model.id === props.currentModelId" name="check" size="sm" class="mqm-trailing-icon" />
           </div>
         </div>

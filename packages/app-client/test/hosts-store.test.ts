@@ -25,6 +25,7 @@ const remote = {
   getOAuthRegion: vi.fn(),
   listModels: vi.fn(),
   getConfig: vi.fn(),
+  listProviders: vi.fn(),
 };
 
 function auth(status: string | null, modelsReady = false) {
@@ -43,6 +44,7 @@ beforeEach(() => {
   remote.getAuth.mockResolvedValue(auth(null));
   remote.listModels.mockResolvedValue([]);
   remote.getConfig.mockResolvedValue({});
+  remote.listProviders.mockResolvedValue([]);
   setKimiClientDeps({ api: () => api as never, t: (key) => key });
   setHostsHooks(null);
   const store = hostsStore();
@@ -185,6 +187,36 @@ describe('hosts store', () => {
     expect(hostsStore().displayName('named')).toBe('Build box');
     expect(hostsStore().displayName('devbox')).toBe('devbox');
     expect(hostsStore().displayName('gone')).toBeUndefined();
+  });
+
+  it('names providers from the active host, never borrowing a local name for a remote provider', async () => {
+    const models = modelsStore();
+    models.setProviders([{ id: 'openai', displayName: 'My Gateway', type: 'openai', hasApiKey: true, status: 'connected' }]);
+    remote.listModels.mockResolvedValue([]);
+    remote.getConfig.mockResolvedValue({});
+    remote.listProviders.mockResolvedValue([
+      { id: 'openai', displayName: 'Remote Gateway', type: 'openai', hasApiKey: true, status: 'connected' },
+    ]);
+    expect(models.activeProviders.map((provider) => provider.displayName)).toEqual(['My Gateway']);
+
+    await models.loadHostCatalog('ready');
+    models.setActiveHost('ready');
+    expect(models.activeProviders.map((provider) => provider.displayName)).toEqual(['Remote Gateway']);
+
+    models.setActiveHost(undefined);
+    expect(models.activeProviders.map((provider) => provider.displayName)).toEqual(['My Gateway']);
+  });
+
+  it('still loads a remote host catalog when its provider list cannot be read', async () => {
+    const models = modelsStore();
+    remote.listModels.mockResolvedValue([{ id: 'remote-m', model: 'remote-m', provider: 'openai' }]);
+    remote.getConfig.mockResolvedValue({ defaultModel: 'remote-m' });
+    remote.listProviders.mockRejectedValue(new Error('not supported'));
+
+    await models.loadHostCatalog('ready');
+    models.setActiveHost('ready');
+    expect(models.activeModels.map((model) => model.id)).toEqual(['remote-m']);
+    expect(models.activeProviders).toEqual([]);
   });
 
   it('reports host lifecycle transitions and notifies registered hooks', async () => {

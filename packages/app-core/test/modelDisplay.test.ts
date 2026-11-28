@@ -65,6 +65,13 @@ describe('providerDisplayName', () => {
     expect(providerDisplayName('managed:kimi-code', t)).toBe('t:providers.kimiSubscription');
   });
 
+  it('shows the provider display name when one is set', () => {
+    const providers = [{ id: 'openai', displayName: 'My Gateway' }, { id: 'blank', displayName: '' }];
+    expect(providerDisplayName('openai', t, providers)).toBe('My Gateway');
+    expect(providerDisplayName('blank', t, providers)).toBe('blank');
+    expect(providerDisplayName('other', t, providers)).toBe('other');
+  });
+
   it('keeps other provider ids unchanged', () => {
     expect(providerDisplayName('openai', t)).toBe('openai');
     expect(providerDisplayName('managed:other', t)).toBe('managed:other');

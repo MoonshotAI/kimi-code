@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import { providerDisplayName } from '@moonshot-ai/app-core/lib';
+import { modelsStore } from '@moonshot-ai/app-client/stores';
 import { modelCapabilityItems } from '@moonshot-ai/app-client/lib';
 import { Icon } from '@moonshot-ai/app-ui';
 import { modelCapabilityText } from './modelMenuShared';
@@ -12,8 +13,9 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+const providerCatalog = modelsStore();
 const modelName = computed(() => props.model.displayName ?? props.model.model);
-const providerName = computed(() => providerDisplayName(props.model.provider, t));
+const providerName = computed(() => providerDisplayName(props.model.provider, t, providerCatalog.activeProviders));
 const capabilities = computed(() => modelCapabilityItems(props.model));
 </script>
 

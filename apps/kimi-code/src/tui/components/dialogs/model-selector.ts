@@ -51,7 +51,11 @@ export function modelDisplayName(alias: string, model: ModelAlias | undefined): 
   return effective?.displayName ?? effective?.model ?? alias;
 }
 
-export function providerDisplayName(provider: string): string {
+export type ProviderNames = Readonly<Record<string, { readonly displayName?: string }>>;
+
+export function providerDisplayName(provider: string, providers?: ProviderNames): string {
+  const displayName = providers?.[provider]?.displayName;
+  if (displayName !== undefined && displayName !== '') return displayName;
   if (provider === DEFAULT_OAUTH_PROVIDER_NAME) return PRODUCT_NAME;
   if (provider.startsWith('managed:')) return provider.slice('managed:'.length);
   return provider;
@@ -59,18 +63,20 @@ export function providerDisplayName(provider: string): string {
 
 export function createModelChoiceOptions(
   models: Record<string, ModelAlias>,
+  providers?: ProviderNames,
 ): readonly ChoiceOption[] {
   return Object.entries(models).map(([alias, cfg]) => {
     const effective = effectiveModelAlias(cfg);
     return {
       value: alias,
-      label: `${modelDisplayName(alias, effective)} (${providerDisplayName(effective.provider)})`,
+      label: `${modelDisplayName(alias, effective)} (${providerDisplayName(effective.provider, providers)})`,
     };
   });
 }
 
 export interface ModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
+  readonly providers?: ProviderNames;
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinkingEffort: ThinkingEffort;
@@ -88,11 +94,11 @@ export interface ModelSelectorOptions {
   readonly onCancel: () => void;
 }
 
-function createModelChoices(models: Record<string, ModelAlias>): readonly ModelChoice[] {
+function createModelChoices(models: Record<string, ModelAlias>, providers?: ProviderNames): readonly ModelChoice[] {
   return Object.entries(models).map(([alias, cfg]) => {
     const effective = effectiveModelAlias(cfg);
     const name = modelDisplayName(alias, effective);
-    const provider = providerDisplayName(effective.provider);
+    const provider = providerDisplayName(effective.provider, providers);
     return { alias, model: effective, name, provider, label: `${name} (${provider})` };
   });
 }
@@ -152,7 +158,7 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
   constructor(opts: ModelSelectorOptions) {
     super(opts.layout);
     this.opts = opts;
-    const choices = createModelChoices(opts.models);
+    const choices = createModelChoices(opts.models, opts.providers);
     this.minBodyRows =
       opts.minBodyRows ??
       (opts.layout !== undefined ? Math.min(opts.layout.maxBodyRows, choices.length) : 0);

@@ -212,4 +212,17 @@ feedback_url = "https://registry.example.test/v1/feedback"
     });
     expect(updatedProviders['acme']).not.toHaveProperty('feedback_url');
   });
+
+  it('keeps a provider display_name when reading and writing the config', () => {
+    const config = parseConfigString(`
+[providers.acme]
+type = "openai"
+display_name = "Acme Gateway"
+base_url = "https://api.example.test/v1"
+`);
+
+    expect(config.providers['acme']?.displayName).toBe('Acme Gateway');
+    const providers = configToTomlData(config)['providers'] as Record<string, Record<string, unknown>>;
+    expect(providers['acme']?.['display_name']).toBe('Acme Gateway');
+  });
 });

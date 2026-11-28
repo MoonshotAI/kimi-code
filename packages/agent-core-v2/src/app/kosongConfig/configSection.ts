@@ -45,6 +45,7 @@ export const ModelSourceSchema = z.enum(['static', 'discover', 'oauth-catalog'])
 const StringRecordSchema = z.record(z.string(), z.string());
 
 export const ProviderConfigSchema = z.object({
+  displayName: z.string().optional(),
   modelSource: ModelSourceSchema.optional(),
 
   baseUrl: z.string().optional(),

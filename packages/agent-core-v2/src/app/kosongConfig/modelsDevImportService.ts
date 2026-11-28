@@ -161,7 +161,19 @@ export class ModelsDevImportService implements IModelsDevImportService {
       );
     }
 
+    const existingRecords = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
+    const occupied = models
+      .map((model) => `${targetId}/${model.id}`)
+      .filter((aliasId) => existingRecords[aliasId] !== undefined && existingRecords[aliasId].provider !== targetId);
+    if (occupied.length > 0) {
+      throw new Error2(
+        codes.CATALOG_IMPORT_INVALID,
+        `model alias key already owned by another provider: ${occupied.join(', ')}`,
+      );
+    }
+
     const provider: ProviderConfig = { type: resolution.wire };
+    if (existing?.displayName !== undefined) provider.displayName = existing.displayName;
     provider.baseUrl = resolution.baseUrl;
     const credential = reconcileProviderCredentialUpdate(
       existing ?? {},

@@ -630,7 +630,7 @@ GET /api/v1/plugins/{tail}: operation
 GET /api/v1/plugins: operation
 GET /api/v1/providers response 200.code: enum 0
 GET /api/v1/providers response 200.data.items: array
-GET /api/v1/providers response 200.data.items[]: shape 95fda33a
+GET /api/v1/providers response 200.data.items[]: shape 3a3d3703
 GET /api/v1/providers response 200.data: object closed
 GET /api/v1/providers response 200.details: any optional
 GET /api/v1/providers response 200.msg: string
@@ -643,6 +643,7 @@ GET /api/v1/providers/{provider_id} response 200<code=0>.data.api_key: string op
 GET /api/v1/providers/{provider_id} response 200<code=0>.data.api_key_env: string optional
 GET /api/v1/providers/{provider_id} response 200<code=0>.data.base_url: string minLength=1 optional
 GET /api/v1/providers/{provider_id} response 200<code=0>.data.default_model: string minLength=1 optional
+GET /api/v1/providers/{provider_id} response 200<code=0>.data.display_name: string minLength=1 optional
 GET /api/v1/providers/{provider_id} response 200<code=0>.data.has_api_key: boolean
 GET /api/v1/providers/{provider_id} response 200<code=0>.data.id: string minLength=1
 GET /api/v1/providers/{provider_id} response 200<code=0>.data.models: array optional
@@ -2196,6 +2197,7 @@ POST /api/v1/providers request.api_key: string optional
 POST /api/v1/providers request.api_key_env: string optional
 POST /api/v1/providers request.base_url: string optional
 POST /api/v1/providers request.default_model: string minLength=1 optional
+POST /api/v1/providers request.display_name: string optional
 POST /api/v1/providers request.id: string pattern="^[\\p{L}\\p{N}][\\p{L}\\p{N}\\-_ ]*$"
 POST /api/v1/providers request.models: array minItems=1
 POST /api/v1/providers request.models[].adaptive_thinking: boolean optional
@@ -2213,7 +2215,7 @@ POST /api/v1/providers request.type: enum "anthropic"|"bedrock"|"google-genai"|"
 POST /api/v1/providers request: object
 POST /api/v1/providers response 200: oneOf
 POST /api/v1/providers response 200<code=0>.code: enum 0
-POST /api/v1/providers response 200<code=0>.data: shape 95fda33a
+POST /api/v1/providers response 200<code=0>.data: shape 3a3d3703
 POST /api/v1/providers response 200<code=0>.details: any optional
 POST /api/v1/providers response 200<code=0>.msg: string
 POST /api/v1/providers response 200<code=0>.request_id: string
@@ -2281,13 +2283,13 @@ POST /api/v1/providers{action} response 200<code=0>.data<#0>.unchanged: array
 POST /api/v1/providers{action} response 200<code=0>.data<#0>.unchanged[]: string minLength=1
 POST /api/v1/providers{action} response 200<code=0>.data<#0>: object closed
 POST /api/v1/providers{action} response 200<code=0>.data<#1>.models_imported: integer minimum=0 maximum=9007199254740991
-POST /api/v1/providers{action} response 200<code=0>.data<#1>.provider: shape 95fda33a
+POST /api/v1/providers{action} response 200<code=0>.data<#1>.provider: shape 3a3d3703
 POST /api/v1/providers{action} response 200<code=0>.data<#1>: object closed
 POST /api/v1/providers{action} response 200<code=0>.data<#2>.credential_env: object optional
 POST /api/v1/providers{action} response 200<code=0>.data<#2>.credential_env{*}: string optional
 POST /api/v1/providers{action} response 200<code=0>.data<#2>.models_imported: integer minimum=0 maximum=9007199254740991
 POST /api/v1/providers{action} response 200<code=0>.data<#2>.providers: array
-POST /api/v1/providers{action} response 200<code=0>.data<#2>.providers[]: shape 95fda33a
+POST /api/v1/providers{action} response 200<code=0>.data<#2>.providers[]: shape 3a3d3703
 POST /api/v1/providers{action} response 200<code=0>.data<#2>: object closed
 POST /api/v1/providers{action} response 200<code=0>.details: any optional
 POST /api/v1/providers{action} response 200<code=0>.msg: string
@@ -3744,6 +3746,7 @@ PUT /api/v1/providers/{provider_id} request.api_key: string optional
 PUT /api/v1/providers/{provider_id} request.api_key_env: string optional
 PUT /api/v1/providers/{provider_id} request.base_url: string optional
 PUT /api/v1/providers/{provider_id} request.default_model: string minLength=1 optional
+PUT /api/v1/providers/{provider_id} request.display_name: string optional
 PUT /api/v1/providers/{provider_id} request.models: array minItems=1
 PUT /api/v1/providers/{provider_id} request.models[].adaptive_thinking: boolean optional
 PUT /api/v1/providers/{provider_id} request.models[].capabilities: array optional
@@ -3761,7 +3764,7 @@ PUT /api/v1/providers/{provider_id} request.type: enum "anthropic"|"bedrock"|"go
 PUT /api/v1/providers/{provider_id} request: object
 PUT /api/v1/providers/{provider_id} response 200: oneOf
 PUT /api/v1/providers/{provider_id} response 200<code=0>.code: enum 0
-PUT /api/v1/providers/{provider_id} response 200<code=0>.data.provider: shape 95fda33a
+PUT /api/v1/providers/{provider_id} response 200<code=0>.data.provider: shape 3a3d3703
 PUT /api/v1/providers/{provider_id} response 200<code=0>.data: object closed
 PUT /api/v1/providers/{provider_id} response 200<code=0>.details: any optional
 PUT /api/v1/providers/{provider_id} response 200<code=0>.msg: string
@@ -4681,6 +4684,16 @@ shape 3941565c.index: integer maximum=9007199254740991 exclusiveMinimum=0
 shape 3941565c.outcome: enum "completed"|"failed"|"interrupted"
 shape 3941565c.started_at: string
 shape 3941565c.usage: shape 87f50821 optional
+shape 3a3d3703.api_key_env: string optional
+shape 3a3d3703.base_url: string minLength=1 optional
+shape 3a3d3703.default_model: string minLength=1 optional
+shape 3a3d3703.display_name: string minLength=1 optional
+shape 3a3d3703.has_api_key: boolean
+shape 3a3d3703.id: string minLength=1
+shape 3a3d3703.models: array optional
+shape 3a3d3703.models[]: string minLength=1
+shape 3a3d3703.status: enum "connected"|"error"|"unconfigured"
+shape 3a3d3703.type: string minLength=1
 shape 3c3e0d22.data: string minLength=1
 shape 3c3e0d22.kind: enum "base64"
 shape 3c3e0d22.media_type: string minLength=1
@@ -4826,15 +4839,6 @@ shape 9526339b.data: object closed
 shape 9526339b.details: any optional
 shape 9526339b.msg: string
 shape 9526339b.request_id: string
-shape 95fda33a.api_key_env: string optional
-shape 95fda33a.base_url: string minLength=1 optional
-shape 95fda33a.default_model: string minLength=1 optional
-shape 95fda33a.has_api_key: boolean
-shape 95fda33a.id: string minLength=1
-shape 95fda33a.models: array optional
-shape 95fda33a.models[]: string minLength=1
-shape 95fda33a.status: enum "connected"|"error"|"unconfigured"
-shape 95fda33a.type: string minLength=1
 shape 9bd41b04.code: enum 40936
 shape 9bd41b04.data: enum null nullable
 shape 9bd41b04.details: any optional

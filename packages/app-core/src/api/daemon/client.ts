@@ -6,6 +6,7 @@ import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
 import type {
   AddProviderInput,
+  AddProviderModelInput,
   AppCatalogProvider,
   AppConfig,
   EditableTextFile,
@@ -1798,18 +1799,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const body: WireCreateProviderRequest = {
       id: input.id ?? '',
       type: input.type,
-      models: (input.models ?? []).map((model) => {
-        const wire: WireCreateProviderModel = {
-          model: model.model,
-          max_context_size: model.maxContextSize,
-        };
-        if (model.displayName !== undefined) wire.display_name = model.displayName;
-        if (model.capabilities !== undefined) wire.capabilities = model.capabilities;
-        if (model.maxOutputSize !== undefined) wire.max_output_size = model.maxOutputSize;
-        if (model.supportEfforts !== undefined) wire.support_efforts = model.supportEfforts;
-        if (model.adaptiveThinking !== undefined) wire.adaptive_thinking = model.adaptiveThinking;
-        return wire;
-      }),
+      models: (input.models ?? []).map(toWireProviderModel),
     };
     if (input.apiKey !== undefined) body.api_key = input.apiKey;
     if (input.baseUrl !== undefined) body.base_url = input.baseUrl;
@@ -1821,20 +1811,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
   async updateProvider(id: string, input: UpdateProviderInput): Promise<UpdateProviderResult> {
     const body: WireUpdateProviderRequest = {
       type: input.type,
-      models: (input.models ?? []).map((model) => {
-        const wire: WireCreateProviderModel = {
-          model: model.model,
-          max_context_size: model.maxContextSize,
-        };
-        if (model.displayName !== undefined) wire.display_name = model.displayName;
-        if (model.capabilities !== undefined) wire.capabilities = model.capabilities;
-        if (model.maxOutputSize !== undefined) wire.max_output_size = model.maxOutputSize;
-        if (model.supportEfforts !== undefined) wire.support_efforts = model.supportEfforts;
-        if (model.adaptiveThinking !== undefined) wire.adaptive_thinking = model.adaptiveThinking;
-        return wire;
-      }),
+      models: (input.models ?? []).map(toWireProviderModel),
     };
-    if (input.newId !== undefined) body.new_id = input.newId;
+    if (input.displayName !== undefined) body.display_name = input.displayName;
     if (input.apiKey !== undefined) body.api_key = input.apiKey;
     if (input.baseUrl !== undefined) body.base_url = input.baseUrl;
     if (input.defaultModel !== undefined) body.default_model = input.defaultModel;
@@ -2252,6 +2231,19 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
     };
   }
+}
+
+function toWireProviderModel(model: AddProviderModelInput): WireCreateProviderModel {
+  const wire: WireCreateProviderModel = {
+    model: model.model,
+    max_context_size: model.maxContextSize,
+  };
+  if (model.displayName !== undefined) wire.display_name = model.displayName;
+  if (model.capabilities !== undefined) wire.capabilities = model.capabilities;
+  if (model.maxOutputSize !== undefined) wire.max_output_size = model.maxOutputSize;
+  if (model.supportEfforts !== undefined) wire.support_efforts = model.supportEfforts;
+  if (model.adaptiveThinking !== undefined) wire.adaptive_thinking = model.adaptiveThinking;
+  return wire;
 }
 
 function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefreshResult {

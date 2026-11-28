@@ -336,6 +336,21 @@ describe('IModelsDevImportService', () => {
     expect(providers['openai']?.apiKeyEnv).toBeUndefined();
   });
 
+  it('keeps the provider display name on a re-import', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', displayName: 'My OpenAI', apiKey: 'sk-old' } },
+      models: {},
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai', apiKey: 'sk-new' });
+
+    expect((config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {})['openai']).toMatchObject({
+      displayName: 'My OpenAI',
+      apiKey: 'sk-new',
+    });
+  });
+
   it('rejects importing over an OAuth-managed provider', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { imports } = createHost({
@@ -345,6 +360,18 @@ describe('IModelsDevImportService', () => {
       imports.importModelsDevProvider({ catalogId: 'openai' }),
       codes.PROVIDER_OAUTH_MANAGED,
     );
+  });
+
+  it('rejects an import whose model alias keys belong to another provider, without changing config', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const owned = { provider: 'gateway', model: 'gpt-4.1', maxContextSize: 1000 };
+    const { config, imports } = createHost({
+      providers: { gateway: { type: 'openai', baseUrl: 'https://gateway.example.test/v1' } },
+      models: { 'openai/gpt-4.1': owned },
+    });
+    await expectError2(imports.importModelsDevProvider({ catalogId: 'openai', apiKey: 'sk-test' }), codes.CATALOG_IMPORT_INVALID);
+    expect(config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {}).not.toHaveProperty('openai');
+    expect((config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {})['openai/gpt-4.1']).toEqual(owned);
   });
 
   it('rejects non-importable entries and needs-base-url entries without a base_url', async () => {

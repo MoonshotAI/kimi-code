@@ -147,7 +147,7 @@ function onManagedRow(): void {
           >
             <ProviderBrandIcon :id="p.id" size="sm" />
             <div class="grow">
-              <span class="pp-id">{{ providerDisplayName(p.id, t) }}</span>
+              <span class="pp-id">{{ providerDisplayName(p.id, t, [p]) }}</span>
               <Badge variant="neutral" size="sm">{{ p.type }}</Badge>
             </div>
             <span v-if="p.hasApiKey" class="pp-count">

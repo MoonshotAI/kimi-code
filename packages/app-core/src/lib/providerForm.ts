@@ -22,6 +22,7 @@ export interface ModelRow {
 
 export interface ProviderFormState {
   id: string;
+  displayName?: string;
   type: string;
   apiKey: string;
   baseUrl: string;
@@ -95,11 +96,15 @@ export function catalogModelToRow(model: AppCatalogModel): ModelRow {
 
 export function validateProviderForm(
   state: ProviderFormState,
-  opts: { requireApiKey?: boolean; requireBaseUrl?: boolean } = {},
+  opts: { requireApiKey?: boolean; requireBaseUrl?: boolean; renaming?: boolean } = {},
 ): ProviderFormError | null {
-  const id = state.id.trim();
-  if (id === '') return 'idRequired';
-  if (!PROVIDER_ID_PATTERN.test(id)) return 'idInvalid';
+  if (opts.renaming === true) {
+    if ((state.displayName ?? '').trim() === '') return 'idRequired';
+  } else {
+    const id = state.id.trim();
+    if (id === '') return 'idRequired';
+    if (!PROVIDER_ID_PATTERN.test(id)) return 'idInvalid';
+  }
   if (opts.requireApiKey === true && state.apiKey.trim() === '') return 'apiKeyRequired';
   if (opts.requireBaseUrl === true && state.baseUrl.trim() === '') return 'baseUrlRequired';
   if (state.models.length === 0) return 'modelRequired';
@@ -144,7 +149,7 @@ export function buildUpdateProviderInput(
   opts?: { includeBlankApiKey?: boolean; existingDefaultModel?: string },
 ): UpdateProviderInput {
   const models = buildModels(state.models);
-  const newId = state.id.trim();
+  const displayName = (state.displayName ?? '').trim();
   const apiKey = state.apiKey.trim();
   const baseUrl = state.baseUrl.trim();
   const configuredDefault = opts?.existingDefaultModel?.trim() ?? '';
@@ -153,7 +158,9 @@ export function buildUpdateProviderInput(
       ? configuredDefault.slice(configuredDefault.indexOf('/') + 1)
       : configuredDefault;
   return {
-    ...(existing !== undefined && newId !== '' && newId !== existing.id ? { newId } : {}),
+    ...(existing !== undefined && displayName !== ''
+      ? { displayName: displayName === existing.id ? '' : displayName }
+      : {}),
     type: state.type,
     models,
     ...(apiKey === '' && opts?.includeBlankApiKey !== true ? {} : { apiKey }),

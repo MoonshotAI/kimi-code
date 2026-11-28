@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Menu } from '@moonshot-ai/app-ui';
 import { effortLabel, providerDisplayName, segmentsFor, type ModelThinkingInfo } from '@moonshot-ai/app-core/lib';
+import { modelsStore } from '@moonshot-ai/app-client/stores';
 
 export type SecondaryModelGroup = { provider: string; options: Array<{ id: string; label: string }> };
 
@@ -16,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [value: { model: string | null; effort?: string }] }>();
 
 const { t } = useI18n();
+const providerCatalog = modelsStore();
 
 const FOLLOW_DEFAULT_MODEL_ID = '';
 const FLYOUT_WIDTH = 188;
@@ -364,7 +366,7 @@ onUnmounted(() => {
             <span class="sm-picker__option-label">{{ t('settings.noSecondaryModel') }}</span>
           </button>
           <template v-for="group in groups" :key="group.provider">
-            <div class="sm-picker__group">{{ providerDisplayName(group.provider, t) }}</div>
+            <div class="sm-picker__group">{{ providerDisplayName(group.provider, t, providerCatalog.providers) }}</div>
             <button
               v-for="option in group.options"
               :key="option.id"

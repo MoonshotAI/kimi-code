@@ -125,6 +125,7 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | Provider type: `kimi`, `anthropic`, `openai`, `openai_responses`, `bedrock`, `google-genai`, `vertexai` |
+| `display_name` | `string` | No | Name shown in the desktop app, Web, TUI and VS Code; the key is shown when unset. Renaming a provider in the desktop settings changes only this name, so the key and the model aliases stay the same |
 | `api_key` | `string` | No | API key, written in plain text in the config file |
 | `api_key_env` | `string` | No | Name of a shell environment variable to read the API key from instead of storing it in the config file; re-read on every request. Mutually exclusive with `api_key` and `oauth`; an unset or empty variable fails the request with an error naming the variable |
 | `base_url` | `string` | No | API base URL |

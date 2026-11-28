@@ -43,7 +43,8 @@ export function getModelThinkingMode(model: ModelConfig): ThinkingMode {
   return "none";
 }
 
-export function providerDisplayName(provider: string): string {
+export function providerDisplayName(provider: string, providerName?: string): string {
+  if (providerName !== undefined && providerName !== "") return providerName;
   if (provider === MANAGED_KIMI_CODE_PROVIDER) return "Kimi Code";
   if (provider.startsWith("managed:")) return provider.slice("managed:".length);
   return provider;
@@ -68,7 +69,7 @@ export function groupModelsByProvider(models: ModelConfig[]): ModelProviderGroup
   return [...grouped.entries()]
     .map(([provider, providerModels]) => ({
       provider,
-      label: providerDisplayName(provider),
+      label: providerDisplayName(provider, providerModels[0]?.provider_name),
       models: providerModels.toSorted((left, right) => left.name.localeCompare(right.name)),
     }))
     .toSorted((left, right) => left.label.localeCompare(right.label));

@@ -26,6 +26,7 @@ function modelRow(overrides: Partial<ModelRow> = {}): ModelRow {
 function validForm(overrides: Partial<ProviderFormState> = {}): ProviderFormState {
   return {
     id: 'my-openai',
+    displayName: 'my-openai',
     type: 'openai',
     apiKey: 'sk-test',
     baseUrl: 'https://api.openai.com/v1',
@@ -62,6 +63,11 @@ describe('validateProviderForm', () => {
     expect(validateProviderForm(validForm({ id: 'ok-id_2' }))).toBeNull();
     expect(validateProviderForm(validForm({ id: '测试 Kimi' }))).toBeNull();
     expect(validateProviderForm(validForm({ id: 'My OpenAI' }))).toBeNull();
+  });
+
+  it('checks only that the name is not empty when renaming an existing provider', () => {
+    expect(validateProviderForm(validForm({ displayName: 'My gateway (EU) / prod!' }), { renaming: true })).toBeNull();
+    expect(validateProviderForm(validForm({ displayName: '  ' }), { renaming: true })).toBe('idRequired');
   });
 
   it('requires the api key and base url only when the caller asks (add path)', () => {
@@ -156,13 +162,11 @@ describe('buildUpdateProviderInput', () => {
     expect(input.baseUrl).toBe('https://gw.example.com/v1');
   });
 
-  it('sends new_id only when the name changed', () => {
-    expect(
-      buildUpdateProviderInput(validForm({ id: 'renamed' }), existing).newId,
-    ).toBe('renamed');
-    expect(
-      buildUpdateProviderInput(validForm({ id: 'my-openai' }), existing).newId,
-    ).toBeUndefined();
+  it('sends the edited name as the display name and never renames the provider key', () => {
+    const renamed = buildUpdateProviderInput(validForm({ displayName: ' My Gateway ' }), existing);
+    expect(renamed.displayName).toBe('My Gateway');
+    expect(renamed).not.toHaveProperty('newId');
+    expect(buildUpdateProviderInput(validForm({ displayName: 'my-openai' }), existing).displayName).toBe('');
   });
 
   it('preserves the configured default model only while it matches a model row', () => {

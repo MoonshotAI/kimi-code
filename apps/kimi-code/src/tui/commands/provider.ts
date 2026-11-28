@@ -25,7 +25,7 @@ import {
   ProviderManagerComponent,
   type ProviderManagerOptions,
 } from '../components/dialogs/provider-manager';
-import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
+import { TabbedModelSelectorComponent, type TabbedModelSelectorOptions } from '../components/dialogs/tabbed-model-selector';
 import { DOCK_MODEL_SELECTOR_ROWS } from '../constant/rendering';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
@@ -321,11 +321,13 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     );
   }
 
-  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
+  const stateConfig = await host.harness.getConfig();
+  const stateModels = stateConfig.models ?? {};
   mountProviderDefaultModelSelector(
     host,
     stateModels,
-    Object.keys(stateModels).find((alias) => alias.startsWith(`${providerId}/`)),
+    stateConfig.providers,
+    Object.entries(stateModels).find(([, model]) => model.provider === providerId)?.[0],
     providerId,
   );
 }
@@ -408,25 +410,28 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     );
   }
 
-  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
-  const firstNewAlias = Object.keys(stateModels).find((a) =>
-    addedProviderIds.some((pid) => a.startsWith(`${pid}/`)),
-  );
+  const stateConfig = await host.harness.getConfig();
+  const stateModels = stateConfig.models ?? {};
+  const firstNewAlias = Object.entries(stateModels).find(([, model]) =>
+    addedProviderIds.includes(model.provider),
+  )?.[0];
   const firstNewProvider = firstNewAlias
     ? stateModels[firstNewAlias]?.provider
     : addedProviderIds[0];
-  mountProviderDefaultModelSelector(host, stateModels, firstNewAlias, firstNewProvider);
+  mountProviderDefaultModelSelector(host, stateModels, stateConfig.providers, firstNewAlias, firstNewProvider);
   return true;
 }
 
 function mountProviderDefaultModelSelector(
   host: SlashCommandHost,
   models: Record<string, ModelAlias>,
+  providers: TabbedModelSelectorOptions['providers'],
   selectedValue: string | undefined,
   initialTabId: string | undefined,
 ): void {
   const selector = new TabbedModelSelectorComponent({
     models,
+    providers,
     currentValue: host.state.appState.model,
     selectedValue,
     currentThinkingEffort: host.state.appState.thinkingEffort,

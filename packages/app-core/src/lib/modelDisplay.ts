@@ -1,5 +1,5 @@
 
-import type { AppModel } from '../api/types';
+import type { AppModel, AppProvider } from '../api/types';
 import { MANAGED_KIMI_CODE_PROVIDER_ID } from '../api/types';
 import { effortLabel } from './modelThinking';
 
@@ -23,6 +23,12 @@ export function subagentEffortSuffix(effort: string | undefined): string | undef
   return effortLabel(effort);
 }
 
-export function providerDisplayName(providerId: string, t: (key: string) => string): string {
+export function providerDisplayName(
+  providerId: string,
+  t: (key: string) => string,
+  providers?: readonly Pick<AppProvider, 'id' | 'displayName'>[],
+): string {
+  const displayName = providers?.find((provider) => provider.id === providerId)?.displayName;
+  if (displayName !== undefined && displayName !== '') return displayName;
   return providerId === MANAGED_KIMI_CODE_PROVIDER_ID ? t('providers.kimiSubscription') : providerId;
 }

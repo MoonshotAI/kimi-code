@@ -760,6 +760,89 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(onDisk2['default_model']).toBe('my-openai/gpt-4o');
   });
 
+  it('stores a display name on create and returns it with the provider', async () => {
+    await boot();
+    const { status, body } = await postJson<Record<string, unknown>>('/api/v1/providers', {
+      ...CREATE_BODY,
+      display_name: 'My Gateway',
+    });
+    expect(status).toBe(201);
+    expect(body.code).toBe(0);
+    expect(body.data['display_name']).toBe('My Gateway');
+    const onDisk = await readConfigToml();
+    expect(onDisk['providers']).toMatchObject({ 'my-openai': { display_name: 'My Gateway' } });
+  });
+
+  it('changes only the display name when a provider is renamed by name, keeping keys and aliases', async () => {
+    await boot(DEFAULTED_TOML);
+    const rename = await putJson<{ provider: Record<string, unknown> }>('/api/v1/providers/openai', {
+      ...REPLACE_BODY,
+      display_name: 'My Gateway',
+      models: [{ model: 'gpt-4o', max_context_size: 128000 }],
+      default_model: 'gpt-4o',
+    });
+    expect(rename.body.code).toBe(0);
+    expect(rename.body.data.provider).toMatchObject({ id: 'openai', display_name: 'My Gateway' });
+    let onDisk = await readConfigToml();
+    expect(onDisk['providers']).toMatchObject({ openai: { display_name: 'My Gateway' } });
+    expect(onDisk['models']).toMatchObject({ gpt4o: { provider: 'openai', model: 'gpt-4o' } });
+    expect(onDisk['default_provider']).toBe('openai');
+    expect(onDisk['default_model']).toBe('gpt4o');
+
+    const untouched = await putJson<{ provider: Record<string, unknown> }>('/api/v1/providers/openai', {
+      ...REPLACE_BODY,
+      models: [{ model: 'gpt-4o', max_context_size: 256000 }],
+      default_model: 'gpt-4o',
+    });
+    expect(untouched.body.code).toBe(0);
+    expect(untouched.body.data.provider['display_name']).toBe('My Gateway');
+
+    const cleared = await putJson<{ provider: Record<string, unknown> }>('/api/v1/providers/openai', {
+      ...REPLACE_BODY,
+      display_name: '',
+      models: [{ model: 'gpt-4o', max_context_size: 256000 }],
+      default_model: 'gpt-4o',
+    });
+    expect(cleared.body.code).toBe(0);
+    expect(cleared.body.data.provider).not.toHaveProperty('display_name');
+    onDisk = await readConfigToml();
+    expect(onDisk['providers']).not.toHaveProperty('openai.display_name');
+  });
+
+  it('rejects an edit that would give two models the same alias key, leaving config.toml untouched', async () => {
+    await boot(
+      `${DEFAULTED_TOML}\n[models."openai/foo"]\nprovider = "openai"\nmodel = "bar"\nmax_context_size = 1000\n`,
+    );
+    const before = await readConfigToml();
+    const { body } = await putJson<unknown>('/api/v1/providers/openai', {
+      ...REPLACE_BODY,
+      default_model: 'bar',
+      models: [
+        { model: 'bar', max_context_size: 1000 },
+        { model: 'foo', max_context_size: 1000 },
+      ],
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('openai/foo');
+    expect(await readConfigToml()).toEqual(before);
+  });
+
+  it('rejects creating a provider whose model alias keys belong to another provider', async () => {
+    await boot(
+      `${DEFAULTED_TOML}\n[models."old/gpt"]\nprovider = "openai"\nmodel = "gpt-4.1"\nmax_context_size = 1000\n`,
+    );
+    const before = await readConfigToml();
+    const { body } = await postJson<unknown>('/api/v1/providers', {
+      ...CREATE_BODY,
+      id: 'old',
+      default_model: 'gpt',
+      models: [{ model: 'gpt', max_context_size: 1000 }],
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('old/gpt');
+    expect(await readConfigToml()).toEqual(before);
+  });
+
   it('rewrites model upgrade targets when renaming a provider', async () => {
     await boot(
       `${DEFAULTED_TOML}\n[models."openai/replacement-key"]\nprovider = "openai"\nmodel = "gpt-4.1"\nmax_context_size = 1047576\n\n[models.gpt4o.upgrade]\nmodel = "openai/replacement-key"\nmigration_markdown = "Use next"\n`,
@@ -822,19 +905,24 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     await boot(
       `${DEFAULTED_TOML}\n[models."openai/replacement-key"]\nprovider = "openai"\nmodel = "gpt-4.1"\nmax_context_size = 1047576\n\n[models.gpt4o.upgrade]\nmodel = "openai/replacement-key"\nmigration_markdown = "Use next"\n`,
     );
-    const { status } = await putJson('/api/v1/providers/openai', {
+    const { status, body } = await putJson('/api/v1/providers/openai', {
       ...REPLACE_BODY,
+      default_model: 'gpt-4o',
       new_id: 'my-openai',
       models: [{ model: 'gpt-4o', max_context_size: 128000 }],
     });
     expect(status).toBe(200);
+    expect(body.code).toBe(0);
 
     const onDisk = await readConfigToml();
-    expect(onDisk['models']).not.toHaveProperty('my-openai/gpt-4o.upgrade');
+    expect(onDisk['models']).toHaveProperty(['my-openai/gpt-4o']);
+    expect(onDisk['models']).not.toHaveProperty(['my-openai/gpt-4o', 'upgrade']);
     const models = await getJson<{
       items: Array<{ model: string; upgrade?: unknown }>;
     }>('/api/v1/models');
-    expect(models.body.data.items.find((item) => item.model === 'my-openai/gpt-4o')?.upgrade).toBeUndefined();
+    const renamed = models.body.data.items.find((item) => item.model === 'my-openai/gpt-4o');
+    expect(renamed).toBeDefined();
+    expect(renamed?.upgrade).toBeUndefined();
   });
 
   it('migrates default_provider on rename but leaves default_model alone when its model was dropped', async () => {

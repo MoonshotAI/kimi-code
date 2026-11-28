@@ -64,6 +64,21 @@ describe('TabbedModelSelectorComponent', () => {
     expect(out).toContain('openai');
   });
 
+  it('labels a provider tab and its models with the provider display name when one is set', () => {
+    const component = new TabbedModelSelectorComponent({
+      models: { gpt: model('GPT-5', 'openai') },
+      providers: { openai: { displayName: 'My Gateway' } },
+      currentValue: 'gpt',
+      currentThinkingEffort: 'off',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const out = strip(component.render(120).join('\n'));
+    expect(out).toContain('My Gateway');
+    expect(out).toMatch(/GPT-5\s+My Gateway/);
+    expect(out).not.toContain('openai');
+  });
+
   it('highlights the active tab with a filled background (AskUserQuestion style)', () => {
     const raw = make().component.render(120).join('\n');
     expect(raw).toContain(PRIMARY_BG);

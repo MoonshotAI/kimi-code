@@ -45,7 +45,7 @@ export const createProviderModelSchema = z.object({
 export type CreateProviderModel = z.infer<typeof createProviderModelSchema>;
 
 function refineProviderForm(
-  value: { base_url?: string | undefined; models: Array<{ model: string }> },
+  value: { base_url?: string | undefined; default_model?: string | undefined; models: Array<{ model: string }> },
   ctx: z.RefinementCtx,
 ): void {
   if (value.base_url !== undefined && value.base_url.includes('${')) {
@@ -67,6 +67,13 @@ function refineProviderForm(
     }
     seen.add(entry.model);
   }
+  if (value.default_model !== undefined && !value.models.some((entry) => entry.model === value.default_model)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'default_model must be one of models[].model',
+      path: ['default_model'],
+    });
+  }
 }
 
 export const providerIdSchema = z
@@ -76,57 +83,27 @@ export const providerIdSchema = z
     'id must start with a letter or digit and may only contain letters, digits, "-", "_" and spaces',
   );
 
+const providerFormFields = {
+  display_name: z.string().trim().optional(),
+  type: providerWireTypeSchema,
+  api_key: z.string().optional(),
+  api_key_env: z.string().optional(),
+  base_url: z.string().trim().optional(),
+  default_model: z.string().min(1).optional(),
+  models: z.array(createProviderModelSchema).min(1),
+};
+
 export const createProviderRequestSchema = z
-  .object({
-    id: providerIdSchema,
-    type: providerWireTypeSchema,
-    api_key: z.string().optional(),
-    api_key_env: z.string().optional(),
-    base_url: z.string().trim().optional(),
-    default_model: z.string().min(1).optional(),
-    models: z.array(createProviderModelSchema).min(1),
-  })
-  .superRefine((value, ctx) => {
-    refineProviderForm(value, ctx);
-    if (
-      value.default_model !== undefined &&
-      !value.models.some((entry) => entry.model === value.default_model)
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'default_model must be one of models[].model',
-        path: ['default_model'],
-      });
-    }
-  });
+  .object({ id: providerIdSchema, ...providerFormFields })
+  .superRefine(refineProviderForm);
 export type CreateProviderRequest = z.infer<typeof createProviderRequestSchema>;
 
 export const createProviderResponseSchema = providerCatalogItemSchema;
 export type CreateProviderResponse = z.infer<typeof createProviderResponseSchema>;
 
 export const replaceProviderRequestSchema = z
-  .object({
-    new_id: providerIdSchema.optional(),
-    type: providerWireTypeSchema,
-    api_key: z.string().optional(),
-    api_key_env: z.string().optional(),
-    base_url: z.string().trim().optional(),
-    default_model: z.string().min(1).optional(),
-    models: z.array(createProviderModelSchema).min(1),
-  })
-  .superRefine((value, ctx) => {
-    refineProviderForm(value, ctx);
-    if (
-      value.default_model !== undefined &&
-      !value.models.some((entry) => entry.model === value.default_model)
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'default_model must be one of models[].model',
-        path: ['default_model'],
-      });
-    }
-  });
+  .object({ new_id: providerIdSchema.optional().meta({ deprecated: true }), ...providerFormFields })
+  .superRefine(refineProviderForm);
 export type ReplaceProviderRequest = z.infer<typeof replaceProviderRequestSchema>;
 
 export const replaceProviderResponseSchema = z.object({
