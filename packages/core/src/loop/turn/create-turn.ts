@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import { createActor, type Actor, type ActorControl, type ProcessControl } from '#/actor/index';
 import type { UserMessage } from '#/llm/message';
 import type { LlmOutcome, LlmTiming } from '#/llm/response';
@@ -326,6 +327,7 @@ class ActorTurn implements Turn {
     const scope = withAbort(this.scope.signal);
     const number = this.step + 1;
     const step: TurnStep = {
+      id: randomUUID(),
       scope,
       batch: { turnId: this.id, step: number, calls: [], signal: scope.signal },
       steerRequested: false,
@@ -334,7 +336,7 @@ class ActorTurn implements Turn {
     this.setPhase(proc, 'stepStarting', number);
     this.currentStep = step;
     this.runtime.transition(() => {
-      this.emit({ type: 'step.started', ...this.point });
+      this.emit({ type: 'step.started', ...this.point, stepId: step.id });
     });
     if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
 
@@ -567,7 +569,7 @@ class ActorTurn implements Turn {
     if (event.type === 'llm.delta.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
       step.toolCallStreaming = true;
     }
-    this.emit(event);
+    this.emit({ ...event, ...this.point });
   }
 
   private completeRequest(step: TurnStep, outcome: LlmOutcome): void {
@@ -577,7 +579,7 @@ class ActorTurn implements Turn {
       if (typeof outcome.requestId === 'string') this.requestId = outcome.requestId;
       const toolCalls = outcome.type === 'done' ? outcome.message.toolCalls : [];
       step.batch.calls.push(...toolCalls.map((toolCall, index) => ({ key: `${this.id}:${this.step}:${index}`, toolCall })));
-      this.emit({ type: 'llm.ended', outcome });
+      this.emit({ type: 'llm.ended', ...this.point, outcome });
       const message = outcome.message;
       if (message !== undefined && message !== null) {
         this.emit({

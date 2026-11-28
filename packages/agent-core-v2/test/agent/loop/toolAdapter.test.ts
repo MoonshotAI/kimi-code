@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createTestLoop as createLoop } from './core/factory';
 import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
 import { textToolContent, type ToolReturn } from '#/tool/executor';
 import { executorFrom } from './core/executor';
@@ -110,19 +111,23 @@ describe('actor handler execution', () => {
       executor,
     });
     const continuations: Array<string | undefined> = [];
+    const asyncEnds: Extract<LoopEmitted, { type: 'tool.async_ended' }>[] = [];
     loop.subscribe((event) => {
       if (event.type === 'turn.ended') continuations.push(event.continuation);
+      if (event.type === 'tool.async_ended') asyncEnds.push(event);
     });
     const detached = loop.wait('tool.ended', { match: (event) => event.detached });
     const turn = loop.runTurn(prompt());
 
     const detachedEvent = await detached;
+    expect(detachedEvent).toMatchObject({ turnId: 0, step: 1, toolCallId: 'bg' });
     expect(extractText(detachedEvent.outcome.message)).toBe('background task_id=task-bg');
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 0 })).toMatchObject({ running: ['bg'], timedOut: true });
     expect((await turn).type).toBe('done');
     gate.resolve();
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 1000 })).toMatchObject({ completed: ['bg'] });
     await loop.waitForIdle();
+    expect(asyncEnds).toMatchObject([{ turnId: 0, step: 1, toolCallId: 'bg', outcome: { type: 'succeeded' } }]);
     expect(loop.state.messages.some((entry) => extractText(entry).includes('[async tool completed]'))).toBe(true);
     expect(continuations).toEqual(['background', 'none']);
     await loop.close();
@@ -150,9 +155,13 @@ describe('actor handler execution', () => {
       executor: closingExecutor,
     });
     const asyncEntries: string[] = [];
+    const asyncEnvelopes: Array<{ turnId: number; step: number; toolCallId: string }> = [];
     const notifications: string[] = [];
     closingLoop.subscribe((event) => {
-      if (event.type === 'tool.async_ended') asyncEntries.push(extractText(event.message));
+      if (event.type === 'tool.async_ended') {
+        asyncEntries.push(extractText(event.message));
+        asyncEnvelopes.push({ turnId: event.turnId, step: event.step, toolCallId: event.toolCallId });
+      }
       if (event.type === 'prompt.notified') notifications.push(extractText(event.message));
     });
     const started = closingLoop.wait('tool.started');
@@ -182,6 +191,7 @@ describe('actor handler execution', () => {
     await closing;
     expect(closeStop).toHaveBeenCalled();
     expect(asyncEntries).toEqual(['custom closed']);
+    expect(asyncEnvelopes).toEqual([{ turnId: 0, step: 1, toolCallId: 'close-bg' }]);
     expect(notifications).toEqual([]);
 
     const rejectionGate = deferred<void>();
@@ -206,6 +216,7 @@ describe('actor handler execution', () => {
     rejectionGate.resolve();
 
     const rejectedEvent = await asyncRejected;
+    expect(rejectedEvent).toMatchObject({ turnId: 0, step: 1, toolCallId: 'reject-bg' });
     expect(rejectedEvent.outcome).toEqual({ type: 'failed', error: rejection });
     expect(extractText(rejectedEvent.message)).toContain('[async tool failed]');
     expect(extractText(rejectedEvent.message)).toContain('completion factory rejected');

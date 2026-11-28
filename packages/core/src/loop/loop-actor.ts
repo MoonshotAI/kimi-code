@@ -1152,7 +1152,7 @@ class LoopActor implements Loop {
     const { turnId, step } = unfinished;
     for (const toolCall of trailingCalls(this.durable.messages).unresolved) {
       const result = abortedToolOutcome(toolCall, CRASHED);
-      this.record({ type: 'tool.ended', toolCallId: toolCall.id, outcome: result, detached: false });
+      this.record({ type: 'tool.ended', turnId, step, toolCallId: toolCall.id, outcome: result, detached: false });
       this.record({ type: 'message.appended', turnId, step, source: 'tool', message: result.message });
     }
     if (unfinished.stepUnfinished) this.record({ type: 'step.ended', turnId, step, outcome });
@@ -1275,7 +1275,7 @@ class LoopActor implements Loop {
         const outcomes = batch.calls.map(({ toolCall }) => {
           const outcome = blockedToolOutcome(toolCall, blocked.cause, blocked.result);
           this.record({ type: 'tool.started', turnId: batch.turnId, step: batch.step, toolCall });
-          this.record({ type: 'tool.ended', toolCallId: toolCall.id, outcome, detached: false });
+          this.record({ type: 'tool.ended', turnId: batch.turnId, step: batch.step, toolCallId: toolCall.id, outcome, detached: false });
           return outcome;
         });
         const result = { outcomes };
@@ -1352,6 +1352,8 @@ class LoopActor implements Loop {
           this.record({
             type: 'tool.ended',
             taskId: slot.handler.taskId,
+            turnId: slot.turnId,
+            step: slot.step,
             toolCallId: call.toolCall.id,
             outcome,
             detached: false,
@@ -1375,7 +1377,7 @@ class LoopActor implements Loop {
       const outcomes = batch.calls.map(({ toolCall }) => {
         this.record({ type: 'tool.started', turnId: batch.turnId, step: batch.step, toolCall });
         const outcome = abortedToolOutcome(toolCall, reason);
-        this.record({ type: 'tool.ended', toolCallId: toolCall.id, outcome, detached: false });
+        this.record({ type: 'tool.ended', turnId: batch.turnId, step: batch.step, toolCallId: toolCall.id, outcome, detached: false });
         return outcome;
       });
       const result = { outcomes };
@@ -1390,7 +1392,7 @@ class LoopActor implements Loop {
       if (batch.outcomes[index] !== undefined || this.tools.has(call.key)) continue;
       this.record({ type: 'tool.started', turnId: batch.turnId, step: batch.step, toolCall: call.toolCall });
       const outcome = abortedToolOutcome(call.toolCall, reason);
-      this.record({ type: 'tool.ended', toolCallId: call.toolCall.id, outcome, detached: false });
+      this.record({ type: 'tool.ended', turnId: batch.turnId, step: batch.step, toolCallId: call.toolCall.id, outcome, detached: false });
       batch.outcomes[index] = outcome;
     }
   }
@@ -1478,6 +1480,8 @@ class LoopActor implements Loop {
     this.record({
       type: 'tool.ended',
       taskId: slot.handler.taskId,
+      turnId: slot.turnId,
+      step: slot.step,
       toolCallId: slot.toolCall.id,
       outcome,
       detached: slot.detached,
@@ -1557,7 +1561,7 @@ class LoopActor implements Loop {
       slot.completionPending = false;
       this.notifyTool(slot);
       const shouldQueue = this.shouldQueueTaskNotification?.(slot.handler.taskId) ?? true;
-      this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, toolCallId: slot.toolCall.id, outcome, message });
+      this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, turnId: slot.turnId, step: slot.step, toolCallId: slot.toolCall.id, outcome, message });
       if (shouldQueue) {
         this.record({ type: 'prompt.notified', message });
         if (this.turn !== undefined) this.completionHandoff = true;
@@ -1651,7 +1655,7 @@ class LoopActor implements Loop {
       if (this.tools.get(slot.key) !== slot) continue;
       this.tools.delete(slot.key);
       slot.completionPending = false;
-      this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, toolCallId: slot.toolCall.id, outcome, message });
+      this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, turnId: slot.turnId, step: slot.step, toolCallId: slot.toolCall.id, outcome, message });
       this.notifyTool(slot);
     }
     this.notifyCompletionWaiters();
