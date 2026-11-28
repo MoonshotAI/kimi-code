@@ -178,6 +178,7 @@ export interface StepEndingFailure {
 
 export interface StepEndingRun {
   outcome: StepOutcome;
+  stoppingDecided: boolean;
   failures: StepEndingFailure[];
 }
 
@@ -187,22 +188,22 @@ export async function runStepEnding(
   signal: AbortSignal,
 ): Promise<StepEndingRun> {
   const failures: StepEndingFailure[] = [];
-  if (draft.type === 'blocked') return { outcome: draft, failures };
+  if (draft.type === 'blocked') return { outcome: draft, stoppingDecided: true, failures };
   const stoppingHook = hooks['step.stopping'];
   const stopping: HookRun<StepStoppingVerdict> = stoppingHook === undefined
     ? { failures: [] }
     : await runItem('step.stopping', () => stoppingHook({ ...event, draft }, signal), isStepStoppingVerdict);
   failures.push(...stopping.failures.map((failure) => ({ point: 'step.stopping' as const, failure })));
-  if (draft.type === 'aborted') return { outcome: draft, failures };
+  if (draft.type === 'aborted') return { outcome: draft, stoppingDecided: true, failures };
   if (stopping.blocked !== undefined) {
-    return { outcome: { type: 'blocked', at: 'step.stopping', cause: stopping.blocked }, failures };
+    return { outcome: { type: 'blocked', at: 'step.stopping', cause: stopping.blocked }, stoppingDecided: true, failures };
   }
   if (stopping.decision?.type === 'done') {
-    return { outcome: { type: 'done', cause: stopping.decision.cause }, failures };
+    return { outcome: { type: 'done', cause: stopping.decision.cause }, stoppingDecided: true, failures };
   }
   let cause: Cause | undefined;
   if (stopping.decision === undefined) {
-    if (draft.type !== 'continue') return { outcome: draft, failures };
+    if (draft.type !== 'continue') return { outcome: draft, stoppingDecided: false, failures };
     cause = draft.cause;
   } else {
     cause = stopping.decision.cause;
@@ -218,7 +219,7 @@ export async function runStepEnding(
   failures.push(...continuing.failures.map((failure) => ({ point: 'step.continuing' as const, failure })));
   const decision = continuing.decision;
   const blocked = decision?.type === 'blocked' ? decision.cause : continuing.blocked;
-  if (blocked !== undefined) return { outcome: { type: 'blocked', at: 'step.continuing', cause: blocked }, failures };
-  if (decision !== undefined) return { outcome: { type: 'done', cause: decision.cause }, failures };
-  return { outcome: cause === undefined ? { type: 'continue' } : { type: 'continue', cause }, failures };
+  if (blocked !== undefined) return { outcome: { type: 'blocked', at: 'step.continuing', cause: blocked }, stoppingDecided: false, failures };
+  if (decision !== undefined) return { outcome: { type: 'done', cause: decision.cause }, stoppingDecided: false, failures };
+  return { outcome: cause === undefined ? { type: 'continue' } : { type: 'continue', cause }, stoppingDecided: false, failures };
 }

@@ -23,7 +23,6 @@ import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecuto
 import type { AgentLoopService, LoopInterruptReason } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
 import {
-  MAX_STEPS_REASON,
   pairedRequestMessages,
   type Loop,
   type LoopEmitted,
@@ -57,11 +56,10 @@ import {
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { TurnEnded, TurnPrompt, type TurnReplyModel } from './turnOps';
 import type { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
-import { ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
+import { ErrorCodes, Error2, fromErrorPayload, isCodedError, isError2, toKimiErrorPayload } from '#/errors';
 import type {
   AfterStepContext,
   AfterStepTool,
-  LoopError,
   LoopErrorContext,
   LoopErrorHandler,
   LoopRunResult,
@@ -69,7 +67,7 @@ import type {
   Turn,
   TurnResult,
 } from './loop';
-import { createMaxStepsExceededError, isMaxStepsExceededError } from './loop';
+import { isMaxStepsExceededError } from './loop';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 
 export const loopLastRequestIdKey = defineState<string | undefined>(
@@ -118,8 +116,6 @@ interface ActiveTurn {
   failedStep: MachineFailedStep | undefined;
   forcedStopReason: string | undefined;
   lastStopReason: FinishReason | undefined;
-  filtered: boolean;
-  maxStepsError: LoopError | undefined;
   abortReason: unknown;
   retryRequested: boolean;
   retry: { failedAttempt: number; nextAttempt: number; maxAttempts: number; delayMs: number; errorName?: string; statusCode?: number } | undefined;
@@ -150,7 +146,6 @@ export interface TurnProjectionOptions {
   readonly prompts: AgentPromptProjection;
   readonly hooks: AgentLoopService['hooks'];
   readonly errorHandlers: readonly LoopErrorHandler[];
-  readonly maxSteps: () => number | undefined;
   readonly cancel: (turnId: number, reason: unknown) => boolean;
   readonly recordStreamPart: (turnId: number, step: number, block: number) => void;
 }
@@ -343,7 +338,6 @@ export class AgentTurnProjection {
         turn.forcedStopReason = context.stopReason;
         return { type: 'done' as const, cause: { by: 'afterStep', reason: 'stop_turn' } };
       }
-      if (finishReason === 'filtered') turn.filtered = true;
       return undefined;
     }
     const failure = turn.failedStep ?? { number: step.number, uuid: step.uuid, error: event.draft.error };
@@ -689,9 +683,6 @@ export class AgentTurnProjection {
           turn.current = undefined;
           return;
         }
-        if (outcome.type === 'blocked' && outcome.cause.reason === MAX_STEPS_REASON) {
-          turn.maxStepsError = createMaxStepsExceededError(this.options.maxSteps() ?? 0);
-        }
         if (outcome.type === 'failed') turn.failedStep ??= { number: event.step, uuid: step?.uuid ?? randomUUID(), error: outcome.error };
         if (step !== undefined && turn.current !== undefined) turn.current = undefined;
         return;
@@ -752,8 +743,6 @@ export class AgentTurnProjection {
       failedStep: undefined,
       forcedStopReason: undefined,
       lastStopReason: undefined,
-      filtered: false,
-      maxStepsError: undefined,
       abortReason: undefined,
       retryRequested: false,
       retry: undefined,
@@ -845,25 +834,12 @@ export class AgentTurnProjection {
       await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason }, undefined, continuation);
       return;
     }
-    if (turn.filtered) {
-      await this.endTurn(turn, {
-        type: 'failed',
-        steps: turn.steps,
-        error: new Error2(ErrorCodes.PROVIDER_FILTERED, 'Provider safety policy blocked the response.', {
-          name: 'ProviderFilteredError',
-          details: { finishReason: 'filtered' },
-        }),
-      }, undefined, continuation);
-      return;
-    }
-    if (turn.maxStepsError !== undefined || (outcome.type !== 'failed' && outcome.cause?.reason === MAX_STEPS_REASON)) {
-      const error = turn.maxStepsError ?? createMaxStepsExceededError(this.options.maxSteps() ?? 0);
-      this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
-      return;
-    }
     if (outcome.type === 'failed' || turn.failedStep !== undefined) {
-      const error = turn.failedStep?.error ?? (outcome.type === 'failed' ? outcome.error : undefined) ?? new Error('Turn failed');
+      const failure = outcome.type === 'failed' ? outcome.error : undefined;
+      const error = (isCodedError(failure) ? fromErrorPayload(toKimiErrorPayload(failure)) : undefined)
+        ?? turn.failedStep?.error
+        ?? failure
+        ?? new Error('Turn failed');
       this.failStep(turn.id, turn.interruptStep, error);
       await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;

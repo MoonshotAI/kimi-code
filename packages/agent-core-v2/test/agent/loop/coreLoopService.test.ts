@@ -6,7 +6,8 @@ import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/messa
 import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentLoopService, isMaxStepsExceededError } from '#/agent/loop/loop';
+import { isError2 } from '#/errors';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import { CoreLoopEvent, onCoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import { LoopJournal, restoreLoopJournal } from '#/agent/loop/journal';
@@ -402,16 +403,56 @@ describe('core LoopService integration', () => {
     ctx.mockNextResponse({ type: 'text', text: 'bypass tool' }, lookupCall('call_bypass'));
     ctx.mockNextResponse({ type: 'text', text: 'bypass answer' });
 
+    const firstTurnCoreEnds: LoopEmitted[] = [];
+    const coreSubscription = ctx.get(IEventBus).subscribe(CoreLoopEvent, (envelope) => {
+      if (envelope.event.type !== 'step.ended' && envelope.event.type !== 'turn.ended') return;
+      if (envelope.event.turnId === 0) firstTurnCoreEnds.push(envelope.event);
+    });
     const { turn } = submitPromptTurn(loop, {
       role: 'user',
       content: [{ type: 'text', text: 'hello' }],
     });
     await ctx.untilApproval(true);
-    await expect(turn.result).resolves.toMatchObject({
+    const firstResult = await turn.result;
+    expect(firstResult).toMatchObject({
       type: 'failed',
       steps: 1,
-      error: expect.objectContaining({ name: 'LoopError' }),
+      error: {
+        code: 'loop.max_steps_exceeded',
+        name: 'LoopError',
+        message: 'Turn exceeded maxSteps=1. If max_steps_per_turn is too small, raise it in config.toml (loop_control.max_steps_per_turn), or run "/update-config" to update it, then "/reload".',
+        details: { maxSteps: 1 },
+      },
     });
+    expect(firstResult.type === 'failed' && isError2(firstResult.error)).toBe(true);
+    expect(firstResult.type === 'failed' && isMaxStepsExceededError(firstResult.error)).toBe(true);
+    expect(firstTurnCoreEnds).toMatchObject([
+      {
+        type: 'step.ended',
+        turnId: 0,
+        step: 1,
+        outcome: {
+          type: 'blocked',
+          at: 'step.continuing',
+          cause: { by: 'max-steps', reason: 'max_steps', details: { maxSteps: 1 } },
+        },
+      },
+      {
+        type: 'turn.ended',
+        turnId: 0,
+        outcome: {
+          type: 'failed',
+          error: {
+            code: 'loop.max_steps_exceeded',
+            name: 'LoopError',
+            message: 'Turn exceeded maxSteps=1. If max_steps_per_turn is too small, raise it in config.toml (loop_control.max_steps_per_turn), or run "/update-config" to update it, then "/reload".',
+            details: { maxSteps: 1 },
+            retryable: false,
+          },
+        },
+      },
+    ]);
+    coreSubscription.dispose();
     await ctx.untilApproval(true);
     await loop.settled();
 

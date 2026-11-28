@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { createLoop, pairedRequestMessages, type LoopEmitted } from '#/loop/index';
+import {
+  convergeTurnOutcome,
+  createLoop,
+  createMaxStepsExceededError,
+  createMaxStepsHook,
+  createProviderFilteredError,
+  LoopError,
+  pairedRequestMessages,
+  type LoopEmitted,
+  type TurnOutcome,
+} from '#/loop/index';
+import { createLoopHookRegistry } from '#/hook/loop/registry';
 import type { LoopToolContext, LoopToolExecutor } from '#/loop/create-loop';
 import { createMediaDegradeRecovery } from '#/llm/builtin/policy/media-degrade';
 import {
@@ -765,6 +776,152 @@ describe('loop request history pairing', () => {
     expect(secondMessages[liveAssistantIndex]).toBe(loop.state.messages[liveAssistantIndex]);
     expect(secondMessages[liveAssistantIndex + 1]).toBe(loop.state.messages[liveAssistantIndex + 1]);
     expect(loop.state.messages[1]).toBe(seededOpen);
+    await loop.close();
+  });
+});
+
+describe('loop terminal outcome convergence', () => {
+  it('converges filtered and max_steps while preserving gate and execution blocks', () => {
+    const doneOutcome: TurnOutcome = { type: 'done' };
+    const aborted: TurnOutcome = { type: 'aborted', reason: 'user' };
+    const failed: TurnOutcome = { type: 'failed', error: new Error('boom') };
+    const gateBlocked: TurnOutcome = {
+      type: 'blocked',
+      at: 'turn.starting',
+      cause: { by: 'prompt', reason: 'blocked' },
+    };
+    const stepBlocked: TurnOutcome = {
+      type: 'blocked',
+      at: 'step.starting',
+      cause: { by: 'guard', reason: 'no' },
+    };
+    const maxSteps: TurnOutcome = {
+      type: 'blocked',
+      at: 'step.continuing',
+      cause: { by: 'max-steps', reason: 'max_steps', details: { maxSteps: 3 } },
+    };
+    const maxStepsWithoutDetails: TurnOutcome = {
+      type: 'blocked',
+      at: 'step.continuing',
+      cause: { by: 'max-steps', reason: 'max_steps' },
+    };
+
+    expect(convergeTurnOutcome(doneOutcome, false)).toBe(doneOutcome);
+    expect(convergeTurnOutcome(aborted, true)).toBe(aborted);
+    expect(convergeTurnOutcome(failed, true)).toBe(failed);
+    expect(convergeTurnOutcome(gateBlocked, false)).toBe(gateBlocked);
+    expect(convergeTurnOutcome(stepBlocked, false)).toBe(stepBlocked);
+    expect(convergeTurnOutcome(doneOutcome, true)).toEqual({
+      type: 'failed',
+      error: createProviderFilteredError(),
+    });
+    expect(convergeTurnOutcome(maxSteps, true)).toEqual({
+      type: 'failed',
+      error: createProviderFilteredError(),
+    });
+    expect(convergeTurnOutcome(maxSteps, false)).toEqual({
+      type: 'failed',
+      error: createMaxStepsExceededError(3),
+    });
+    expect(convergeTurnOutcome(maxStepsWithoutDetails, false)).toEqual({
+      type: 'failed',
+      error: createMaxStepsExceededError(0),
+    });
+  });
+
+  it('serializes LoopError with its coded payload through JSON', () => {
+    const error = createMaxStepsExceededError(2);
+    expect(error).toBeInstanceOf(Error);
+    expect(JSON.parse(JSON.stringify(error))).toEqual({
+      code: 'loop.max_steps_exceeded',
+      name: 'LoopError',
+      message: 'Turn exceeded maxSteps=2. If max_steps_per_turn is too small, raise it in config.toml (loop_control.max_steps_per_turn), or run "/update-config" to update it, then "/reload".',
+      details: { maxSteps: 2 },
+      retryable: false,
+    });
+    expect(new LoopError('internal', 'plain').toJSON()).toEqual({
+      code: 'internal',
+      name: 'LoopError',
+      message: 'plain',
+    });
+  });
+
+  it('emits step.ended(done) and turn.ended(failed) for a filtered turn', async () => {
+    const base = fullRequester(() => ({
+      type: 'done',
+      message: createAssistantMessage([{ type: 'text', text: 'partial' }]),
+      finish: { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+    }));
+    const loop = createLoop({ requester: base, executor });
+    const events: LoopEmitted[] = [];
+    loop.subscribe((event) => events.push(event));
+
+    const outcome = await loop.runTurn(createUserMessage('hello'));
+    expect(outcome).toEqual({ type: 'failed', error: createProviderFilteredError() });
+    expect(events.find((event) => event.type === 'step.ended')).toMatchObject({
+      outcome: { type: 'done' },
+    });
+    expect(events.find((event) => event.type === 'turn.ended')).toMatchObject({
+      outcome: { type: 'failed', error: createProviderFilteredError() },
+    });
+    await loop.close();
+  });
+
+  it('keeps a step.stopping done verdict ahead of a filtered finish', async () => {
+    const base = fullRequester(() => ({
+      type: 'done',
+      message: createAssistantMessage([{ type: 'text', text: 'partial' }]),
+      finish: { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+    }));
+    const loop = createLoop({
+      requester: base,
+      executor,
+      hook: {
+        'step.stopping': () => ({ type: 'done', cause: { by: 'test', reason: 'stop_turn' } }),
+      },
+    });
+
+    await expect(loop.runTurn(createUserMessage('hello'))).resolves.toEqual({
+      type: 'done',
+      cause: { by: 'test', reason: 'stop_turn' },
+    });
+    await loop.close();
+  });
+
+  it('emits step.ended(blocked) and turn.ended(failed) with the triggering maxSteps', async () => {
+    const call: ToolCall = { type: 'function', id: 'call_1', name: 'work', arguments: '{}' };
+    const base = fullRequester(() => ({
+      type: 'done',
+      message: createAssistantMessage([], [call]),
+    }));
+    let currentMaxSteps: number | undefined = 1;
+    const registry = createLoopHookRegistry();
+    registry.addLoopHook(createMaxStepsHook(() => currentMaxSteps));
+    const tools = new ToolExecutor<LoopToolContext>([{
+      name: 'work',
+      description: 'work',
+      parameters: { type: 'object' },
+      execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    }]);
+    const loop = createLoop({ requester: base, executor: tools, hook: registry.hook });
+    const events: LoopEmitted[] = [];
+    loop.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'step.ended') currentMaxSteps = 9;
+    });
+
+    const outcome = await loop.runTurn(createUserMessage('hello'));
+    expect(outcome).toEqual({ type: 'failed', error: createMaxStepsExceededError(1) });
+    expect(events.find((event) => event.type === 'step.ended')).toMatchObject({
+      outcome: {
+        type: 'blocked',
+        at: 'step.continuing',
+        cause: { by: 'max-steps', reason: 'max_steps', details: { maxSteps: 1 } },
+      },
+    });
+    expect(events.find((event) => event.type === 'turn.ended')).toMatchObject({
+      outcome: { type: 'failed', error: createMaxStepsExceededError(1) },
+    });
     await loop.close();
   });
 });

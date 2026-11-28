@@ -248,7 +248,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       prompts: this.prompts,
       hooks: this.hooks,
       errorHandlers: this.errorHandlers,
-      maxSteps: () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
       cancel: (turnId, reason) => this.cancelActiveTurn(turnId, reason),
       recordStreamPart: (turnId, step, block) => this.journal.recordStreamPart(turnId, step, block),
     });

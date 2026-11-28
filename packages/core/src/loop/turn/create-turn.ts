@@ -4,7 +4,7 @@ import type { UserMessage } from '#/llm/message';
 import type { LlmOutcome, LlmTiming } from '#/llm/response';
 import { withAbort, type AbortScope } from '#/utils/abort';
 import type { LlmMessageTiming } from '../contract/emitted';
-import { STEERED, type Cause, type StepOutcome, type TurnOutcome } from '../contract/outcome';
+import { convergeTurnOutcome, STEERED, type Cause, type StepOutcome, type TurnOutcome } from '../contract/outcome';
 import type { LoopProfile } from '../contract/profile';
 import { hookFailureReports, runtimeFailure } from '#/hook/loop/failure';
 import {
@@ -57,6 +57,13 @@ function draftOutcome(step: TurnStep): StepOutcome {
   return { type: 'continue' };
 }
 
+function isFilteredDraft(step: TurnStep, draft: StepOutcome): boolean {
+  if (draft.type !== 'done' && draft.type !== 'continue') return false;
+  const llm = step.llm;
+  if (llm?.type !== 'done') return false;
+  return (llm.finish?.finishReason ?? llm.message.attributes?.finish?.finishReason) === 'filtered';
+}
+
 class ActorTurn implements Turn {
   readonly done: Promise<TurnOutcome>;
 
@@ -67,6 +74,7 @@ class ActorTurn implements Turn {
   private profile: LoopProfile | undefined;
   private requestId: string | undefined;
   private toolsSettled = false;
+  private filtered = false;
   private started = false;
   private abortFrom: 'created' | TurnPhase | undefined;
   private abortSettling = false;
@@ -637,10 +645,13 @@ class ActorTurn implements Turn {
         draft,
         messages: this.runtime.read().messages,
       };
-      return await runStepEndingHooks(this.runtime.extensions, input, this.scope.signal);
+      const ending = await runStepEndingHooks(this.runtime.extensions, input, this.scope.signal);
+      if (!ending.stoppingDecided && isFilteredDraft(step, draft)) this.filtered = true;
+      return ending;
     } catch (error) {
       return {
         outcome: draft,
+        stoppingDecided: true,
         failures: [{ point: draft.type === 'continue' ? 'step.continuing' : 'step.stopping', failure: runtimeFailure(error) }],
       };
     }
@@ -747,6 +758,7 @@ class ActorTurn implements Turn {
       } catch (error) {
         ending = {
           outcome: step.outcome ?? { type: 'aborted' },
+          stoppingDecided: true,
           failures: [{ point: 'step.stopping', failure: runtimeFailure(error) }],
         };
       }
@@ -760,7 +772,7 @@ class ActorTurn implements Turn {
         }
         this.finalizeStep(proc, step);
       }
-      const outcome = this.state.outcome ?? { type: 'aborted' as const };
+      const outcome = convergeTurnOutcome(this.state.outcome ?? { type: 'aborted' as const }, this.filtered);
       this.setOutcome(proc, outcome);
       this.setPhase(proc, 'finished');
     });

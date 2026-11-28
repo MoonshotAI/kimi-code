@@ -1,7 +1,6 @@
 import type { LoopHooks, StepContinuingEvent } from '#/loop/contract/hook';
+import { MAX_STEPS_REASON } from '#/loop/contract/outcome';
 import type { BlockingHookRegistration } from '#/hook/registry';
-
-export const MAX_STEPS_REASON = 'max_steps';
 
 export function createMaxStepsHook(
   getMaxSteps: () => number | undefined,
