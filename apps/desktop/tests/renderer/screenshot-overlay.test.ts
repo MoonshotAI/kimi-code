@@ -127,6 +127,15 @@ describe('screenshot tools', () => {
     expect(host.querySelector('.shot__dim, .shot__toolbar')).toBeNull();
   });
 
+  it('draws the frame at the logical size of its monitor instead of stretching it over the rounded-up viewport', async () => {
+    const scale = 2.924999952316284;
+    setContext({ ...structuredClone(context), sourceSize: { width: 5760, height: 3240 }, displaySize: { width: 5760 / scale, height: 3240 / scale } });
+    await flush();
+    const frame = host.querySelector<HTMLImageElement>('.shot__frame')!;
+    expect(Number.parseFloat(frame.style.width)).toBeCloseTo(5760 / scale, 2);
+    expect(Number.parseFloat(frame.style.height)).toBeCloseTo(3240 / scale, 2);
+  });
+
   it.each(['zh', 'en'] as const)('clears annotations from the existing trash button while preserving the crop and comment in %s', async (locale) => {
     setContext({ ...structuredClone(context), locale });
     await flush();

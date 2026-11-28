@@ -29,6 +29,7 @@ const displays = [
   { id: 2, bounds: { x: -160, y: 0, width: 160, height: 100 }, scaleFactor: 1 },
 ];
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+let readBackBounds = (bounds: Electron.Rectangle): Electron.Rectangle => bounds;
 const screen = Object.assign(new EventEmitter(), {
   getAllDisplays: () => displays,
   getCursorScreenPoint: () => ({ x: -80, y: 50 }),
@@ -59,7 +60,7 @@ class OverlayWindow extends EventEmitter {
   readonly setVisibleOnAllWorkspaces = vi.fn();
   readonly loadURL = vi.fn().mockResolvedValue(undefined);
   readonly setBounds = vi.fn();
-  readonly getContentBounds = vi.fn(() => this.setBounds.mock.calls.at(-1)?.[0] ?? displays[0]!.bounds);
+  readonly getContentBounds = vi.fn(() => readBackBounds(this.setBounds.mock.calls.at(-1)?.[0] ?? displays[0]!.bounds));
   readonly getBounds = this.getContentBounds;
   destroyed = false;
 
@@ -95,6 +96,7 @@ beforeEach(async () => {
   vi.resetModules();
   vi.useFakeTimers();
   vi.stubEnv('KIMI_SCREENSHOT_FAKE_FRAME', '1');
+  readBackBounds = (bounds) => bounds;
   windows.length = 0;
   ipc.removeAllListeners();
   screen.removeAllListeners();
@@ -158,6 +160,12 @@ async function ready(win: OverlayWindow): Promise<void> {
   ipc.emit(IPC.shotLoaded, { sender: win.webContents });
   ipc.emit(IPC.shotReady, { sender: win.webContents }, captureId(win));
   await vi.advanceTimersByTimeAsync(0);
+}
+
+function placement(display: { id: number; bounds: Electron.Rectangle; scaleFactor: number }): { id: string; monitor: Electron.Rectangle } {
+  const { x, y, width, height } = display.bounds;
+  const scale = display.scaleFactor;
+  return { id: String(9000 + display.id), monitor: { x: x * scale, y: y * scale, width: width * scale, height: height * scale } };
 }
 
 function captureId(win: OverlayWindow): string {
@@ -272,7 +280,7 @@ describe('screenshot startup cancellation and output', () => {
   it('uses composited display frames and forwards only overlay IDs on Windows', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     vi.stubEnv('KIMI_SCREENSHOT_FAKE_FRAME', '0');
-    configureScreenshotOverlay.mockReturnValueOnce('9001').mockReturnValueOnce('9002');
+    configureScreenshotOverlay.mockImplementation((_win: OverlayWindow, display: (typeof displays)[number]) => Promise.resolve(placement(display)));
     getSources.mockResolvedValue(displays.map((display) => ({
       display_id: String(display.id),
       thumbnail: {
@@ -284,7 +292,7 @@ describe('screenshot startup cancellation and output', () => {
     })));
     const result = capture.captureScreenshot();
     await vi.advanceTimersByTimeAsync(0);
-    expect(listScreenshotWindows).toHaveBeenCalledWith(displays, ['9001', '9002']);
+    expect(listScreenshotWindows).toHaveBeenCalledWith(displays, ['9001', '9002'], new Map(displays.map((display) => [String(display.id), placement(display).monitor])));
     expect(captureNativeScreenshotFrames).not.toHaveBeenCalled();
     for (const win of windows) {
       expect(win.show).not.toHaveBeenCalled();
@@ -295,6 +303,100 @@ describe('screenshot startup cancellation and output', () => {
     expect(windows[0]!.showInactive).toHaveBeenCalledOnce();
     capture.cancelScreenshotCapture();
     await expect(result).resolves.toEqual({ status: 'cancelled' });
+  });
+
+  it('keeps Windows overlays that Chromium reads back larger than their display', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    readBackBounds = (bounds) => ({ ...bounds, width: bounds.width + 1, height: bounds.height + 1 });
+    configureScreenshotOverlay.mockImplementation((_win: OverlayWindow, display: (typeof displays)[number]) => Promise.resolve(placement(display)));
+    const result = capture.captureScreenshot();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const win of windows) {
+      win.emit('ready-to-show');
+      await ready(win);
+    }
+    expect(windows[1]!.show).toHaveBeenCalledOnce();
+    capture.cancelScreenshotCapture();
+    await expect(result).resolves.toEqual({ status: 'cancelled' });
+  });
+
+  it('captures fractional-scale Windows displays at the exact pixel size of their monitors', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubEnv('KIMI_SCREENSHOT_FAKE_FRAME', '0');
+    const scale = 1.462499976158142;
+    const fractional = [
+      { id: 1, bounds: { x: 0, y: 0, width: 69, height: 42 }, scaleFactor: scale },
+      { id: 2, bounds: { x: -69, y: 0, width: 69, height: 42 }, scaleFactor: scale },
+    ];
+    const monitors = new Map([['1', { x: 0, y: 0, width: 100, height: 60 }], ['2', { x: -100, y: 0, width: 100, height: 60 }]]);
+    const getAllDisplays = vi.spyOn(screen, 'getAllDisplays').mockReturnValue(fractional);
+    configureScreenshotOverlay.mockImplementation((_win: OverlayWindow, display: (typeof fractional)[number]) => Promise.resolve({ id: String(9000 + display.id), monitor: monitors.get(String(display.id))! }));
+    getSources.mockResolvedValue(fractional.map((display) => ({
+      display_id: String(display.id),
+      thumbnail: { toPNG: () => Buffer.from('png'), toBitmap: () => Buffer.alloc(100 * 60 * 4, 255), getSize: () => ({ width: 100, height: 60 }), isEmpty: () => false },
+    })));
+    try {
+      const result = capture.captureScreenshot();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getSources).toHaveBeenCalledWith({ types: ['screen'], thumbnailSize: { width: 100, height: 100 } });
+      expect(listScreenshotWindows).toHaveBeenCalledWith(fractional, ['9001', '9002'], monitors);
+      for (const win of windows) await ready(win);
+      for (const win of windows) {
+        expect(win.webContents.send).toHaveBeenCalledWith(IPC.shotSetContext, expect.objectContaining({
+          sourceSize: { width: 100, height: 60 },
+          displaySize: { width: 100 / scale, height: 60 / scale },
+        }));
+      }
+      capture.cancelScreenshotCapture();
+      await expect(result).resolves.toEqual({ status: 'cancelled' });
+    } finally {
+      getAllDisplays.mockRestore();
+    }
+  });
+
+  it('rounds the capture size up to whole pixels when monitor geometry is unavailable', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    vi.stubEnv('KIMI_SCREENSHOT_FAKE_FRAME', '0');
+    vi.stubEnv('XDG_SESSION_TYPE', 'x11');
+    const getAllDisplays = vi.spyOn(screen, 'getAllDisplays').mockReturnValue([{ id: 1, bounds: { x: 0, y: 0, width: 69, height: 42 }, scaleFactor: 1.462499976158142 }]);
+    getSources.mockReturnValue(new Promise(() => {}));
+    try {
+      const result = capture.captureScreenshot();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getSources).toHaveBeenCalledWith({ types: ['screen'], thumbnailSize: { width: 101, height: 101 } });
+      capture.cancelScreenshotCapture();
+      await expect(result).resolves.toEqual({ status: 'cancelled' });
+    } finally {
+      getAllDisplays.mockRestore();
+    }
+  });
+
+  it('sizes fake frames to the placed monitors of prewarmed fractional-scale Windows overlays', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const scale = 1.462499976158142;
+    const fractional = [
+      { id: 1, bounds: { x: 0, y: 0, width: 69, height: 42 }, scaleFactor: scale },
+      { id: 2, bounds: { x: -69, y: 0, width: 69, height: 42 }, scaleFactor: scale },
+    ];
+    const monitors = new Map([['1', { x: 0, y: 0, width: 100, height: 60 }], ['2', { x: -100, y: 0, width: 100, height: 60 }]]);
+    const getAllDisplays = vi.spyOn(screen, 'getAllDisplays').mockReturnValue(fractional);
+    configureScreenshotOverlay.mockImplementation((_win: OverlayWindow, display: (typeof fractional)[number]) => Promise.resolve({ id: String(9000 + display.id), monitor: monitors.get(String(display.id))! }));
+    try {
+      await vi.advanceTimersByTimeAsync(1_500);
+      const result = capture.captureScreenshot();
+      await vi.advanceTimersByTimeAsync(0);
+      for (const win of windows) await ready(win);
+      for (const win of windows) {
+        expect(win.webContents.send).toHaveBeenCalledWith(IPC.shotSetContext, expect.objectContaining({
+          sourceSize: { width: 100, height: 60 },
+          displaySize: { width: 100 / scale, height: 60 / scale },
+        }));
+      }
+      capture.cancelScreenshotCapture();
+      await expect(result).resolves.toEqual({ status: 'cancelled' });
+    } finally {
+      getAllDisplays.mockRestore();
+    }
   });
 
   it('cancels an early Escape delivered to the original app window and removes the listener', async () => {
@@ -886,7 +988,7 @@ describe('screenshot overlay visibility', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try {
-      configureScreenshotOverlay.mockResolvedValue('9001');
+      configureScreenshotOverlay.mockImplementation((_win: OverlayWindow, display: (typeof displays)[number]) => Promise.resolve(placement(display)));
       const result = capture.captureScreenshot();
       for (const win of windows) { win.emit('ready-to-show'); await ready(win); }
       await vi.advanceTimersByTimeAsync(0);
@@ -911,15 +1013,15 @@ describe('screenshot overlay visibility', () => {
   });
 
   it('waits for native setup on every display before showing decoded frames', async () => {
-    const finish: Array<(id: string) => void> = [];
-    configureScreenshotOverlay.mockImplementation(() => new Promise<string>((resolve) => { finish.push(resolve); }));
+    const finish: Array<() => void> = [];
+    configureScreenshotOverlay.mockImplementation((_win: OverlayWindow, display: (typeof displays)[number]) => new Promise((resolve) => { finish.push(() => resolve(placement(display))); }));
     const result = capture.captureScreenshot();
     for (const win of windows) { win.emit('ready-to-show'); await ready(win); }
     expect(windows[1]!.show).not.toHaveBeenCalled();
-    finish[0]!('9001');
+    finish[0]!();
     await vi.advanceTimersByTimeAsync(0);
     expect(windows[1]!.show).not.toHaveBeenCalled();
-    finish[1]!('9002');
+    finish[1]!();
     await vi.advanceTimersByTimeAsync(0);
     expect(windows[1]!.show).toHaveBeenCalledOnce();
     if (process.platform === 'win32') {
@@ -939,13 +1041,13 @@ describe('screenshot overlay visibility', () => {
   });
 
   it('does not show or raise windows when setup completes after cancellation', async () => {
-    let finish!: (id: string) => void;
-    configureScreenshotOverlay.mockReturnValue(new Promise<string>((resolve) => { finish = resolve; }));
+    let finish!: () => void;
+    configureScreenshotOverlay.mockReturnValue(new Promise((resolve) => { finish = () => resolve(placement(displays[0]!)); }));
     const result = capture.captureScreenshot();
     for (const win of windows) { win.emit('ready-to-show'); await ready(win); }
     capture.cancelScreenshotCapture();
     await result;
-    finish('9001');
+    finish();
     await vi.advanceTimersByTimeAsync(0);
     for (const win of windows) {
       expect(win.show).not.toHaveBeenCalled();
@@ -980,7 +1082,7 @@ describe('screenshot overlay visibility', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(captureNativeScreenshotFrames).toHaveBeenCalledWith('all-shadows');
     expect(getSources).not.toHaveBeenCalled();
-    expect(listScreenshotWindows).toHaveBeenCalledWith(displays, ['9001', '9002']);
+    expect(listScreenshotWindows).toHaveBeenCalledWith(displays, ['9001', '9002'], new Map());
     expect(windows.every((win) => win.show.mock.calls.length === 0 && win.showInactive.mock.calls.length === 0)).toBe(true);
     for (const win of windows) await ready(win);
     expect(windows[1]!.webContents.send).toHaveBeenCalledWith(IPC.shotSetContext, expect.objectContaining({ sourceSize: { width: 160, height: 100 } }));
@@ -1057,7 +1159,7 @@ describe('screenshot overlay visibility', () => {
       expect(win.options.enableLargerThanScreen).toBe(true);
       expect(win.webContents.setIgnoreMenuShortcuts).toHaveBeenCalledWith(true);
       expect(win.options.webPreferences.backgroundThrottling).toBe(false);
-      expect(configureScreenshotOverlay).toHaveBeenCalledWith(win);
+      expect(configureScreenshotOverlay).toHaveBeenCalledWith(win, displays[windows.indexOf(win)]);
       if (process.platform === 'darwin') {
         expect(win.options.type).toBe('panel');
         expect(win.options.transparent).toBe(true);
@@ -1193,7 +1295,22 @@ describe('screenshot overlay visibility', () => {
     expect(windows).toHaveLength(2);
   });
 
-  it('ignores work-area changes but cancels when display geometry really changes', async () => {
+  it.each([
+    { platform: 'win32', rebuilt: true },
+    { platform: 'darwin', rebuilt: false },
+  ])('rebuilds idle overlays after a work-area change only on Windows ($platform)', async ({ platform, rebuilt }) => {
+    Object.defineProperty(process, 'platform', { value: platform });
+    await vi.advanceTimersByTimeAsync(1_500);
+    const warmed = [...windows];
+    expect(warmed).toHaveLength(displays.length);
+    screen.emit('display-metrics-changed', {}, displays[0], ['workArea']);
+    expect(warmed.map((win) => win.destroyed)).toEqual(warmed.map(() => rebuilt));
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(windows.filter((win) => !win.destroyed)).toHaveLength(displays.length);
+  });
+
+  it.each(['darwin', 'win32'])('ignores work-area changes during a %s capture but cancels when display geometry really changes', async (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform });
     const result = capture.captureScreenshot();
     screen.emit('display-metrics-changed', {}, displays[0], ['workArea']);
     expect(windows.every((win) => !win.destroyed)).toBe(true);

@@ -171,6 +171,7 @@ const s = computed(() => STRINGS[context.value?.locale ?? 'en']);
 const ratioX = computed(() => context.value === null ? 1 : context.value.sourceSize.width / context.value.displaySize.width);
 const ratioY = computed(() => context.value === null ? 1 : context.value.sourceSize.height / context.value.displaySize.height);
 const sourceBounds = computed(() => ({ x: 0, y: 0, width: context.value?.sourceSize.width ?? 1, height: context.value?.sourceSize.height ?? 1 }));
+const frameStyle = computed(() => context.value === null ? {} : { width: `${context.value.displaySize.width}px`, height: `${context.value.displaySize.height}px` });
 const selectionDisplay = computed(() => selection.value === null ? null : displayRect(selection.value, ratioX.value, ratioY.value));
 const hoverRect = computed(() => {
   const ctx = context.value;
@@ -940,7 +941,7 @@ onBeforeUnmount(() => {
     @contextmenu="onContextMenu"
     @wheel="onWheel"
   >
-    <img v-show="frameReady" ref="frameRef" class="shot__frame" alt="" crossorigin="anonymous" draggable="false" />
+    <img v-show="frameReady" ref="frameRef" class="shot__frame" :style="frameStyle" alt="" crossorigin="anonymous" draggable="false" />
     <div
       v-for="(rect, index) in dimRects"
       :key="index"

@@ -105,6 +105,26 @@ describe('screenshot window candidates', () => {
     expect(dipToScreenRect.mock.calls).toEqual(mixed.map((display) => [null, display.bounds]));
   });
 
+  it('converts Windows candidates with the placed monitor rectangle at fractional scaling', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const scale = 2.924999952316284;
+    const display: DisplayLike = { id: 1, bounds: { x: -1970, y: 0, width: 1970, height: 1108 }, scaleFactor: scale };
+    dipToScreenRect.mockReturnValue({ x: -5760, y: 0, width: 5763, height: 3241 });
+    const result = candidatesByDisplay(
+      { units: 'pixels', windows: [{ id: 'right-half', x: -2880, y: 0, width: 2880, height: 3240 }] },
+      [display],
+      new Map([['1', { x: -5760, y: 0, width: 5760, height: 3240 }]]),
+    );
+    expect(result.get('1')).toEqual([{
+      id: 'right-half',
+      x: expect.closeTo(2880 / scale, 9),
+      y: 0,
+      width: expect.closeTo(2880 / scale, 9),
+      height: expect.closeTo(3240 / scale, 9),
+    }]);
+    expect(dipToScreenRect).not.toHaveBeenCalled();
+  });
+
   it.each([1.25, 1.5, 2])('handles negative display origins and %s scaling while preserving window order', (scale) => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     const display = { id: 3, bounds: { x: -800, y: -600, width: 800, height: 600 }, scaleFactor: scale };

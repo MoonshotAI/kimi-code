@@ -3,6 +3,7 @@
 #include <shobjidl.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -47,10 +48,56 @@ BOOL CALLBACK collectWindow(HWND window, LPARAM value) {
   return TRUE;
 }
 
-int configureOverlay(const char* handleArgument, const char* pidArgument, bool inspect) {
+std::string rectJson(const RECT& rect) {
+  return "{\"x\":" + std::to_string(rect.left) + ",\"y\":" + std::to_string(rect.top)
+       + ",\"width\":" + std::to_string(rect.right - rect.left)
+       + ",\"height\":" + std::to_string(rect.bottom - rect.top) + '}';
+}
+
+bool parseCoordinate(const char* argument, long& value) {
   char* end = nullptr;
-  const auto handle = std::strtoull(handleArgument, &end, 10);
-  if (handle == 0 || end == handleArgument || *end != '\0') return 1;
+  errno = 0;
+  const auto parsed = std::strtol(argument, &end, 10);
+  if (end == argument || *end != '\0' || errno == ERANGE) return false;
+  value = parsed;
+  return true;
+}
+
+bool monitorRect(HMONITOR monitor, RECT& rect) {
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  if (monitor == nullptr || !GetMonitorInfoW(monitor, &info)) return false;
+  rect = info.rcMonitor;
+  return true;
+}
+
+int placeOverlay(HWND window, const char* xArgument, const char* yArgument, RECT& monitor) {
+  POINT anchor{};
+  if (!parseCoordinate(xArgument, anchor.x) || !parseCoordinate(yArgument, anchor.y)) {
+    std::cerr << "invalid-monitor-anchor";
+    return 1;
+  }
+  if (!monitorRect(MonitorFromPoint(anchor, MONITOR_DEFAULTTONULL), monitor)) {
+    std::cerr << "overlay-monitor-missing:" << anchor.x << ',' << anchor.y;
+    return 1;
+  }
+  if (!SetWindowPos(window, nullptr, monitor.left, monitor.top, monitor.right - monitor.left, monitor.bottom - monitor.top,
+                    SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING)) {
+    std::cerr << "overlay-placement-failed:" << GetLastError();
+    return 1;
+  }
+  RECT placed{};
+  if (!GetWindowRect(window, &placed) || !EqualRect(&placed, &monitor)) {
+    std::cerr << "overlay-bounds-mismatch:window=" << rectJson(placed) << ",monitor=" << rectJson(monitor);
+    return 1;
+  }
+  return 0;
+}
+
+int configureOverlay(char** argv, bool inspect) {
+  char* end = nullptr;
+  const auto handle = std::strtoull(argv[2], &end, 10);
+  if (handle == 0 || end == argv[2] || *end != '\0') return 1;
   const auto window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(handle));
   if (!IsWindow(window)) {
     std::cerr << "invalid-window";
@@ -58,14 +105,15 @@ int configureOverlay(const char* handleArgument, const char* pidArgument, bool i
   }
   DWORD pid = 0;
   GetWindowThreadProcessId(window, &pid);
-  if (pid != std::strtoul(pidArgument, nullptr, 10)) {
+  if (pid != std::strtoul(argv[3], nullptr, 10)) {
     std::cerr << "window-owner-mismatch";
     return 1;
   }
   const auto style = GetWindowLongPtr(window, GWL_STYLE);
   if (inspect) {
     RECT rect{};
-    if (!GetWindowRect(window, &rect)) return 1;
+    RECT monitor{};
+    if (!GetWindowRect(window, &rect) || !monitorRect(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), monitor)) return 1;
     const POINT point{(rect.left + rect.right) / 2, rect.bottom - 2};
     const HWND top = GetAncestor(WindowFromPoint(point), GA_ROOT);
     char name[256]{};
@@ -73,13 +121,16 @@ int configureOverlay(const char* handleArgument, const char* pidArgument, bool i
     std::cout << "{\"covered\":" << (top == window ? "true" : "false")
               << ",\"foreground\":" << (GetForegroundWindow() == window ? "true" : "false")
               << ",\"exStyle\":" << GetWindowLongPtr(window, GWL_EXSTYLE)
-              << ",\"topClass\":\"" << name << "\",\"style\":" << style << '}';
+              << ",\"topClass\":\"" << name << "\",\"style\":" << style
+              << ",\"window\":" << rectJson(rect) << ",\"monitor\":" << rectJson(monitor) << '}';
     return 0;
   }
   if ((style & (WS_CAPTION | WS_THICKFRAME)) != 0) {
     std::cerr << "overlay-frame-style-present:" << style;
     return 1;
   }
+  RECT monitor{};
+  if (placeOverlay(window, argv[4], argv[5], monitor) != 0) return 1;
   const BOOL disabled = TRUE;
   const HRESULT transition = DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, &disabled, sizeof(disabled));
   if (FAILED(transition)) {
@@ -104,15 +155,14 @@ int configureOverlay(const char* handleArgument, const char* pidArgument, bool i
     return 1;
   }
   std::cout << "{\"ok\":true,\"style\":" << style << ",\"transitionResult\":" << transition
-            << ",\"fullscreenResult\":" << fullscreen << '}';
+            << ",\"fullscreenResult\":" << fullscreen << ",\"monitor\":" << rectJson(monitor) << '}';
   return 0;
 }
 
 int main(int argc, char** argv) {
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-  if (argc > 1 && (std::string(argv[1]) == "configure" || std::string(argv[1]) == "inspect")) {
-    return argc == 4 ? configureOverlay(argv[2], argv[3], std::string(argv[1]) == "inspect") : 1;
-  }
+  if (argc > 1 && std::string(argv[1]) == "configure") return argc == 6 ? configureOverlay(argv, false) : 1;
+  if (argc > 1 && std::string(argv[1]) == "inspect") return argc == 4 ? configureOverlay(argv, true) : 1;
   EnumState state{};
   for (int index = 1; index < argc; ++index) {
     state.excludedWindowIds.push_back(static_cast<std::uintptr_t>(std::strtoull(argv[index], nullptr, 10)));

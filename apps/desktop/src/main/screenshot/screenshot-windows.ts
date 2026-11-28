@@ -68,20 +68,24 @@ function intersect(a: RegionRect, b: RegionRect): RegionRect | null {
 export function candidatesByDisplay(
   list: NativeWindowList,
   displays: readonly DisplayLike[],
+  monitors: ReadonlyMap<string, RegionRect> = new Map(),
 ): Map<string, ScreenshotWindowCandidate[]> {
   const result = new Map<string, ScreenshotWindowCandidate[]>(displays.map((display) => [String(display.id), []]));
-  const regions = displays.map((display) => ({
-    display,
-    bounds: process.platform === 'win32' && list.units === 'pixels'
-      ? screen.dipToScreenRect(null, display.bounds)
-      : display.bounds,
-  }));
+  const regions = displays.map((display) => {
+    const pixels = process.platform === 'win32' && list.units === 'pixels';
+    const monitor = pixels ? monitors.get(String(display.id)) : undefined;
+    const bounds = monitor ?? (pixels ? screen.dipToScreenRect(null, display.bounds) : display.bounds);
+    return {
+      display,
+      bounds,
+      ratioX: monitor === undefined ? display.bounds.width / bounds.width : 1 / display.scaleFactor,
+      ratioY: monitor === undefined ? display.bounds.height / bounds.height : 1 / display.scaleFactor,
+    };
+  });
   for (const window of list.windows) {
-    for (const { display, bounds } of regions) {
+    for (const { display, bounds, ratioX, ratioY } of regions) {
       const visible = intersect(window, bounds);
       if (visible === null) continue;
-      const ratioX = display.bounds.width / bounds.width;
-      const ratioY = display.bounds.height / bounds.height;
       if (visible.width * ratioX < 8 || visible.height * ratioY < 8) continue;
       result.get(String(display.id))?.push({
         id: String(window.id),
@@ -117,7 +121,11 @@ export function fakeCandidatesByDisplay(displays: readonly DisplayLike[]): Map<s
   ]));
 }
 
-export async function listScreenshotWindows(displays: readonly DisplayLike[], excludedWindowIds: readonly string[] = []): Promise<Map<string, ScreenshotWindowCandidate[]>> {
+export async function listScreenshotWindows(
+  displays: readonly DisplayLike[],
+  excludedWindowIds: readonly string[] = [],
+  monitors: ReadonlyMap<string, RegionRect> = new Map(),
+): Promise<Map<string, ScreenshotWindowCandidate[]>> {
   const name = executableName();
   if (name === null) return new Map();
   const path = executablePath(name);
@@ -126,7 +134,7 @@ export async function listScreenshotWindows(displays: readonly DisplayLike[], ex
     const args = [...excludedWindowIds];
     const { stdout } = await execFileAsync(path, args, { encoding: 'utf8', timeout: 1_000, maxBuffer: 1024 * 1024, windowsHide: true });
     const list = parseList(stdout.trim());
-    return list === null ? new Map() : candidatesByDisplay(list, displays);
+    return list === null ? new Map() : candidatesByDisplay(list, displays, monitors);
   } catch (error) {
     log.warn(`[screenshot] window detection unavailable: ${error instanceof Error ? error.message : String(error)}`);
     return new Map();

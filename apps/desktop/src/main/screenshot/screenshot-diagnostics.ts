@@ -10,6 +10,10 @@ import { listScreenshotWindows } from './screenshot-windows';
 import { encodeScreenshotBitmap, screenshotBitmapFrame } from './screenshot-frame';
 import { findSingleDisplaySourceFallback } from './screenshot-source';
 
+function sameRect(a: Electron.Rectangle, b: Electron.Rectangle): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
 function edgeDifference(page: Electron.NativeImage, desktop: Electron.NativeImage): number {
   const { width, height } = page.getSize();
   const other = desktop.getSize();
@@ -49,13 +53,13 @@ export async function runScreenshotDiagnostics(): Promise<void> {
       ].entries()) {
         const window = new BrowserWindow({ ...rect, show: false, frame: index === 1, hasShadow: index === 1, backgroundColor: '#ffffff', title: 'Screenshot diagnostics', webPreferences: { sandbox: true } });
         fixtures.push(window);
-        if (process.platform === 'darwin') await configureScreenshotOverlay(window);
+        if (process.platform === 'darwin') await configureScreenshotOverlay(window, display);
         await window.loadURL('data:text/html,<html><body></body></html>');
         window.show();
       }
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
-    const maxEdge = Math.max(...displays.map((display) => Math.max(display.bounds.width, display.bounds.height) * display.scaleFactor));
+    const maxEdge = Math.ceil(Math.max(...displays.map((display) => Math.max(display.bounds.width, display.bounds.height) * display.scaleFactor)));
     const results: Array<{ mode: string; durationMs: number; sourceDurationMs?: number; encodingDurationMs?: number; pixelsEqual?: boolean; frames: Array<{ displayId: string; width: number; height: number; file: string }>; error?: string }> = [];
     const modes = process.platform === 'darwin' ? ['all-shadows', 'electron', 'default', 'display-shadows'] as const
       : process.platform === 'win32' ? ['electron', 'electron-fast', 'electron-bitmap'] as const : ['electron'] as const;
@@ -91,19 +95,22 @@ export async function runScreenshotDiagnostics(): Promise<void> {
             const displayId = new URL(window.webContents.getURL()).searchParams.get('display');
             const display = displays.find((item) => String(item.id) === displayId)!;
             const contentBounds = window.getContentBounds();
+            const viewport = await window.webContents.executeJavaScript('({ width: innerWidth, height: innerHeight })') as { width: number; height: number };
             let native: unknown;
+            let coversDisplay: boolean;
             if (process.platform === 'win32') {
               const handle = window.getNativeWindowHandle();
               const hwnd = (handle.length >= 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE())).toString();
               const executable = app.isPackaged ? join(process.resourcesPath, 'screenshot-window-list', 'screenshot-window-list.exe') : join(app.getAppPath(), 'native', 'screenshot-window-list', 'dist', 'screenshot-window-list.exe');
               const { stdout } = await promisify(execFile)(executable, ['inspect', hwnd, String(process.pid)], { windowsHide: true, timeout: 2_000 });
-              const inspection = JSON.parse(stdout) as { covered: boolean };
+              const inspection = JSON.parse(stdout) as { covered: boolean; window: Electron.Rectangle; monitor: Electron.Rectangle };
               native = inspection;
               if (!inspection.covered) exitCode = 1;
+              coversDisplay = sameRect(inspection.window, inspection.monitor) && screen.getDisplayMatching(contentBounds).id === display.id;
+            } else {
+              coversDisplay = sameRect(contentBounds, display.bounds) && viewport.width === display.bounds.width && viewport.height === display.bounds.height;
             }
-            const viewport = await window.webContents.executeJavaScript('({ width: innerWidth, height: innerHeight })') as { width: number; height: number };
-            if (contentBounds.x !== display.bounds.x || contentBounds.y !== display.bounds.y || contentBounds.width !== display.bounds.width || contentBounds.height !== display.bounds.height
-              || viewport.width !== display.bounds.width || viewport.height !== display.bounds.height) throw new Error('diagnostics-overlay-bounds-mismatch');
+            if (!coversDisplay) throw new Error('diagnostics-overlay-bounds-mismatch');
             const file = `overlay-${attempt}-${index}.png`;
             const page = await window.webContents.capturePage();
             const png = page.toPNG();

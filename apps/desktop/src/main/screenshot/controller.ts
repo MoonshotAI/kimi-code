@@ -126,7 +126,17 @@ let currentLocale: Locale = 'en';
 let activeSession: CaptureSession | null = null;
 let hotkeyFocusReturnArmed = false;
 let mainWindowVisibleAtTrigger = true;
-const overlayWindows = new Map<string, { window: BrowserWindow; nativeId: string | undefined; nativeReady: boolean; loaded: boolean; painted: boolean }>();
+interface OverlayEntry {
+  window: BrowserWindow;
+  nativeId: string | undefined;
+  nativeReady: boolean;
+  loaded: boolean;
+  painted: boolean;
+  placement?: Promise<RegionRect>;
+  monitor?: RegionRect;
+}
+
+const overlayWindows = new Map<string, OverlayEntry>();
 let warmupTimer: ReturnType<typeof setTimeout> | null = null;
 let shuttingDown = false;
 
@@ -227,6 +237,10 @@ function abortOnDisplayChange(): void {
 
 function onDisplayMetricsChanged(_event: Electron.Event, _display: Electron.Display, metrics: string[]): void {
   if (metrics.some((metric) => metric === 'bounds' || metric === 'scaleFactor' || metric === 'rotation')) abortOnDisplayChange();
+  else if (process.platform === 'win32' && activeSession === null && metrics.includes('workArea')) {
+    for (const { window } of overlayWindows.values()) if (!window.isDestroyed()) window.destroy();
+    scheduleWarmup();
+  }
 }
 
 function scheduleWarmup(): void {
@@ -237,8 +251,8 @@ function scheduleWarmup(): void {
     if (process.platform === 'linux') return;
     try {
       for (const display of screen.getAllDisplays()) getOverlayWindow(display);
-    } catch {
-      log.warn('[screenshot] warmup failed reason=overlay-create-failed');
+    } catch (error) {
+      log.warn(`[screenshot] warmup failed reason=overlay-create-failed:${captureErrorReason(error)}`);
     }
   }, 1_500);
   warmupTimer.unref();
@@ -442,29 +456,27 @@ function getOverlayWindow(display: Electron.Display): BrowserWindow {
     },
   });
   const createdAt = performance.now();
-  let nativeId: ReturnType<typeof configureScreenshotOverlay>;
+  let configured: ReturnType<typeof configureScreenshotOverlay>;
   try {
-    if (process.platform === 'win32') {
-      win.setBounds(display.bounds, false);
-      const actual = win.getContentBounds();
-      if (actual.x !== display.bounds.x || actual.y !== display.bounds.y || actual.width !== display.bounds.width || actual.height !== display.bounds.height) {
-        throw new Error('overlay-bounds-mismatch');
-      }
-    }
-    nativeId = configureScreenshotOverlay(win);
+    if (process.platform === 'win32') win.setBounds(display.bounds, false);
+    configured = configureScreenshotOverlay(win, display);
   } catch (error) {
     win.destroy();
     throw error;
   }
-  const entry = { window: win, nativeId: typeof nativeId === 'string' ? nativeId : undefined, nativeReady: !(nativeId instanceof Promise), loaded: false, painted: false };
+  const entry: OverlayEntry = { window: win, nativeId: typeof configured === 'string' ? configured : undefined, nativeReady: !(configured instanceof Promise), loaded: false, painted: false };
   overlayWindows.set(displayId, entry);
-  if (nativeId instanceof Promise) {
-    void nativeId.then((id) => {
-      if (win.isDestroyed() || overlayWindows.get(displayId) !== entry) return;
-      entry.nativeId = id;
-      entry.nativeReady = true;
-      if (activeSession !== null) showOverlays(activeSession);
-    }).catch((error: unknown) => {
+  if (configured instanceof Promise) {
+    entry.placement = configured.then(({ id, monitor }) => {
+      if (!win.isDestroyed() && overlayWindows.get(displayId) === entry) {
+        entry.nativeId = id;
+        entry.monitor = monitor;
+        entry.nativeReady = true;
+        if (activeSession !== null) showOverlays(activeSession);
+      }
+      return monitor;
+    });
+    void entry.placement.catch((error: unknown) => {
       log.warn(`[screenshot] native setup failed: ${error instanceof Error ? error.message : String(error)}`);
       failOverlay(win, 'overlay-native-setup-failed');
     });
@@ -499,6 +511,19 @@ function getOverlayWindow(display: Electron.Display): BrowserWindow {
   const params = new URLSearchParams({ display: displayId });
   void win.loadURL(rendererPageUrl('screenshot', params)).catch(() => failOverlay(win, 'overlay-load-failed'));
   return win;
+}
+
+async function overlayMonitors(displays: readonly Electron.Display[]): Promise<Map<string, RegionRect> | null> {
+  const monitors = new Map<string, RegionRect>();
+  try {
+    for (const display of displays) {
+      const placement = overlayWindows.get(String(display.id))?.placement;
+      if (placement !== undefined) monitors.set(String(display.id), await placement);
+    }
+  } catch {
+    return null;
+  }
+  return monitors;
 }
 
 function failOverlay(win: BrowserWindow, reason: string): void {
@@ -542,8 +567,12 @@ async function runCapture(session: CaptureSession, fakeFrame: boolean, accessChe
     return;
   }
   session.windows = displays.map((display) => getOverlayWindow(display));
-  const excludedWindowIds = [...overlayWindows.values()].flatMap(({ nativeId }) => nativeId === undefined ? [] : [nativeId]);
-  const candidatePromise = fakeFrame ? Promise.resolve(fakeCandidatesByDisplay(displays)) : listScreenshotWindows(displays, excludedWindowIds);
+  const placed = overlayMonitors(displays);
+  const candidatePromise = fakeFrame
+    ? Promise.resolve(fakeCandidatesByDisplay(displays))
+    : placed.then((monitors) => monitors === null
+      ? new Map<string, ScreenshotWindowCandidate[]>()
+      : listScreenshotWindows(displays, [...overlayWindows.values()].flatMap(({ nativeId }) => nativeId === undefined ? [] : [nativeId]), monitors));
   capturePhase(session, 'capturing');
   let sources: Array<FrameSourceLike & { data: Buffer; format: 'png' | 'bmp' }> = [];
   try {
@@ -566,7 +595,18 @@ async function runCapture(session: CaptureSession, fakeFrame: boolean, accessChe
             thumbnailEmpty: false,
           }));
         } else {
-          const maxEdge = Math.max(...displays.map((display) => Math.max(display.bounds.width, display.bounds.height) * display.scaleFactor));
+          const monitors = await placed;
+          if (!isCurrent(session)) return;
+          if (monitors === null) {
+            settle(session, { status: 'error', reason: 'overlay-native-setup-failed' });
+            return;
+          }
+          const maxEdge = Math.max(...displays.map((display) => {
+            const monitor = monitors.get(String(display.id));
+            return monitor === undefined
+              ? Math.ceil(Math.max(display.bounds.width, display.bounds.height) * display.scaleFactor)
+              : Math.max(monitor.width, monitor.height);
+          }));
           const captured = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxEdge, height: maxEdge } });
           if (!isCurrent(session)) return;
           capturePhase(session, 'sources-ready');
@@ -593,17 +633,19 @@ async function runCapture(session: CaptureSession, fakeFrame: boolean, accessChe
   }
   const result: { matched: Array<{ display: Electron.Display; source: FrameSourceLike }>; skipped: Electron.Display[] } = fakeFrame
     ? {
-        matched: displays.map((display) => ({
-          display,
-          source: {
-            display_id: String(display.id),
-            thumbnailSize: {
-              width: Math.round(display.bounds.width * display.scaleFactor),
-              height: Math.round(display.bounds.height * display.scaleFactor),
+        matched: displays.map((display) => {
+          const monitor = overlayWindows.get(String(display.id))?.monitor;
+          return {
+            display,
+            source: {
+              display_id: String(display.id),
+              thumbnailSize: monitor === undefined
+                ? { width: Math.round(display.bounds.width * display.scaleFactor), height: Math.round(display.bounds.height * display.scaleFactor) }
+                : { width: monitor.width, height: monitor.height },
+              thumbnailEmpty: false,
             },
-            thumbnailEmpty: false,
-          },
-        })),
+          };
+        }),
         skipped: [],
       }
     : matchFramesToDisplays(sources, displays);
@@ -640,13 +682,16 @@ async function runCapture(session: CaptureSession, fakeFrame: boolean, accessChe
     session.frames.set(displayId, frame);
     session.displays.set(displayId, display);
     const win = getOverlayWindow(display);
+    const monitor = overlayWindows.get(displayId)?.monitor;
     session.contexts.set(win.webContents.id, {
       captureId: session.token,
       displayId,
       locale: currentLocale,
       frameUrl: `shot://frame/${session.token}/${displayId}.${frame.format}`,
       sourceSize: source.thumbnailSize,
-      displaySize: { width: display.bounds.width, height: display.bounds.height },
+      displaySize: monitor === undefined
+        ? { width: display.bounds.width, height: display.bounds.height }
+        : { width: monitor.width / display.scaleFactor, height: monitor.height / display.scaleFactor },
       windows: [],
       pointer: displayId === cursorDisplayId ? { x: cursor.x - display.bounds.x, y: cursor.y - display.bounds.y } : null,
     });
@@ -763,7 +808,7 @@ export function captureScreenshot(): Promise<ScreenshotCaptureResult> {
   const session = createSession();
   activeSession = session;
   void runCapture(session, process.env['KIMI_SCREENSHOT_FAKE_FRAME'] === '1').catch((error) => {
-    if (isCurrent(session)) settle(session, { status: 'error', reason: `startup-failed:${error instanceof Error ? error.name : 'unknown'}` });
+    if (isCurrent(session)) settle(session, { status: 'error', reason: `startup-failed:${captureErrorReason(error)}` });
   });
   return session.promise.then((result) => {
     if (result.status === 'ok') showMainWindow();
