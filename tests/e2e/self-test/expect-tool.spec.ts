@@ -1,16 +1,76 @@
-import { askUserQuestion, bash, batch, edit, read, say, write } from '@moonshot-ai/testkit/model';
+import { askUserQuestion, bash, batch, edit, held, read, say, waitFor, write } from '@moonshot-ai/testkit/model';
 
-import { expect, selfTest } from '../support/scenario';
+import { expect, selfTest, selfTestCase } from '../support/scenario';
 
 const PRINT_READY = "printf 'rea%s\\n' dy";
 const PRINT_TWO_LINES_THEN_WAIT = `printf 'st%s\\n' art; ${PRINT_READY}; sleep 30`;
 
+const GATED_BUILD = "printf 'rea%s\\n' dy; while [ ! -f gate.txt ]; do sleep 0.1; done; printf 'don%s\\n' e";
+const LONG_BUILD = "printf 'rea%s\\n' dy; sleep 300";
+const TWO_WAITS = [
+  bash({ command: GATED_BUILD, description: 'Run the slow build', run_in_background: true }),
+  waitFor({ timeout: 1 }),
+  waitFor({ timeout: 90 }),
+  held('reported', say('The build finished.')),
+] as const;
+const WAIT_FOR_CONFIG = {
+  extra: {
+    experimental: {
+      cli: { wait_for: true },
+      desktop: { wait_for: true },
+    },
+  },
+} as const;
+const ONLY_OVER_ACP = {
+  tui: 'This case waits for the usage updates that only an ACP editor receives; the case before it covers the other surfaces.',
+  desktop: 'This case waits for the usage updates that only an ACP editor receives; the case before it covers the other surfaces.',
+  web: 'This case waits for the usage updates that only an ACP editor receives; the case before it covers the other surfaces.',
+};
+const FINISHED_WAIT_ON_ACP =
+  'When the wait sees its task finish, the agent ends the turn and answers in a turn it starts on its own; an ACP editor sees no start of that turn, so the steps cannot wait for its reply.';
+const NO_STEER_ON_ACP = 'ACP has no way to send a message while a turn runs, so nothing can interrupt the wait there.';
 const QUESTION = 'Which database should we use?';
 const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
 const DISMISSED_WITHOUT_QUESTION_ON_TUI = 'The terminal UI shows a dismissed question only as dismissed, without the question it asked.';
 
 selfTest('expectTool', {
   positive: {
+    'finds a wait that timed out, then one that saw its task finish': selfTestCase({ config: WAIT_FOR_CONFIG, except: { acp: FINISHED_WAIT_ON_ACP } }, async ({ product, model, workspace }) => {
+      model.script(...TWO_WAITS);
+      await product.send('Run the slow build and wait for it.');
+      await product.approve();
+      await product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'timed out' });
+      await product.expectTool({ name: 'WaitFor', status: 'running' });
+      await workspace.write('gate.txt', '');
+      await model.hold('reported').reached();
+      model.hold('reported').release();
+      await product.waitIdle();
+      await product.expectReply('The build finished.');
+      await product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'finished' });
+    }),
+    'finds a wait that timed out, then one that saw its task finish, over ACP': selfTestCase({ config: WAIT_FOR_CONFIG, except: ONLY_OVER_ACP }, async ({ product, model, workspace }) => {
+      model.script(...TWO_WAITS);
+      await product.send('Run the slow build and wait for it.');
+      await product.approve();
+      await product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'timed out' });
+      await product.expectTool({ name: 'WaitFor', status: 'running' });
+      await workspace.write('gate.txt', '');
+      await model.hold('reported').reached();
+      model.hold('reported').release();
+      await product.waitForUsageUpdates(2);
+      await product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'finished' });
+      await product.expectTranscript('The build finished.');
+    }),
+    'finds a wait that new input interrupted, before the message that interrupted it': selfTestCase({ config: WAIT_FOR_CONFIG, except: { acp: NO_STEER_ON_ACP } }, async ({ product, model }) => {
+      model.script(bash({ command: LONG_BUILD, description: 'Run the long build', run_in_background: true }), waitFor({ timeout: 90 }), say('Looking at the logs.'));
+      await product.send('Run the long build and wait for it.');
+      await product.approve();
+      await product.expectTool({ name: 'WaitFor', status: 'running' });
+      await product.steer('Look at the logs instead.');
+      await product.waitIdle();
+      await product.expectReply('Looking at the logs.');
+      await product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'interrupted' });
+    }),
     'finds a completed edit by name, target and status': {
       workspace: { 'b.txt': 'old\n' },
       run: async ({ product, model, workspace }) => {
@@ -123,6 +183,32 @@ selfTest('expectTool', {
     },
   },
   negative: {
+    'fails when the wait is over, or ended in another way': selfTestCase({ config: WAIT_FOR_CONFIG, except: { acp: FINISHED_WAIT_ON_ACP } }, async ({ product, model, workspace }) => {
+      model.script(...TWO_WAITS);
+      await product.send('Run the slow build and wait for it.');
+      await product.approve();
+      await product.expectTool({ name: 'WaitFor', status: 'running' });
+      await expect(product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'interrupted' })).rejects.toThrow('WaitFor that ended interrupted');
+      await workspace.write('gate.txt', '');
+      await model.hold('reported').reached();
+      model.hold('reported').release();
+      await product.waitIdle();
+      await product.expectReply('The build finished.');
+      await expect(product.expectTool({ name: 'WaitFor', status: 'running' })).rejects.toThrow('WaitFor still waiting');
+    }),
+    'fails when the wait is over, or ended in another way, over ACP': selfTestCase({ config: WAIT_FOR_CONFIG, except: ONLY_OVER_ACP }, async ({ product, model, workspace }) => {
+      model.script(...TWO_WAITS);
+      await product.send('Run the slow build and wait for it.');
+      await product.approve();
+      await product.expectTool({ name: 'WaitFor', status: 'running' });
+      await expect(product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'interrupted' })).rejects.toThrow('WaitFor that ended interrupted');
+      await workspace.write('gate.txt', '');
+      await model.hold('reported').reached();
+      model.hold('reported').release();
+      await product.waitForUsageUpdates(2);
+      await expect(product.expectTool({ name: 'WaitFor', status: 'running' })).rejects.toThrow('WaitFor still waiting');
+      await product.expectTranscript('The build finished.');
+    }),
     'fails when the question asked was a different one': {
       run: async ({ product, model }) => {
         model.script(ASK, say('Noted the choice.'));

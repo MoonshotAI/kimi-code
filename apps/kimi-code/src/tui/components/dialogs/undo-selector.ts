@@ -8,15 +8,19 @@ import {
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
-import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
+import {
+  DockSection,
+  finishDialogLines,
+  type DockLayout,
+  type DockPart,
+} from '#/tui/components/chrome/dock-section';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import {
-  finishDialogLines,
   focusOnUnfocusedMouse,
   handleSearchableListMouse,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import type { InlineSkillActivation } from '../../types';
 

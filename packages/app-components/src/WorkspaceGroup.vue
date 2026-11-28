@@ -6,6 +6,7 @@ import SessionRow from './SessionRow.vue';
 import { useSessionDrag, usePinnedReturnTarget } from './composables/useSessionDrag';
 import { Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { nativePath } from '@moonshot-ai/app-core/lib';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 
 const { t } = useI18n();
@@ -177,7 +178,7 @@ function onHeaderDragStart(event: DragEvent): void {
         <Icon v-else-if="isCollapsed(group.workspace.id)" class="gh-folder" name="folder-closed" />
         <Icon v-else class="gh-folder" name="folder" />
 
-        <Tooltip v-if="renamingId !== group.workspace.id && !workspaceHoverEnabled" :text="group.workspace.root">
+        <Tooltip v-if="renamingId !== group.workspace.id && !workspaceHoverEnabled" :text="nativePath(group.workspace.root)">
           <span class="gh-name">{{ group.workspace.name }}</span>
         </Tooltip>
         <span v-else-if="renamingId !== group.workspace.id" class="gh-name">{{ group.workspace.name }}</span>

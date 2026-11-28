@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { OpenInServiceKey, type OpenInAppEntry } from '@moonshot-ai/app-client/contracts';
 import { resolvePreferredOpenInTarget, useDefaultOpenInTarget } from '../lib/openInTarget';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, nativePath } from '@moonshot-ai/app-core/lib';
 import { Icon, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
@@ -135,7 +135,7 @@ const copiedPath = ref(false);
 async function copyPath(): Promise<void> {
   const path = openTargetPath.value;
   if (!path) return;
-  const ok = await copyTextToClipboard(path);
+  const ok = await copyTextToClipboard(nativePath(path));
   if (!ok) return;
   copiedPath.value = true;
   setTimeout(() => { copiedPath.value = false; }, 1200);

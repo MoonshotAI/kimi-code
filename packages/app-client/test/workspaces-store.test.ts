@@ -127,6 +127,53 @@ describe('workspacesView ordering', () => {
     store.fsHome = '/Users/x';
     expect(store.workspacesView[0]!.shortPath).toBe('/home/x/code/app');
   });
+
+  it('shortens a Windows home whichever separators it uses and shows local roots in native form', () => {
+    const store = workspacesStore();
+    store.workspaces = [
+      makeWorkspace('slashed', 'C:/Users/me/code/app'),
+      makeWorkspace('native', 'C:\\Users\\me\\notes'),
+      makeWorkspace('home', 'c:/users/me'),
+      makeWorkspace('sibling', 'C:/Users/meow/app'),
+      makeWorkspace('other-drive', 'D:/work/app'),
+    ];
+    store.fsHome = 'C:\\Users\\me';
+    expect(Object.fromEntries(store.workspacesView.map((w) => [w.id, w.shortPath]))).toEqual({
+      slashed: '~\\code\\app',
+      native: '~\\notes',
+      home: '~',
+      sibling: 'C:\\Users\\meow\\app',
+      'other-drive': 'D:\\work\\app',
+    });
+  });
+
+  it('keeps the separator after a home whose name changes length when lowercased', () => {
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('a', 'C:/Users/İlker/code')];
+    store.fsHome = 'C:\\Users\\İlker';
+    expect(store.workspacesView[0]!.shortPath).toBe('~\\code');
+  });
+
+  it('shortens only paths inside a known POSIX home and guesses the home only before it is known', () => {
+    const store = workspacesStore();
+    store.workspaces = [
+      makeWorkspace('inside', '/Users/x/code/app'),
+      makeWorkspace('sibling', '/Users/xy/app'),
+      makeWorkspace('other-user', '/Users/y/app'),
+    ];
+    const shortPaths = () => Object.fromEntries(store.workspacesView.map((w) => [w.id, w.shortPath]));
+    store.fsHome = '/Users/x/';
+    expect(shortPaths()).toEqual({ inside: '~/code/app', sibling: '/Users/xy/app', 'other-user': '/Users/y/app' });
+    store.fsHome = null;
+    expect(shortPaths()).toEqual({ inside: '~/code/app', sibling: '~/app', 'other-user': '~/app' });
+  });
+
+  it('shows a Windows root on a remote host in native form without shortening it', () => {
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('a', 'D:/work/app', { hostId: 'winbox' })];
+    store.fsHome = 'D:\\work';
+    expect(store.workspacesView[0]!.shortPath).toBe('D:\\work\\app');
+  });
 });
 
 describe('ordering actions', () => {
@@ -1336,6 +1383,45 @@ describe('saveWorkspace', () => {
     });
     expect(setWorkspacePrimary).toHaveBeenCalledWith('wm_1', '/b');
     expect(setWorkspacePrimary.mock.invocationCallOrder[0]).toBeLessThan(updateWorkspace.mock.invocationCallOrder[0]!);
+  });
+
+  it('promotes a picked directory that is registered under the other separator form without adding it again', async () => {
+    const promoted = makeWorkspace('wm_1', 'C:/repo/b', { name: 'Old', additionalDirs: ['C:/repo/a'] });
+    const updated = makeWorkspace('wm_1', 'C:/repo/b', { name: 'New', additionalDirs: ['C:/repo/a'] });
+    const updateWorkspace = vi.fn().mockResolvedValue(updated);
+    const setWorkspacePrimary = vi.fn().mockResolvedValue(promoted);
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wm_1', 'C:/repo/a', { name: 'Old', additionalDirs: ['C:/repo/b'] })];
+
+    const ok = await store.saveWorkspace({
+      id: 'wm_1',
+      name: 'New',
+      additionalDirs: ['C:/repo/a'],
+      primary: 'C:\\repo\\b',
+    });
+
+    expect(ok).toBe(true);
+    expect(updateWorkspace).toHaveBeenCalledOnce();
+    expect(updateWorkspace).toHaveBeenCalledWith('wm_1', { name: 'New', additionalDirs: ['C:/repo/a'] });
+    expect(setWorkspacePrimary).toHaveBeenCalledWith('wm_1', 'C:\\repo\\b');
+  });
+
+  it('keeps the primary when the picked primary is the current root under the other separator form', async () => {
+    const updated = makeWorkspace('wm_1', 'C:/repo/a', { name: 'New', additionalDirs: [] });
+    const updateWorkspace = vi.fn().mockResolvedValue(updated);
+    const setWorkspacePrimary = vi.fn();
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wm_1', 'C:/repo/a', { name: 'Old', additionalDirs: [] })];
+
+    const ok = await store.saveWorkspace({ id: 'wm_1', name: 'New', primary: 'C:\\repo\\a' });
+
+    expect(ok).toBe(true);
+    expect(setWorkspacePrimary).not.toHaveBeenCalled();
+    expect(updateWorkspace).toHaveBeenCalledExactlyOnceWith('wm_1', { name: 'New' });
   });
 
   it('falls back to an id-keyed local override on 40410 rename-only', async () => {

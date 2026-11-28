@@ -18,6 +18,18 @@ selfTest('answerOther', {
         await product.expectReply('Noted the choice.');
       },
     },
+    'types an answer to a question asked after another tool, whose group of tool calls folds as soon as the model replies': {
+      workspace: { 'a.txt': 'hello\n' },
+      run: async ({ product, model }) => {
+        model.script(read('a.txt'), ASK, say('Noted the choice.'));
+        await product.send('Read a.txt, then help me choose a database.');
+        await product.answerOther('Whatever the team already runs');
+        await product.waitIdle();
+        expect(model.requests('main')).toHaveLength(3);
+        expect(JSON.parse(model.requests('main')[2]?.texts('tool').at(-1) ?? 'null')).toEqual({ answers: { [QUESTION]: 'Whatever the team already runs' } });
+        await product.expectReply('Noted the choice.');
+      },
+    },
   },
   negative: {
     'fails when the turn ends without asking a question': {

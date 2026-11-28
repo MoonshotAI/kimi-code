@@ -22,6 +22,11 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IConfigService } from '#/app/config/config';
+import { DEFAULT_MCP_STARTUP_WAIT_MS, MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { sanitizeMcpNamePart } from '#/mcpCore/tool-naming';
+import { timeoutOutcome } from '#/_base/utils/promise';
 
 import {
   collectCurrentDynamicTools,
@@ -76,6 +81,8 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
+    @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
+    @IConfigService private readonly configService: IConfigService,
   ) {
     super();
     this.states.contributeState(toolSelectKey);
@@ -123,11 +130,26 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private async reconcileForRequest(signal: AbortSignal | undefined, publishInitialization: boolean): Promise<void> {
     const work = this.reconcileTail.then(async () => {
+      await this.awaitInitialMcp(signal);
       if (publishInitialization) await this.publishDeferredInitialization();
       await this.reconcile(signal, publishInitialization);
     });
     this.reconcileTail = work.catch(() => {});
     await (signal === undefined ? work : abortable(work, signal));
+  }
+
+  private async awaitInitialMcp(signal?: AbortSignal): Promise<void> {
+    const waitMs =
+      this.configService.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs ?? DEFAULT_MCP_STARTUP_WAIT_MS;
+    const remainingMs = waitMs - this.mcpHandle.connectionManager.initialLoadDurationMs();
+    if (remainingMs <= 0) return;
+    const deadline = timeoutOutcome(remainingMs, undefined);
+    try {
+      const settled = Promise.race([this.mcpHandle.ready, deadline]);
+      await (signal === undefined ? settled : abortable(settled, signal));
+    } finally {
+      deadline.clear();
+    }
   }
 
   defaultTools(disclosure = this.enabled()): readonly Tool[] {
@@ -432,8 +454,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       if (!this.isDynamicallyLoadable(previous) || !this.isDynamicallyLoadable(next)) return [];
       return [{ removed: previous, added: next }];
     });
+    const pendingMcpPrefixes = this.mcpHandle.connectionManager.list()
+      .filter((entry) => entry.status === 'pending')
+      .map((entry) => `mcp__${sanitizeMcpNamePart(entry.name)}__`);
     const removed = [
-      ...current.filter((tool) => !activeNames.has(tool.name)),
+      ...current.filter((tool) =>
+        !activeNames.has(tool.name) &&
+        !(tool.source === 'mcp' && pendingMcpPrefixes.some((prefix) => tool.name.startsWith(prefix)))),
       ...replaced.map((change) => change.removed),
     ];
     const added = [

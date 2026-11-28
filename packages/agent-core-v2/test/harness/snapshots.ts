@@ -49,7 +49,10 @@ export function eventSnapshot(
 ) {
   const normalized = events.map((event) => {
     let stableEvent = event;
-    if (event.type === '[wire]' && event.event === 'tool_select.initialized') {
+    if (
+      event.type === '[wire]' &&
+      (event.event === 'tool_select.initialized' || event.event === 'tools.settled')
+    ) {
       const args = event.args as { readonly tools: readonly { readonly name: string }[] };
       stableEvent = {
         ...event,

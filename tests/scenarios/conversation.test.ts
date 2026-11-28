@@ -3,8 +3,8 @@ import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { bashPathOf, deferred, solidPng } from '@moonshot-ai/testkit/fixtures';
-import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
-import { agent, bash, call, fakeModelConfig, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
+import type { KapFrame, KapItem, KapSession, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
+import { agent, bash, batch, call, fakeModelConfig, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
@@ -235,7 +235,7 @@ describe('conversation over KAP', () => {
     expect(tool?.text.replace(/^Wall time: \d+\.\d{3} seconds\n/, '')).toBe(`${bashPathOf(await realpath(subdirectory))}\n`);
   });
 
-  test('waits for approval in manual mode, shows it on the tool item and runs the tool once approved', async ({ kap, model }) => {
+  test('waits for approval in manual mode, shows it on the tool item and the session, and runs the tool once approved', async ({ kap, model }) => {
     model.script(bash('printf approved-run'), say('done'));
     const socket = await kap.connect();
     const session = await kap.createSession();
@@ -247,6 +247,7 @@ describe('conversation over KAP', () => {
     expect(interaction).toMatchObject({ kind: 'approval', tool_call_id: callId, request: { tool_name: 'Bash' } });
     expect(model.requests()).toHaveLength(1);
     await socket.waitFor((frame) => frame.type === 'item.started' && itemOf(frame)?.item_id === callId);
+    await socket.waitFor((frame) => frame.type === 'session' && sessionOf(frame)?.id === session.id && sessionOf(frame)?.pending_interaction === 'approval');
 
     await kap.answer(session.id, interaction.interaction_id, { kind: 'approval', decision: 'approved' });
     await kap.waitIdle(session.id);
@@ -277,6 +278,31 @@ describe('conversation over KAP', () => {
     );
     expect(toolFrames.filter((frame) => frame.type === 'item.ended')).toHaveLength(1);
     expect(socket.turns(session.id)).toEqual(turns);
+  });
+
+  test('asks to approve each of two commands from one reply and runs each once after its approval', async ({ kap, model }) => {
+    model.script(batch(bash("printf 'one\\n'"), bash("printf 'two\\n'")), say('both ran'));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    await kap.prompt(session.id, 'run both', { permissionMode: 'manual' });
+    const asked: unknown[] = [];
+    await kap.waitIdle(session.id, {
+      onInteraction: async (interaction) => {
+        asked.push(interaction.tool_call_id);
+        await kap.answer(session.id, interaction.interaction_id, { kind: 'approval', decision: 'approved' });
+      },
+    });
+
+    expect(asked).toEqual([model.callId(0, 0), model.callId(0, 1)]);
+    expect(model.requests('main')).toHaveLength(2);
+    expect(model.request(1).view.messages.filter((message) => message.role === 'tool').map((message) => message.callId)).toEqual(asked);
+    const [turn] = await kap.turns(session.id);
+    expect(turn?.items.filter((item) => item.type === 'tool_call').map((item) => [item.item_id, item['outcome'], item['output']])).toEqual([
+      [model.callId(0, 0), 'completed', 'one\n'],
+      [model.callId(0, 1), 'completed', 'two\n'],
+    ]);
   });
 
   test('tells the model when the user rejects a tool call', async ({ kap, model }) => {
@@ -355,6 +381,49 @@ describe('conversation over KAP', () => {
     });
     await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: false });
     expect(await kap.session(session.id)).toMatchObject({ activity: 'idle', last_turn_outcome: 'interrupted' });
+  });
+
+  test('leaves no running item in a turn stopped while its reply was streaming', async ({ kap, model }) => {
+    model.script(held('mid-reply', think('pondering', say(['partial ', 'answer'])), 2));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    await kap.prompt(session.id, 'explain slowly');
+    await model.hold('mid-reply').reached();
+    await socket.waitFor((frame) => frame.type === 'item.started' && itemOf(frame)?.type === 'assistant_message');
+    await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: true });
+    await expect.poll(() => model.request(0).state).toBe('aborted');
+    await kap.waitIdle(session.id);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
+
+    const turns = await kap.turns(session.id);
+    expect(turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted' });
+    expect(turns[0]?.items.filter((item) => item['status'] === 'running')).toEqual([]);
+    expect(socket.turns(session.id)).toEqual(turns);
+  });
+
+  test('keeps what a command printed before the user stopped it on its interrupted tool item, also after a restart', async ({ kap, model }) => {
+    model.script(bash(`${printLine('partial output')}; sleep 30`));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+    const callId = model.callId(0, 0);
+    const liveOutput = () => {
+      const output = socket.turns(session.id)[0]?.items.find((item) => item.item_id === callId)?.['output'];
+      return typeof output === 'string' ? output : '';
+    };
+    const stoppedCommand = async () => (await kap.turns(session.id)).flatMap((turn) => turn.items).find((item) => item.item_id === callId);
+
+    await kap.prompt(session.id, 'run a long command');
+    await socket.waitFor(() => liveOutput().includes('partial output'));
+    await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: true });
+    expect((await kap.waitIdle(session.id)).last_turn_outcome).toBe('interrupted');
+
+    const interrupted = { status: 'ended', outcome: 'interrupted', error: expect.stringContaining('partial output') };
+    expect(await stoppedCommand()).toMatchObject(interrupted);
+    await kap.restart();
+    expect(await stoppedCommand()).toMatchObject(interrupted);
   });
 
   test('keeps a background command running on cancel until the client also asks to stop background work, then tells the model it was stopped', async ({ kap, model }) => {
@@ -693,6 +762,36 @@ describe('conversation over KAP', () => {
     expect(await kap.turns(session.id)).toHaveLength(2);
   });
 
+  test('tells a resumed session about a project folder added while it was closed, with its skills and skill root', async ({ kap, model }) => {
+    const app = join(kap.home.workspace, 'app');
+    const lib = join(kap.home.workspace, 'lib');
+    for (const dir of [app, lib]) await mkdir(join(dir, '.git'), { recursive: true });
+    const libSkill = join(lib, '.agents', 'skills', 'lib-helper');
+    await mkdir(libSkill, { recursive: true });
+    await writeFile(join(libSkill, 'SKILL.md'), '---\nname: lib-helper\ndescription: Helps with the lib folder\n---\n\nUse the lib folder.\n');
+    const project = await kap.rest.post<{ id: string; root: string }>('/api/v1/workspaces', { root: app, idempotency_key: 'resume-added-folder' });
+    const session = await kap.rest.post<{ id: string }>('/api/v1/sessions', { metadata: { cwd: project.root }, workspace_id: project.id });
+    model.script(say('first answer'), say('second answer'));
+    await kap.prompt(session.id, 'one');
+    await kap.waitIdle(session.id);
+
+    await kap.restart();
+    await kap.rest.patch(`/api/v1/workspaces/${project.id}`, { additional_dirs: [lib] });
+    await kap.prompt(session.id, 'two');
+    await kap.waitIdle(session.id);
+
+    const libRoot = await realpath(join(lib, '.agents', 'skills'));
+    expect(model.request(0).view.system).not.toContain(libRoot);
+    const reminders = model.request(1).remindersSinceReply;
+    const skillListings = reminders.filter((text) => text.includes('The skill catalog changed'));
+    const dirChanges = reminders.filter((text) => text.includes('Project directory configuration changed.'));
+    expect(skillListings).toHaveLength(1);
+    expect(dirChanges).toHaveLength(1);
+    expect(skillListings[0]).toContain('- lib-helper: Helps with the lib folder');
+    expect(skillListings[0]).toContain(`- \`${libRoot}\``);
+    expect(dirChanges[0]).toContain(`Added directories: ${await realpath(lib)}.`);
+  });
+
   test('routes subagent requests to their own lane', async ({ kap, model }) => {
     model.script(agent({ prompt: 'inspect the workspace', description: 'scout' }), say('summary done'));
     model.lane('subagent').script(say('subagent findings'));
@@ -980,6 +1079,10 @@ function itemOf(frame: KapFrame): KapItem | undefined {
 
 function turnOf(frame: KapFrame): KapTurn | undefined {
   return frame['turn'] as KapTurn | undefined;
+}
+
+function sessionOf(frame: KapFrame): KapSession | undefined {
+  return frame['session'] as KapSession | undefined;
 }
 
 function isMainAgentFrame(frame: KapFrame, sessionId: string): boolean {

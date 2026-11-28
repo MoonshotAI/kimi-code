@@ -1,5 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
-import { say } from '@moonshot-ai/testkit/model';
+import { call, say } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/message';
@@ -18,6 +18,8 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { IEventBus } from '#/app/event/eventBus';
+import { restoreLoopJournal } from '#/agent/loop/journal';
+import { IWireService } from '#/wire/wire';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptCompleted, PromptStarted, PromptSubmitted } from '#/agent/prompt/promptEvents';
@@ -25,6 +27,7 @@ import type { ExecutableTool } from '#/tool/toolContract';
 import type { ProcessTaskInfo } from '#/agent/task/types';
 
 import {
+  configServices,
   createTestAgent,
   InMemoryWireRecordPersistence,
   providerHttpError,
@@ -1023,5 +1026,225 @@ testkitTest(
     }).turn;
     await expect(second.result).resolves.toMatchObject({ type: 'completed' });
     expect(finished).toEqual([1]);
+  },
+);
+
+testkitTest(
+  'restores persisted baseline tools verbatim across policy changes and persists forked subagent baselines',
+  async ({ agent, model }) => {
+    const alpha: ExecutableTool = {
+      name: 'Alpha',
+      description: 'Alpha persisted schema.',
+      parameters: { type: 'object', properties: { a: { type: 'string' } } },
+      resolveExecution: () => ({ approvalRule: 'Alpha', execute: async () => ({ output: 'a' }) }),
+    };
+    const beta: ExecutableTool = {
+      name: 'Beta',
+      description: 'Beta persisted schema.',
+      parameters: { type: 'object', properties: { b: { type: 'string' } } },
+      resolveExecution: () => ({ approvalRule: 'Beta', execute: async () => ({ output: 'b' }) }),
+    };
+    agent.get(IAgentToolRegistryService).register(alpha);
+    agent.get(IAgentToolRegistryService).register(beta);
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    await loop.start();
+    const parentBaseline = structuredClone(loop.baselineTools());
+
+    const childContext = await agent.get(IAgentLifecycleService).fork(agent.agentContext, { agentId: 'child-baseline' });
+    const childHandle = agent.get(IAgentLifecycleService).handleOf(childContext.agentId)!;
+    const childLoop = childHandle.accessor.get(IAgentLoopService);
+    expect(childLoop.baselineTools()).toEqual(parentBaseline);
+    const childWire = childHandle.accessor.get(IWireService);
+    await childWire.flush();
+    const childRecords = (await childWire.readRestoreChains()).journal;
+    expect(childRecords.filter((record) => record.type === 'tools.settled')).toHaveLength(1);
+    const childLoopRecords = childWire.readLoopChain().map(({ record }) => record);
+    expect(restoreLoopJournal(childLoopRecords).input.profile?.tools).toEqual(parentBaseline);
+
+    model.script(say('seed'));
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'seed' }] });
+    await agent.untilTurnEnd();
+    const mainRecords = await agent.persistedWireRecords();
+    expect(mainRecords.some((record) => record.type === 'tools.settled')).toBe(true);
+    expect(mainRecords.some((record) => record.type === 'tool_select.initialized')).toBe(true);
+    const baseConfig = structuredClone(agent.get(IConfigService).getAll());
+    const disabledConfig = configServices(() => ({ ...baseConfig, tools: { disabled: ['Beta'] } }) as never);
+
+    const resumed = createTestAgent(
+      wireRecordPersistenceServices(new InMemoryWireRecordPersistence(mainRecords)),
+      disabledConfig,
+    );
+    const legacy = createTestAgent(
+      wireRecordPersistenceServices(new InMemoryWireRecordPersistence(
+        mainRecords.filter((record) => record.type !== 'tools.settled'),
+      )),
+      disabledConfig,
+    );
+    try {
+      await resumed.restorePersisted();
+      expect(resumed.get(IAgentLoopService).baselineTools()).toEqual(parentBaseline);
+
+      await legacy.restorePersisted();
+      expect(legacy.get(IAgentLoopService).baselineTools()).toEqual(
+        parentBaseline.filter((tool) => tool.name !== 'Beta'),
+      );
+    } finally {
+      await resumed.dispose();
+      await legacy.dispose();
+    }
+  },
+);
+
+testkitTest(
+  'persists the pre-resolver baseline once on the first turn and restores it over registry changes',
+  async ({ agent, model }) => {
+    const lookupV1: ExecutableTool<{ query: string }> = {
+      name: 'Lookup',
+      description: 'Original lookup schema.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      resolveExecution: () => ({
+        approvalRule: 'Lookup',
+        execute: async () => ({ output: 'v1' }),
+      }),
+    };
+    agent.get(IAgentToolRegistryService).register(lookupV1);
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    await loop.start();
+    const baseline = structuredClone(loop.baselineTools());
+
+    const beforeAnyTurn = await agent.persistedWireRecords();
+    expect(beforeAnyTurn.filter((record) => record.type === 'tools.settled')).toHaveLength(0);
+
+    model.script(say('first'));
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'first' }] });
+    await agent.untilTurnEnd();
+    expect((await agent.persistedWireRecords()).filter((record) => record.type === 'tools.settled')).toHaveLength(1);
+
+    model.script(say('second'));
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'second' }] });
+    await agent.untilTurnEnd();
+
+    const records = await agent.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'tools.settled')).toHaveLength(1);
+
+    const persistence = new InMemoryWireRecordPersistence(records);
+    const resumed = createTestAgent(wireRecordPersistenceServices(persistence), { model });
+    try {
+      const lookupV2: ExecutableTool = {
+        name: 'Lookup',
+        description: 'Rewritten lookup schema from current registry.',
+        parameters: { type: 'object', properties: { renamed: { type: 'number' } } },
+        resolveExecution: () => ({
+          approvalRule: 'Lookup',
+          execute: async () => ({ output: 'v2' }),
+        }),
+      };
+      const lateTool: ExecutableTool = {
+        name: 'LateTool',
+        description: 'Registered only in the new process.',
+        parameters: { type: 'object', properties: {} },
+        resolveExecution: () => ({
+          approvalRule: 'LateTool',
+          execute: async () => ({ output: 'late' }),
+        }),
+      };
+      resumed.get(IAgentToolRegistryService).register(lookupV2);
+      resumed.get(IAgentToolRegistryService).register(lateTool);
+      await resumed.get(IConfigService).set('tools', { disabled: ['LateTool'] });
+      await resumed.restorePersisted();
+
+      const resumedLoop = resumed.get(IAgentLoopService);
+      expect(resumedLoop.baselineTools()).toEqual(baseline);
+      expect(resumedLoop.previewRequestContent().tools).toEqual(baseline);
+
+      model.script(say('resumed answer'));
+      await resumed.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await resumed.untilTurnEnd();
+
+      const outbound = model.requests('main').at(-1)!.view.tools;
+      expect(outbound.find((tool) => tool.name === 'Lookup')).toMatchObject({
+        description: 'Original lookup schema.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      });
+      expect(outbound.some((tool) => tool.name === 'LateTool')).toBe(false);
+      await resumed.get(IWireService).flush();
+      expect(persistence.records.filter((record) => record.type === 'tools.settled')).toHaveLength(1);
+    } finally {
+      await resumed.dispose();
+    }
+  },
+);
+
+testkitTest(
+  'keeps settled baselines intact across restarts under new disables while execution policy still vetoes calls',
+  async ({ agent, model }) => {
+    const alpha: ExecutableTool = {
+      name: 'Alpha',
+      description: 'Alpha schema.',
+      parameters: { type: 'object', properties: {} },
+      resolveExecution: () => ({ approvalRule: 'Alpha', execute: async () => ({ output: 'a' }) }),
+    };
+    const echo: ExecutableTool = {
+      name: 'mcp__srv__echo',
+      description: 'Echo schema.',
+      parameters: { type: 'object', properties: {} },
+      resolveExecution: () => ({ approvalRule: 'mcp__srv__echo', execute: async () => ({ output: 'echo' }) }),
+    };
+    agent.get(IAgentToolRegistryService).register(alpha);
+    agent.get(IAgentToolRegistryService).register(echo, { source: 'mcp' });
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    await loop.start();
+    const baseline = structuredClone(loop.baselineTools());
+
+    model.script(say('seed'));
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'seed' }] });
+    await agent.untilTurnEnd();
+
+    loop.update({ disallowedTools: ['Alpha', 'mcp__srv__*'] });
+    expect(loop.baselineTools()).toEqual(baseline);
+    await agent.dispatcher.flush();
+
+    const records = await agent.persistedWireRecords();
+    expect(records.filter((record) => record.type === 'tools.settled')).toHaveLength(1);
+    const persistence = new InMemoryWireRecordPersistence(records);
+    const resumed = createTestAgent(wireRecordPersistenceServices(persistence), { model });
+    try {
+      resumed.get(IAgentToolRegistryService).register(alpha);
+      resumed.get(IAgentToolRegistryService).register(echo, { source: 'mcp' });
+      await resumed.get(IConfigService).set('tools', { disabled: ['Alpha', 'mcp__srv__*'] });
+      await resumed.restorePersisted();
+      await resumed.rpc.setPermission({ mode: 'yolo' });
+
+      const resumedLoop = resumed.get(IAgentLoopService);
+      expect(resumedLoop.baselineTools()).toEqual(baseline);
+      expect(resumedLoop.previewRequestContent().tools).toEqual(baseline);
+
+      model.script(
+        call('Alpha', {}, { id: 'call-alpha' }),
+        call('mcp__srv__echo', {}, { id: 'call-echo' }),
+        say('after calls'),
+      );
+      await resumed.rpc.prompt({ input: [{ type: 'text', text: 'call both tools' }] });
+      await resumed.untilTurnEnd();
+
+      const outboundNames = model.requests('main')[1]!.view.tools.map((tool) => tool.name);
+      expect(outboundNames).toContain('Alpha');
+      expect(outboundNames).toContain('mcp__srv__echo');
+
+      const toolResults = resumedLoop.history().filter((message) => message.role === 'tool');
+      expect(toolResults).toHaveLength(2);
+      for (const result of toolResults) {
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.content)).toContain('is disabled by the active tool policy');
+      }
+
+      await resumed.get(IWireService).flush();
+      expect(persistence.records.filter((record) => record.type === 'tools.settled')).toHaveLength(1);
+    } finally {
+      await resumed.dispose();
+    }
   },
 );

@@ -11,18 +11,22 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
-import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
+import {
+  DockSection,
+  finishDialogLines,
+  type DockLayout,
+  type DockPart,
+} from '#/tui/components/chrome/dock-section';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import {
-  finishDialogLines,
   focusOnUnfocusedMouse,
   handleSearchableListMouse,
   handleSearchableListWheel,
   handleSegmentedMouse,
   type MouseColRegion,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';

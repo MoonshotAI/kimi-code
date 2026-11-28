@@ -78,7 +78,7 @@ import type {
   ContextClear,
   ContextUndo,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
-import type { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnCancel, TurnEnded, TurnPrompt, TurnSteer, ToolsSettled } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
   TurnStepInterrupted,
   TurnStepRetrying,
@@ -208,6 +208,7 @@ export type AgentRecord =
   | WireRecordOf<'tools.register_user_tool', ToolsRegisterUserTool>
   | WireRecordOf<'tools.reset_active_tools', ToolsResetActiveTools>
   | WireRecordOf<'tools.set_active_tools', ToolsSetActiveTools>
+  | WireRecordOf<'tools.settled', ToolsSettled>
   | WireRecordOf<'tools.unregister_user_tool', ToolsUnregisterUserTool>
   | WireRecordOf<'tools.update_store', ToolsUpdateStore>
   | WireRecordOf<'tower_mode.enter', TowerModeEnter>

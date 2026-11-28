@@ -8,19 +8,23 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
-import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
+import {
+  DockSection,
+  finishDialogLines,
+  type DockLayout,
+  type DockPart,
+} from '#/tui/components/chrome/dock-section';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { Markdown } from '#/tui/components/markdown/markdown';
 import {
-  finishDialogLines,
   focusOnUnfocusedMouse,
   handleSearchableListMouse,
   handleSearchableListWheel,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 

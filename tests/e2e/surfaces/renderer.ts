@@ -5,11 +5,21 @@ import {
   APPROVAL_PENDING,
   describeApproval,
   describeTool,
+  firstPromptOf,
   namesFile,
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
+  waitOutcome,
   wantedOutput,
+  describeChanges,
+  missingChanges,
   type ApprovalExpectation,
+  type ChangedLines,
+  type SessionBadge,
+  type TaskExpectation,
+  type WaitExpectation,
+  type WaitOutcome,
+  type TaskStatus,
   type ApprovalToolName,
   type ApproveOptions,
   type DriverActionsOn,
@@ -21,7 +31,13 @@ import {
 } from '../support/verbs';
 
 const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
-const TOOL_LABELS: Readonly<Record<Exclude<ToolName, 'AskUserQuestion'>, string>> = { Read: 'Read', Edit: 'Edit', Write: 'Write', Bash: 'Run' };
+const TOOL_LABELS: Readonly<Record<Exclude<ToolName, 'AskUserQuestion'>, string>> = { Read: 'Read', Edit: 'Edit', Write: 'Write', Bash: 'Run', WaitFor: 'Wait' };
+const WAIT_SHOWS: { readonly [O in WaitOutcome | 'running']: RegExp } = {
+  running: /^Waiting for /,
+  finished: /^A task finished$/,
+  interrupted: /^Wait interrupted by new input$/,
+  'timed out': /^(?:Timed out|\d+ still running)$/,
+};
 const OUTPUT_PANEL = 'Output';
 const PANEL_BODY = 'xpath=ancestor::*[2]/following-sibling::*[1]';
 const INTERRUPT = /^(?:Interrupt|Press Esc again to interrupt)$/;
@@ -29,6 +45,31 @@ const SHOWN = ':not([inert], [inert] *)';
 const LIST = '[role="list"]';
 const ROW = '[role="listitem"]';
 const STATE = '[role="status"]';
+const MENU_BUTTON = 'button[aria-haspopup="menu"]';
+const TO_BACKGROUND = 'To background';
+const SESSION_ID = 'data-session-id';
+const SESSION_TITLE = '.t';
+const UNREAD_MARK = 'session-unread';
+const SESSION_BUSY = 'Loading';
+const PROJECT_ID = 'data-ws-id';
+const REMOVE_PROJECT = 'Remove project';
+const NEW_PROJECT = 'New Project';
+const NEW_PROJECT_DIALOG = 'New project';
+const ADD_FOLDERS = 'Click to add folders you can read and write';
+const ADD_PROJECT_DIALOG = 'Add project';
+const PROJECT_PATH = 'Path or folder search';
+const ADD_ONE_FOLDER = 'Add folder (1)';
+const LOADING_FOLDERS = 'Loading directories…';
+const SESSION_BADGE_LABELS = { approval: 'Approve', question: 'Answer' } as const;
+const OPEN_SESSION = /\/sessions\/([^/?#]+)/;
+const FORK_SESSION = 'Fork session';
+const DELETE_SESSION = 'Delete session';
+const PERMANENTLY_DELETE = 'Permanently delete';
+const DETAIL_PANEL = 'Detail panel';
+const STOP_TASK = 'stop';
+const RENDERER_TASK_STATUS: { readonly [S in TaskStatus]: string } = { running: 'running', done: 'Done', failed: 'Failed', stopped: 'Stopped' };
+const TASKS_PILL = /^(?:Bash|Background tasks)\b/;
+const SETTINGS = 'Settings';
 const DISCLOSURE = 'button[aria-expanded]';
 const FOLDED = 'button[aria-expanded="false"]';
 const MARKDOWN = 'p, h1, h2, h3, h4, h5, h6, ul, ol, pre, blockquote, table';
@@ -64,11 +105,9 @@ const DISMISS = 'Dismiss';
 const OTHER_ANSWER = 'Other';
 const ASKED = 'Collected your answers';
 const UNANSWERED = ' —— No answer';
-const MENU_BUTTON = 'button[aria-haspopup="menu"]';
 const THINKING_ROW = 'Thinking';
 const THINKING_ON = 'Thinking';
 const MODEL_SUFFIX = ' · ';
-const SETTINGS = 'Settings';
 const CLOSE_SETTINGS = 'Close (Esc)';
 const BROWSER_SETTINGS = 'Browser';
 const AGENT_BROWSER_CONTROL = 'Let agents control the built-in browser';
@@ -79,7 +118,6 @@ const PLAN_PILL = 'Plan';
 const EXIT_MODE = 'Exit mode';
 const CLOSE_DOCK_PANEL = 'Close panel';
 const BTW_COMMAND = '/btw';
-const DETAIL_PANEL = 'Detail panel';
 const SIDE_CHAT = /^Side Chat(?: \d+)?$/;
 const CLOSE_TAB = 'Close tab';
 const CLOSE_SIDE_CHAT_DIALOG = 'Close side chat?';
@@ -125,11 +163,27 @@ function cardShows(lines: readonly string[], { name, target }: ApprovalExpectati
   return lines.some((line) => namesFile(line, target, workspace));
 }
 
+function cardChanges(lines: readonly string[]): ChangedLines {
+  const changed = (sign: string): string[] => lines.flatMap((line, index) => (line === sign && index + 1 < lines.length ? [lines[index + 1] ?? ''] : []));
+  return { added: changed('+'), removed: changed('-') };
+}
+
+interface SessionRowReading {
+  readonly id: string;
+  readonly title: string;
+}
+
+function describeRows(rows: readonly SessionRowReading[], current: string | undefined): string {
+  if (rows.length === 0) return 'no sessions';
+  return rows.map((row) => `${JSON.stringify(row.title)}${row.id === current ? ' (open)' : ''}`).join(', ');
+}
+
 export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   private readonly page: Page;
   private readonly workspace: string;
   private readonly menus: MenuPage;
   private recalled: string | undefined;
+  private steered: string[] = [];
 
   constructor(page: Page, workspace: string, menus: MenuPage) {
     this.page = page;
@@ -146,6 +200,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.press('send()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
     await this.enter(text, before);
+    this.steered = [];
   }
 
   async submit(text: string): Promise<void> {
@@ -157,6 +212,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const before = await this.conversationSize();
     await this.focusComposer('submit()');
     await this.enter(text, before);
+    this.steered = [];
   }
 
   async expectComposer(text: string): Promise<void> {
@@ -263,6 +319,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.press('steer()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
     await this.page.keyboard.press('Enter');
+    this.steered.push(text);
     const reached = async (): Promise<boolean> => {
       const message = this.userMessages(latest + 1, text).last();
       if ((await message.count()) === 0 || (await this.queuedMessage(text).count()) > 0) return false;
@@ -272,6 +329,87 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     };
     if ((await this.settle(`the message ${JSON.stringify(text)} to reach the running turn`, reached)) === 'over') {
       throw new Error(`steer() did not see ${JSON.stringify(text)} reach the turn before it ended.\n${await this.describe()}`);
+    }
+  }
+
+  async background(): Promise<void> {
+    if (await this.questionShown()) throw new Error(`background() cannot move a command: ${QUESTION_PENDING}.\n${await this.describe()}`);
+    if (await this.approvalShown()) throw new Error(`background() cannot move a command while an approval is pending; answer it with approve() or reject() first.\n${await this.describe()}`);
+    const button = this.turnItems().getByRole('button', { name: TO_BACKGROUND, exact: true });
+    const offered = await button.count();
+    if (offered !== 1) throw new Error(`background() found no running command to move to the background: ${offered} command card(s) offer ${TO_BACKGROUND}.\n${await this.describe()}`);
+    await this.press('background()', TO_BACKGROUND, button);
+    await this.wait('the command to move to the background', async () => ((await button.count()) === 0 ? true : undefined));
+  }
+
+  async expectTask({ description, status, output }: TaskExpectation): Promise<void> {
+    const pill = this.page.getByRole('button', { name: TASKS_PILL }).first();
+    if ((await pill.count()) === 0) throw new Error(`expectTask() found no background tasks: the conversation shows no tasks button.\n${await this.describe()}`);
+    const opened = (await pill.getAttribute('aria-pressed')) === 'true';
+    if (!opened) await this.press('expectTask()', 'the background tasks', pill);
+    const entry = this.page.getByRole('button', { name: description, exact: true }).last();
+    try {
+      if ((await this.settle(`the task ${JSON.stringify(description)} in the task list`, async () => (await entry.count()) > 0)) === 'over' && (await entry.count()) === 0) {
+        const listed = await this.page.getByRole('button', { name: TASKS_PILL }).first().textContent();
+        throw new Error(`expectTask() found no task described as ${JSON.stringify(description)} (${String(listed)}).\n${await this.describe()}`);
+      }
+      const shown = await entry.locator('xpath=..').getByRole('img').first().getAttribute('aria-label');
+      if (shown !== RENDERER_TASK_STATUS[status]) {
+        throw new Error(`expectTask() found ${JSON.stringify(description)} ${String(shown)}, not ${RENDERER_TASK_STATUS[status]}.\n${await this.describe()}`);
+      }
+      if (output !== undefined) await this.expectTaskOutput(description, entry, output);
+    } finally {
+      if (!opened && (await pill.getAttribute('aria-pressed')) === 'true') await this.press('expectTask()', 'the background tasks, to close them', pill);
+    }
+  }
+
+  async stopTask(description: string): Promise<void> {
+    const pill = this.page.getByRole('button', { name: TASKS_PILL }).first();
+    if ((await pill.count()) === 0) throw new Error(`stopTask() found no background tasks: the conversation shows no tasks button.\n${await this.describe()}`);
+    const opened = (await pill.getAttribute('aria-pressed')) === 'true';
+    if (!opened) await this.press('stopTask()', 'the background tasks', pill);
+    try {
+      const row = this.page.getByRole('button', { name: description, exact: true }).last().locator('xpath=..');
+      const stop = row.getByRole('button', { name: STOP_TASK, exact: true });
+      if ((await stop.count()) === 0) {
+        throw new Error(`stopTask() needs a running task described as ${JSON.stringify(description)}, but the task list offers no stop button for it.\n${await this.describe()}`);
+      }
+      await this.press('stopTask()', STOP_TASK, stop);
+      await this.wait(`the task ${JSON.stringify(description)} to show ${RENDERER_TASK_STATUS.stopped}`, async () =>
+        (await row.getByRole('img').first().getAttribute('aria-label')) === RENDERER_TASK_STATUS.stopped ? true : undefined,
+      );
+    } finally {
+      if (!opened && (await pill.getAttribute('aria-pressed')) === 'true') await this.press('stopTask()', 'the background tasks, to close them', pill);
+    }
+  }
+
+  private async expectTaskOutput(description: string, entry: Locator, output: string): Promise<void> {
+    await this.press('expectTask()', description, entry);
+    const panel = this.page.getByRole('complementary', { name: DETAIL_PANEL });
+    const line = panel.getByText(output, { exact: true });
+    const found = await this.wait(`the output of ${JSON.stringify(description)} to show ${JSON.stringify(output)}`, async () => ((await line.count()) > 0 ? true : undefined)).catch(() => false);
+    const lines = (await panel.innerText({ timeout: TIMEOUTS.wait })).split('\n').map((text) => text.trim());
+    await this.press('expectTask()', 'Close tab', panel.getByRole('button', { name: 'Close tab', exact: true }).first());
+    if (!found) throw new Error(`expectTask() found ${JSON.stringify(description)}, but its output has no line ${JSON.stringify(output)}; it shows:\n${lines.join('\n')}\n${await this.describe()}`);
+  }
+
+  async steerQueued(): Promise<void> {
+    await this.assertTurnRunning('steerQueued()');
+    await this.assertEmptyInput('steerQueued()');
+    const queued = (await this.queuePanel().getByRole('button').allTextContents()).map((text) => text.trim()).filter((text) => text !== '' && text !== 'Remove');
+    if (queued.length !== 1) {
+      throw new Error(
+        `steerQueued() needs exactly one message in the queue, but ${queued.length} wait there: with several queued, Ctrl+S on the terminal UI steers them all into the turn while Desktop and Web steer only the first.\n${await this.describe()}`,
+      );
+    }
+    const text = queued[0] ?? '';
+    const latest = await this.latestUserPosition();
+    await this.press('steerQueued()', 'the message input', this.composer());
+    await this.page.keyboard.press('ControlOrMeta+s');
+    this.steered.push(text);
+    const reached = async (): Promise<boolean> => (await this.userMessages(latest + 1, text).count()) > 0 && !(await this.queueShown());
+    if ((await this.settle(`the queued message ${JSON.stringify(text)} to reach the running turn`, reached)) === 'over') {
+      throw new Error(`steerQueued() did not see ${JSON.stringify(text)} reach the turn before it ended.\n${await this.describe()}`);
     }
   }
 
@@ -305,8 +443,14 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '');
-    if (cardShows(lines, expectation, this.workspace)) return;
-    throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${lines.join('\n')}\n${await this.describe()}`);
+    if (!cardShows(lines, expectation, this.workspace)) {
+      throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${lines.join('\n')}\n${await this.describe()}`);
+    }
+    const shown = cardChanges(lines);
+    const missing = missingChanges(expectation, shown);
+    if (missing.length > 0) {
+      throw new Error(`expectApproval() found the approval, but its change does not show ${missing.join(', ')}. The change shows:\n${describeChanges(shown)}\n${await this.describe()}`);
+    }
   }
 
   async answer(option: string): Promise<void> {
@@ -335,12 +479,12 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   async dismissQuestion(): Promise<void> {
     const card = await this.pendingQuestion('dismissQuestion()');
-    const dismissed = (await this.unansweredQuestions()).length;
+    const dismissed = await this.dismissedQuestions();
     const pressed = await card.getByRole('button', { name: DISMISS, exact: true }).last().elementHandle({ timeout: TIMEOUTS.wait });
     if (pressed === null) throw new Error(`dismissQuestion() lost the question before it could dismiss it.\n${await this.describe()}`);
     await pressed.click({ timeout: TIMEOUTS.wait });
     await pressed.waitForElementState('hidden', { timeout: TIMEOUTS.server });
-    await this.wait('the conversation to record that the question was dismissed', async () => ((await this.unansweredQuestions()).length > dismissed ? true : undefined));
+    await this.wait('the conversation to record that the question was dismissed', async () => ((await this.dismissedQuestions()) > dismissed ? true : undefined));
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
@@ -429,6 +573,13 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
   }
 
+  async expectStopped(): Promise<void> {
+    const settled = await this.settle(`the ${JSON.stringify(MANUALLY_STOPPED)} mark of the latest turn`, async () => (await this.stoppedMarks()) > 0);
+    if (settled === 'over') {
+      throw new Error(`expectStopped() found the latest turn ended without being stopped: it has no ${JSON.stringify(MANUALLY_STOPPED)} mark.\n${await this.describe()}`);
+    }
+  }
+
   async waitIdle(): Promise<void> {
     const ask = await this.pendingAsk('the turn to end');
     if (ask === 'question') throw new Error(`waitIdle() found the turn waiting: ${QUESTION_PENDING}.\n${await this.describe()}`);
@@ -441,7 +592,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     let waitingForApproval = false;
     const settled = await this.settle(`the tool ${wanted}`, async () => {
       if (expectation.status === 'running' && (await this.idle()) && !(await this.approvalShown())) return false;
-      stuck.push(...(await this.unfoldGroups()));
+      stuck.push(...(await this.unfoldGroups(expectation.name === 'WaitFor' ? this.turnWithSteered() : this.turnItems())));
       if (await this.showsTool(expectation, stuck)) return true;
       waitingForApproval = expectation.status === 'running' && (await this.approvalShown());
       return waitingForApproval;
@@ -645,32 +796,201 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.wait('a new, empty conversation', async () => ((await this.conversationSize()) === 0 && (await this.composer().isVisible()) ? true : undefined));
   }
 
-  async openSession(title: string): Promise<void> {
-    if (!(await this.idle())) {
-      throw new Error(`openSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
-    }
-    if ((await this.userMessages(1, title).count()) > 0) {
-      throw new Error(
-        `openSession() found that the session titled ${JSON.stringify(title)} is the session already open: its first prompt is in the conversation on screen. Go back to another session.\n${await this.describe()}`,
-      );
-    }
-    const sidebar = this.sidebar();
-    const entry = sidebar.getByText(title, { exact: true }).and(this.page.locator(SHOWN));
-    let previous: string | undefined;
-    const listed = await this.wait(`the sidebar to list the session ${JSON.stringify(title)}, or to stop changing`, async () => {
-      if ((await entry.count()) > 0) return 'listed' as const;
-      const shown = (await sidebar.allTextContents()).join('\n');
-      const settled = shown === previous;
-      previous = shown;
-      return settled ? ('missing' as const) : undefined;
+  async fork(): Promise<void> {
+    const source = this.openSessionId();
+    if (source === undefined) throw new Error(`fork() needs a session with messages, but the page has no session open.\n${await this.describe()}`);
+    if ((await this.conversationSize()) === 0) throw new Error(`fork() needs a session with messages, but the conversation is empty.\n${await this.describe()}`);
+    const before = new Set((await this.sessionRows()).map((row) => row.id));
+    const menu = await this.sessionMenu('fork()', source);
+    await this.press('fork()', FORK_SESSION, menu.getByRole('menuitem', { name: FORK_SESSION, exact: true }));
+    await this.wait('the page to open the forked session', async () => {
+      const opened = this.openSessionId();
+      return opened !== undefined && opened !== source && !before.has(opened) && (await this.conversationSize()) > 0 ? true : undefined;
     });
-    if (listed === 'missing') {
-      const shown = await sidebar.ariaSnapshot({ timeout: TIMEOUTS.wait }).catch((error: unknown) => `The sidebar could not be read: ${reasonOf(error)}`);
-      throw new Error(`openSession() found no session titled ${JSON.stringify(title)} in the sidebar. The sidebar shows:\n${shown}`);
+  }
+
+  async deleteSession(title: string): Promise<void> {
+    const target = await this.closedSession('deleteSession()', title);
+    const menu = await this.sessionMenu('deleteSession()', target);
+    await this.press('deleteSession()', 'Delete', menu.getByRole('menuitem', { name: 'Delete', exact: true }));
+    const confirm = this.page.getByRole('dialog', { name: DELETE_SESSION });
+    await this.press('deleteSession()', PERMANENTLY_DELETE, confirm.getByRole('button', { name: PERMANENTLY_DELETE, exact: true }));
+    await this.wait(`the sidebar to drop the session ${JSON.stringify(title)}`, async () => ((await this.sessionRow(target).count()) === 0 ? true : undefined));
+  }
+
+  async archiveSession(title: string): Promise<void> {
+    const target = await this.closedSession('archiveSession()', title);
+    const menu = await this.sessionMenu('archiveSession()', target);
+    await this.press('archiveSession()', 'Archive', menu.getByRole('menuitem', { name: 'Archive', exact: true }));
+    await this.wait(`the sidebar to drop the session ${JSON.stringify(title)}`, async () => ((await this.sessionRow(target).count()) === 0 ? true : undefined));
+  }
+
+  async expectSessions(titles: readonly string[]): Promise<void> {
+    const wanted = titles.toSorted();
+    let previous: string | undefined;
+    const shown = await this.wait(`the sidebar to list the sessions ${JSON.stringify(titles)}`, async () => {
+      const listed = (await this.sessionRows()).map((row) => row.title).toSorted();
+      const reading = JSON.stringify(listed);
+      if (reading === JSON.stringify(wanted)) return listed;
+      const settled = reading === previous && (await this.idle());
+      previous = reading;
+      return settled ? listed : undefined;
+    });
+    if (JSON.stringify(shown) !== JSON.stringify(wanted)) {
+      throw new Error(`expectSessions() wanted the sidebar to list ${JSON.stringify(wanted)}, but it lists ${JSON.stringify(shown)}.\n${await this.describe()}`);
     }
-    await this.press('openSession()', `the session ${JSON.stringify(title)} in the sidebar`, entry.first());
+  }
+
+  async expectSessionBadge(title: string, badge: SessionBadge): Promise<void> {
+    const rows = await this.sessionRows();
+    const matching = rows.filter((row) => row.title === title);
+    if (matching.length !== 1) {
+      const reason = matching.length === 0 ? 'no session has that title' : `${matching.length} sessions have that title`;
+      throw new Error(`expectSessionBadge() cannot pick the session ${JSON.stringify(title)}: ${reason}. The sidebar lists ${describeRows(rows, this.openSessionId())}.\n${await this.describe()}`);
+    }
+    const row = this.sessionRow(matching[0]!.id);
+    const marks = async (): Promise<SessionBadge[]> => {
+      const shown: SessionBadge[] = [];
+      if ((await row.getByTestId(UNREAD_MARK).count()) > 0) shown.push('unread');
+      if ((await row.getByText(SESSION_BADGE_LABELS.approval, { exact: true }).count()) > 0) shown.push('approval');
+      if ((await row.getByText(SESSION_BADGE_LABELS.question, { exact: true }).count()) > 0) shown.push('question');
+      return shown;
+    };
+    const wanted = (shown: readonly SessionBadge[]): boolean => (badge === 'none' ? shown.length === 0 : shown.includes(badge));
+    let previous: string | undefined;
+    const shown = await this.wait(`the session ${JSON.stringify(title)} to show ${badge === 'none' ? 'no mark' : `the ${badge} mark`}`, async () => {
+      const now = await marks();
+      const reading = JSON.stringify(now);
+      if (wanted(now)) return now;
+      const settled = reading === previous && (await this.idle()) && (await row.getByRole('status', { name: SESSION_BUSY, exact: true }).count()) === 0;
+      previous = reading;
+      return settled ? now : undefined;
+    });
+    if (!wanted(shown)) {
+      const listed = shown.length === 0 ? 'no mark' : shown.join(' and ');
+      throw new Error(`expectSessionBadge() wanted the session ${JSON.stringify(title)} to show ${badge === 'none' ? 'no mark' : `the ${badge} mark`}, but it shows ${listed}.\n${await this.describe()}`);
+    }
+  }
+
+  async removeWorkspace(): Promise<void> {
+    const name = this.workspaceName();
+    const group = this.projectGroup(name);
+    if ((await group.count()) !== 1) throw new Error(`removeWorkspace() found no project ${JSON.stringify(name)} in the sidebar.\n${await this.describe()}`);
+    await group.getByText(name, { exact: true }).first().hover({ timeout: TIMEOUTS.wait });
+    await this.press('removeWorkspace()', 'the project options', group.getByRole('button', { name: 'Options', exact: true }).first());
+    await this.press('removeWorkspace()', REMOVE_PROJECT, this.page.getByRole('menuitem', { name: REMOVE_PROJECT, exact: true }));
+    const confirm = this.page.getByRole('dialog').filter({ hasText: `Remove "${name}" from the sidebar?` });
+    await this.press('removeWorkspace()', 'Remove', confirm.getByRole('button', { name: 'Remove', exact: true }));
+    await this.wait(`the sidebar to drop the project ${JSON.stringify(name)}`, async () => ((await group.count()) === 0 ? true : undefined));
+  }
+
+  async addWorkspace(): Promise<void> {
+    const name = this.workspaceName();
+    if ((await this.projectGroup(name).count()) > 0) throw new Error(`addWorkspace() found the project ${JSON.stringify(name)} already in the sidebar; remove it first.\n${await this.describe()}`);
+    await this.press('addWorkspace()', NEW_PROJECT, this.sidebar().getByRole('button', { name: NEW_PROJECT, exact: true }));
+    const dialog = this.page.getByRole('dialog', { name: NEW_PROJECT_DIALOG });
+    await this.press('addWorkspace()', ADD_FOLDERS, dialog.getByRole('button', { name: ADD_FOLDERS, exact: true }));
+    const picker = this.page.getByRole('dialog', { name: ADD_PROJECT_DIALOG });
+    const path = picker.getByRole('combobox', { name: PROJECT_PATH, exact: true });
+    const add = picker.getByRole('button', { name: 'Add', exact: true });
+    await this.wait(`${ADD_PROJECT_DIALOG} to open its first folder`, async () =>
+      (await path.inputValue({ timeout: TIMEOUTS.wait }).catch(() => '')) !== '' && (await picker.getByText(LOADING_FOLDERS, { exact: true }).count()) === 0 ? true : undefined,
+    );
+    try {
+      await path.fill(this.workspace, { timeout: TIMEOUTS.wait });
+    } catch (cause) {
+      throw new Error(`addWorkspace() could not type the folder into ${ADD_PROJECT_DIALOG}: ${reasonOf(cause)}\n${await this.describe()}`, { cause });
+    }
+    await this.wait(`${ADD_PROJECT_DIALOG} to accept the typed folder`, async () =>
+      (await path.inputValue({ timeout: TIMEOUTS.wait }).catch(() => '')) === this.workspace && (await add.isVisible()) ? true : undefined,
+    );
+    await this.press('addWorkspace()', 'Add', add);
+    await this.press('addWorkspace()', ADD_ONE_FOLDER, picker.getByRole('button', { name: ADD_ONE_FOLDER, exact: true }));
+    await this.wait(`${ADD_PROJECT_DIALOG} to hand the folder to ${NEW_PROJECT_DIALOG}`, async () => ((await picker.count()) === 0 ? true : undefined));
+    await this.press('addWorkspace()', 'Create', dialog.getByRole('button', { name: 'Create', exact: true }));
+    await this.wait(`the sidebar to list the project ${JSON.stringify(name)}`, async () => ((await this.projectGroup(name).count()) === 1 && !(await dialog.isVisible()) ? true : undefined));
+  }
+
+  private workspaceName(): string {
+    return this.workspace.slice(Math.max(this.workspace.lastIndexOf('/'), this.workspace.lastIndexOf('\\')) + 1);
+  }
+
+  private projectGroup(name: string): Locator {
+    return this.sidebar().locator(`[${PROJECT_ID}]`).filter({ has: this.page.getByText(name, { exact: true }) });
+  }
+
+  private sessionRow(id: string): Locator {
+    return this.sidebar().locator(`[${SESSION_ID}=${quoted(id)}]`);
+  }
+
+  private async sessionRows(): Promise<SessionRowReading[]> {
+    const read = await this.sidebar()
+      .locator(`[${SESSION_ID}]`)
+      .evaluateAll(
+        (elements, selectors) =>
+          elements.map((element) => ({ id: element.getAttribute(selectors.id) ?? '', title: (element.querySelector(selectors.title)?.textContent ?? '').trim() })),
+        { id: SESSION_ID, title: SESSION_TITLE },
+      );
+    return read.filter((row, index) => read.findIndex((other) => other.id === row.id) === index);
+  }
+
+  private openSessionId(): string | undefined {
+    return OPEN_SESSION.exec(this.page.url())?.[1];
+  }
+
+  private async closedSession(verb: string, title: string): Promise<string> {
+    const rows = await this.sessionRows();
+    const current = this.openSessionId();
+    const matching = rows.filter((row) => row.title === title);
+    if (matching.length !== 1 || matching[0]!.id === current) {
+      const reason =
+        matching.length === 0 ? 'no session has that title' : matching.length > 1 ? `${matching.length} sessions have that title` : 'it is the open session; open another one first';
+      throw new Error(`${verb} cannot pick the session ${JSON.stringify(title)}: ${reason}. The sidebar lists ${describeRows(rows, current)}.\n${await this.describe()}`);
+    }
+    return matching[0]!.id;
+  }
+
+  private async sessionMenu(verb: string, id: string): Promise<Locator> {
+    const row = this.sessionRow(id);
+    try {
+      await row.locator(SESSION_TITLE).click({ button: 'right', timeout: TIMEOUTS.wait });
+    } catch (cause) {
+      throw new Error(`${verb} could not open the menu of the session ${id}: ${reasonOf(cause)}\n${await this.describe()}`, { cause });
+    }
+    const menu = this.page.getByRole('menu');
+    await this.wait(`the menu of the session ${id} to open`, async () => ((await menu.count()) === 1 && (await menu.isVisible()) ? true : undefined));
+    return menu;
+  }
+
+  async openSession(title: string): Promise<void> {
+    if (await this.questionShown()) {
+      throw new Error(`openSession() cannot leave the open session while a question waits for an answer; answer or dismiss it first.\n${await this.describe()}`);
+    }
+    const current = this.openSessionId();
+    let previous: string | undefined;
+    const rows = await this.wait(`the sidebar to list the session ${JSON.stringify(title)}, or to stop changing`, async () => {
+      const now = await this.sessionRows();
+      if (now.some((row) => row.title === title && row.id !== current)) return now;
+      const reading = JSON.stringify(now);
+      const settled = reading === previous;
+      previous = reading;
+      return settled ? now : undefined;
+    });
+    const others = rows.filter((row) => row.title === title && row.id !== current);
+    if (others.length !== 1) {
+      const problem =
+        others.length > 1
+          ? `found ${others.length} sessions titled ${JSON.stringify(title)} in the sidebar`
+          : rows.some((row) => row.title === title)
+            ? `found that the session titled ${JSON.stringify(title)} is the session already open; go back to another session`
+            : `found no session titled ${JSON.stringify(title)} in the sidebar`;
+      throw new Error(`openSession() ${problem}. The sidebar lists ${describeRows(rows, current)}.\n${await this.describe()}`);
+    }
+    const target = others[0]!.id;
+    const prompt = firstPromptOf(title);
+    await this.press('openSession()', `the session ${JSON.stringify(title)} in the sidebar`, this.sessionRow(target).locator(SESSION_TITLE));
     await this.wait(`the conversation of the session ${JSON.stringify(title)} to show its first prompt`, async () =>
-      (await this.userMessages(1, title).count()) > 0 && (await this.idle()) ? true : undefined,
+      this.openSessionId() === target && (await this.userMessages(1, prompt).count()) > 0 && ((await this.idle()) || (await this.approvalShown())) ? true : undefined,
     );
     this.recalled = undefined;
   }
@@ -910,14 +1230,17 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     return this.page.getByText(QUEUE_WAITING).first().isVisible();
   }
 
-  private queuedMessage(text: string): Locator {
+  private queuePanel(): Locator {
     return this.page
       .getByText(QUEUE_WAITING)
       .first()
       .locator('xpath=ancestor::*')
       .filter({ has: this.page.getByRole('button', { name: 'Remove', exact: true }) })
-      .last()
-      .getByRole('button', { name: text, exact: true });
+      .last();
+  }
+
+  private queuedMessage(text: string): Locator {
+    return this.queuePanel().getByRole('button', { name: text, exact: true });
   }
 
   private async assertTurnRunning(verb: string): Promise<void> {
@@ -1020,6 +1343,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   }
 
   private async showsTool(expectation: ToolExpectation, stuck: string[]): Promise<boolean> {
+    if (expectation.name === 'WaitFor') return this.showsWait(expectation);
     if (expectation.name === 'AskUserQuestion') {
       const asked = [...(await this.askedAnswers()).map((row) => row.question), ...(await this.unansweredQuestions())];
       return asked.includes(expectation.target);
@@ -1031,6 +1355,23 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       const card = cards.nth(index);
       if ((await this.toolStatus(card)) !== expectation.status) continue;
       if (output === undefined || (await this.showsOutput(card, output, stuck))) return true;
+    }
+    return false;
+  }
+
+  private turnWithSteered(): Locator {
+    const sent = this.steered.reduce((rows, text) => rows.filter({ hasNotText: containing(text) }), this.userRows());
+    return sent.last().locator('xpath=following-sibling::*[@role="listitem"]');
+  }
+
+  private async showsWait(expectation: WaitExpectation): Promise<boolean> {
+    const cards = this.turnWithSteered()
+      .locator(`${BLOCK}:not(${REPLY})`)
+      .filter({ has: this.page.getByText(TOOL_LABELS.WaitFor, { exact: true }).and(this.page.locator(ON_A_CARD)) })
+      .filter({ has: this.page.getByText(WAIT_SHOWS[waitOutcome(expectation) ?? 'running']) });
+    const count = await cards.count();
+    for (let index = 0; index < count; index += 1) {
+      if ((await this.toolStatus(cards.nth(index))) === expectation.status) return true;
     }
     return false;
   }
@@ -1072,8 +1413,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     return [];
   }
 
-  private async unfoldGroups(): Promise<string[]> {
-    const folded = this.turnItems()
+  private async unfoldGroups(scope: Locator = this.turnItems()): Promise<string[]> {
+    const folded = scope
       .locator(`${FOLDED}${SHOWN}`)
       .filter({ has: this.page.locator(STATE) });
     const failures: string[] = [];
@@ -1106,7 +1447,13 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   }
 
   private async collectedAnswers(answer: string): Promise<number> {
+    await this.unfoldGroups();
     return (await this.askedAnswers()).filter((row) => row.answer === answer).length;
+  }
+
+  private async dismissedQuestions(): Promise<number> {
+    await this.unfoldGroups();
+    return (await this.unansweredQuestions()).length;
   }
 
   private async unansweredQuestions(): Promise<string[]> {

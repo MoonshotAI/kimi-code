@@ -8,13 +8,10 @@ import {
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
+import { finishDialogLines } from '#/tui/components/chrome/dock-section';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
-import {
-  finishDialogLines,
-  handleSearchableListMouse,
-  type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+import { handleSearchableListMouse, type MouseRowRegion } from '#/tui/utils/mouse-hit-test';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface AlignedChoiceItem<TValue extends string> {

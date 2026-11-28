@@ -20,6 +20,18 @@ selfTest('dismissQuestion', {
         await product.expectReply('I will pick one myself.');
       },
     },
+    'closes a question asked after another tool, whose group of tool calls folds as soon as the model replies': {
+      workspace: { 'a.txt': 'hello\n' },
+      run: async ({ product, model }) => {
+        model.script(read('a.txt'), ASK, say('I will pick one myself.'));
+        await product.send('Read a.txt, then help me choose a database.');
+        await product.dismissQuestion();
+        await product.waitIdle();
+        expect(model.requests('main')).toHaveLength(3);
+        expect(JSON.parse(model.requests('main')[2]?.texts('tool').at(-1) ?? 'null')).toEqual({ answers: {}, note: 'User dismissed the question without answering.' });
+        await product.expectReply('I will pick one myself.');
+      },
+    },
   },
   negative: {
     'fails when the turn ends without asking a question': {

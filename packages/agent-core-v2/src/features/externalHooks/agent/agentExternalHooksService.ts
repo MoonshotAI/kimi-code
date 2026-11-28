@@ -441,7 +441,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   ): Promise<boolean> {
     if ((ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return false;
 
-    const signal = new AbortController().signal;
+    const { signal } = ctx;
     const input = ctx.promptMessage.content;
     signal.throwIfAborted();
     const results = await this.runner.trigger('UserPromptSubmit', {

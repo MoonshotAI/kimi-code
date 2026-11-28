@@ -1,6 +1,12 @@
 import { held, say } from '@moonshot-ai/testkit/model';
 
-import { expect, selfTest } from '../support/scenario';
+import { expect, selfTest, selfTestCase } from '../support/scenario';
+
+const SWITCH_WHILE_BUSY = 'Desktop and Web let the user switch sessions in the sidebar while the open session still runs a turn.';
+const NO_SWITCH_WHILE_BUSY = {
+  tui: 'The terminal UI refuses to switch sessions while a turn runs; the negative case covers it.',
+  acp: 'An ACP editor sends session/load only for an idle session; the negative case covers it.',
+};
 
 selfTest('openSession', {
   positive: {
@@ -47,22 +53,34 @@ selfTest('openSession', {
         expect(last?.texts('user').some((text) => text.includes('Ask the first question.') || text.includes('Follow up in the first session.'))).toBe(false);
       },
     },
+    'leaves a session whose turn still runs, and comes back to it once the turn ended': selfTestCase({ except: NO_SWITCH_WHILE_BUSY }, async ({ product, model }) => {
+      model.script(say('The earlier answer.'), held('busy', say('Finished in the later session.'), 1));
+      await product.send('Ask the earlier question.');
+      await product.waitIdle();
+      await product.newSession();
+      await product.send('Take your time.');
+      await model.hold('busy').reached();
+      await product.openSession('Ask the earlier question.');
+      await product.expectTranscript('The earlier answer.');
+      model.hold('busy').release();
+      await product.expectSessionBadge('Take your time.', 'unread');
+      await product.openSession('Take your time.');
+      await product.expectReply('Finished in the later session.');
+    }),
   },
   negative: {
-    'fails while a turn is running': {
-      run: async ({ product, model }) => {
-        model.script(say('The earlier answer.'), held('busy', say('Finished in the later session.'), 1));
-        await product.send('Ask the earlier question.');
-        await product.waitIdle();
-        await product.newSession();
-        await product.send('Take your time.');
-        await model.hold('busy').reached();
-        await expect(product.openSession('Ask the earlier question.')).rejects.toThrow('needs an idle product');
-        model.hold('busy').release();
-        await product.waitIdle();
-        await product.expectReply('Finished in the later session.');
-      },
-    },
+    'fails while a turn is running': selfTestCase({ except: { desktop: SWITCH_WHILE_BUSY, web: SWITCH_WHILE_BUSY } }, async ({ product, model }) => {
+      model.script(say('The earlier answer.'), held('busy', say('Finished in the later session.'), 1));
+      await product.send('Ask the earlier question.');
+      await product.waitIdle();
+      await product.newSession();
+      await product.send('Take your time.');
+      await model.hold('busy').reached();
+      await expect(product.openSession('Ask the earlier question.')).rejects.toThrow('needs an idle product');
+      model.hold('busy').release();
+      await product.waitIdle();
+      await product.expectReply('Finished in the later session.');
+    }),
     'fails for a title that no session has': {
       run: async ({ product, model }) => {
         model.script(say('The only answer.'));

@@ -11,11 +11,33 @@ import {
 import { isUndoAnchorTurnPrompt, isValidUndoCount } from '#/agent/undo/turnUndo';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
-import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, ToolDescription } from '@moonshot-ai/core/llm/message';
 import type { TurnContinuation } from '@moonshot-ai/core/loop/index';
 import { defineState, registerUndoableProtocol } from '#/state/state';
 
 import type { TurnEndReason, TurnInterruptReason } from './turnEvents';
+
+const settledToolSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  parameters: z.custom<Record<string, unknown>>(),
+  deferred: z.literal(true).optional(),
+});
+
+const toolsSettledSchema = z.object({
+  agentId: z.string(),
+  tools: z.array(settledToolSchema).readonly(),
+});
+
+export class ToolsSettled extends AgentEvent2<z.infer<typeof toolsSettledSchema>> {
+  static override readonly type = 'tools.settled';
+  static override readonly durable = true;
+  static override readonly schema = toolsSettledSchema;
+}
+export interface ToolsSettled {
+  readonly agentId: string;
+  readonly tools: readonly ToolDescription[];
+}
 
 export interface TurnModelState {
   readonly nextTurnId: number;
@@ -184,6 +206,7 @@ export const turnKey = defineState(
     return { ...next, anchorTurnIds: [...s.anchorTurnIds, assigned] };
   })
   .on(TurnSteer, () => {})
+  .on(ToolsSettled, () => {})
   .on(ContextUndo, (s, e) => {
     const firstRemoved = s.anchorTurnIds[s.anchorTurnIds.length - e.count];
     const lastEnded = s.lastEnded;

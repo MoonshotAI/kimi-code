@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
+import { nativePath } from '@moonshot-ai/app-core/lib';
 import { hostsStore, sessionViewsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useWorkspaceRename } from './useWorkspaceRename';
@@ -101,7 +102,7 @@ function onWorkspaceMouseLeave(): void {
         </IconButton>
       </span>
     </div>
-    <div class="ws-dir-sub">{{ g.workspace.root }}</div>
+    <div class="ws-dir-sub">{{ nativePath(g.workspace.root) }}</div>
   </div>
   <div v-if="groups.length === 0" class="empty">
     {{ t('workspace.noWorkspace') }}

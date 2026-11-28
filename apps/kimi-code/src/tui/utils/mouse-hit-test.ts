@@ -1,10 +1,5 @@
-import {
-  truncateToWidth,
-  type TuiMouseEvent,
-  type TuiMouseEventResult,
-} from '@moonshot-ai/pi-tui';
+import type { TuiMouseEvent, TuiMouseEventResult } from '@moonshot-ai/pi-tui';
 
-import { currentTheme } from '#/tui/theme';
 import type { SearchableList } from '#/tui/utils/searchable-list';
 import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
@@ -18,6 +13,12 @@ export interface MouseColRegion {
   readonly start: number;
   readonly end: number;
   readonly index: number;
+}
+
+export interface MouseActionSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly onClick: () => void;
 }
 
 export function focusOnUnfocusedMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -110,6 +111,39 @@ export function handleSegmentedMouse(input: {
   });
 }
 
+export function handleActionBarMouse(input: {
+  readonly event: TuiMouseEvent;
+  readonly focused: boolean;
+  readonly shownAt: number;
+  readonly spans: readonly MouseActionSpan[];
+  readonly onHover?: (index: number | undefined) => boolean;
+  readonly onWheel?: (delta: number) => boolean;
+}): TuiMouseEventResult | undefined {
+  const { event, focused, shownAt, spans, onHover, onWheel } = input;
+  if (event.type === 'wheel') {
+    if (onWheel === undefined) return undefined;
+    const delta = event.wheelDelta ?? 0;
+    return { handled: true, render: delta !== 0 && onWheel(delta) };
+  }
+  if (!focused) return focusOnUnfocusedMouse(event);
+  const rawIndex =
+    event.y === 0 ? spans.findIndex((span) => event.x >= span.start && event.x < span.end) : -1;
+  const hitIndex = rawIndex >= 0 ? rawIndex : undefined;
+  if (event.type === 'move') {
+    if (onHover === undefined) return undefined;
+    return { handled: true, render: onHover(hitIndex) };
+  }
+  if (event.button !== 'left' || hitIndex === undefined) return undefined;
+  if (event.type === 'press') {
+    return { handled: true, render: onHover?.(hitIndex) ?? false };
+  }
+  if (event.type === 'click' && !isSettlingClick(shownAt)) {
+    spans[hitIndex]!.onClick();
+    return { handled: true, render: true };
+  }
+  return { handled: true };
+}
+
 export function handleSearchableListWheel<T>(
   list: SearchableList<T>,
   event: TuiMouseEvent,
@@ -151,13 +185,4 @@ export function handleSearchableListMouse<T>(
       if (item !== undefined) input.activate(item, clickEvent);
     },
   });
-}
-
-export function finishDialogLines(
-  lines: readonly string[],
-  width: number,
-  focused: boolean,
-): string[] {
-  const rendered = lines.map((line) => truncateToWidth(line, width));
-  return focused ? rendered : rendered.map((line) => currentTheme.fade(line));
 }

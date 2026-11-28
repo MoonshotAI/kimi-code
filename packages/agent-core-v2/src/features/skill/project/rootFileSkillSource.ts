@@ -36,6 +36,10 @@ export interface IProjectRootSkillSource extends ISkillSource {
 export const IProjectRootSkillSource: ServiceIdentifier<IProjectRootSkillSource> =
   createDecorator<IProjectRootSkillSource>('workspaceRootSkillSource');
 
+export function projectSkillWorkDirs(projectDirs: IProjectDirs, cwd: string): readonly string[] {
+  return [projectDirs.primary, cwd, ...projectDirs.sharedAdditionalDirs];
+}
+
 export class ProjectRootSkillSource extends Disposable implements IProjectRootSkillSource {
   declare readonly _serviceBrand: undefined;
 
@@ -77,7 +81,7 @@ export class ProjectRootSkillSource extends Disposable implements IProjectRootSk
   }
 
   private get workDirs(): readonly string[] {
-    return [this.projectDirs.primary, this.project.cwd, ...this.projectDirs.sharedAdditionalDirs];
+    return projectSkillWorkDirs(this.projectDirs, this.project.cwd);
   }
 
   async load(): Promise<SkillContribution> {
