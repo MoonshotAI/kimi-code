@@ -13,6 +13,7 @@ import {
   IAgentStateService,
   ISessionContext,
   IAppendLogStore,
+  IEventBus,
   ISessionIndexMirror,
   logSeed,
   MAIN_AGENT_ID,
@@ -33,7 +34,7 @@ import './acp-terminal';
 import { DEFAULT_MODE_ID } from './modes';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
-export interface RunAcpServerOptions extends Omit<AcpServerOptions, 'resolveSessionMode'> {
+export interface RunAcpServerOptions extends Omit<AcpServerOptions, 'resolveSessionMode' | 'resolveMainAgentBus'> {
   readonly homeDir?: string;
   readonly configPath?: string;
   readonly input?: NodeJS.ReadableStream;
@@ -111,6 +112,10 @@ export async function runAcpServerWithStream(
       return handle === undefined
         ? undefined
         : sessionMediaOriginalsDir(handle.accessor.get(ISessionContext).sessionDir);
+    },
+    resolveMainAgentBus: (sessionId) => {
+      const session = getLiveSessionById(core.accessor, sessionId);
+      return session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)?.accessor.get(IEventBus);
     },
   });
   resolveServer(server);

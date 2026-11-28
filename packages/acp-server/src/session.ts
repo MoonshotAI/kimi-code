@@ -8,7 +8,8 @@ import type {
   ToolCallLocation,
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
-import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { onCoreLoopEvent, type ContextMessage, type IEventBus } from '@moonshot-ai/agent-core-v2';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
 import { toLlmMessage } from '@moonshot-ai/agent-core-v2/wire/message';
 import {
@@ -162,6 +163,7 @@ export class AcpSession {
   private agentStartedTurnId: number | undefined;
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
   private readonly subscriptions: IDisposable[] = [];
+  private readonly streamToolIds = new Map<number, Map<number, Map<number | string | undefined, string>>>();
   private readonly toolCallStreamArgs = new Map<string, { args: string }>();
   private readonly toolStatuses = new Map<string, string>();
   private readonly toolLocations = new Map<string, ToolCallLocation[]>();
@@ -179,7 +181,8 @@ export class AcpSession {
     readonly sessionId: string,
     private readonly acpConnection: IAcpConnection,
     elicitationForm: boolean,
-    private readonly resolveOriginalsDir?: (sessionId: string) => string | undefined,
+    private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined,
+    private readonly resolveMainAgentBus: (sessionId: string) => IEventBus | undefined,
     private readonly hostCommands:
       | ReadonlyArray<AvailableCommand>
       | HostSlashCommandsSnapshot = [],
@@ -206,24 +209,9 @@ export class AcpSession {
       events.on('turn.started', ({ turnId, origin }) => {
         if (isAgentStartedOrigin(origin)) this.agentStartedTurnId = turnId;
       }),
-      events.on('assistant.delta', (event) => {
-        this.dispatchTurnEvent(event.turnId, () => {
-          this.onAssistantDelta(event);
-        });
-      }),
-      events.on('thinking.delta', (event) => {
-        this.dispatchTurnEvent(event.turnId, () => {
-          this.onThinkingDelta(event);
-        });
-      }),
       events.on('tool.call.started', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onToolCallStarted(event);
-        });
-      }),
-      events.on('tool.call.delta', (event) => {
-        this.dispatchTurnEvent(event.turnId, () => {
-          this.onToolCallDelta(event);
         });
       }),
       events.on('tool.updated', (event) => {
@@ -254,6 +242,32 @@ export class AcpSession {
         this.emitLocalChunk(
           'Compaction is blocked by the current turn; retry when the turn is idle.',
         );
+      }),
+    );
+    const bus = this.resolveMainAgentBus(this.sessionId);
+    if (bus === undefined) {
+      throw new Error(`acp: main agent event bus is unavailable for session ${this.sessionId}`);
+    }
+    this.subscriptions.push(
+      onCoreLoopEvent(bus, 'llm.delta.part', (event) => {
+        this.dispatchTurnEvent(event.turnId, () => {
+          this.onStreamPart(event);
+        });
+      }),
+      onCoreLoopEvent(bus, 'llm.retry', (event) => {
+        this.dispatchTurnEvent(event.turnId, () => {
+          this.streamToolIds.get(event.turnId)?.delete(event.step);
+        });
+      }),
+      onCoreLoopEvent(bus, 'step.ended', (event) => {
+        this.dispatchTurnEvent(event.turnId, () => {
+          this.streamToolIds.get(event.turnId)?.delete(event.step);
+        });
+      }),
+      onCoreLoopEvent(bus, 'turn.ended', (event) => {
+        this.dispatchTurnEvent(event.turnId, () => {
+          this.streamToolIds.delete(event.turnId);
+        });
       }),
     );
     this.subscriptions.push(
@@ -303,6 +317,7 @@ export class AcpSession {
     }
     this.interactionBridge.dispose();
     this.liveOutput.dispose();
+    this.streamToolIds.clear();
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
@@ -582,12 +597,58 @@ export class AcpSession {
     return driver;
   }
 
-  private onAssistantDelta(event: AgentEventPayloads['assistant.delta']): void {
-    this.emit(assistantDeltaToSessionUpdate(this.sessionId, event));
+  private onStreamPart(event: Extract<LoopEmitted, { type: 'llm.delta.part' }>): void {
+    const { turnId, block, part } = event;
+    if (part.type === 'text') {
+      this.emit(assistantDeltaToSessionUpdate(this.sessionId, {
+        type: 'assistant.delta',
+        turnId,
+        delta: part.text,
+        block,
+      }));
+      return;
+    }
+    if (part.type === 'think') {
+      if (part.hidden === true) return;
+      this.emit(thinkingDeltaToSessionUpdate(this.sessionId, {
+        type: 'thinking.delta',
+        turnId,
+        delta: part.think,
+        block,
+      }));
+      return;
+    }
+    const toolCall = this.streamToolCallDelta(event);
+    if (toolCall !== undefined) this.onToolCallDelta(toolCall);
   }
 
-  private onThinkingDelta(event: AgentEventPayloads['thinking.delta']): void {
-    this.emit(thinkingDeltaToSessionUpdate(this.sessionId, event));
+  private streamToolCallDelta(
+    event: Extract<LoopEmitted, { type: 'llm.delta.part' }>,
+  ): AgentEventPayloads['tool.call.delta'] | undefined {
+    const { turnId, step, part } = event;
+    if (part.type === 'function') {
+      const steps = this.streamToolIds.get(turnId) ?? new Map<number, Map<number | string | undefined, string>>();
+      const ids = steps.get(step) ?? new Map<number | string | undefined, string>();
+      ids.set(part._streamIndex, part.id);
+      steps.set(step, ids);
+      this.streamToolIds.set(turnId, steps);
+      return {
+        type: 'tool.call.delta',
+        turnId,
+        toolCallId: part.id,
+        name: part.name,
+        argumentsPart: part.arguments ?? undefined,
+      };
+    }
+    if (part.type !== 'tool_call_part') return undefined;
+    const toolCallId = this.streamToolIds.get(turnId)?.get(step)?.get(part.index);
+    if (toolCallId === undefined) return undefined;
+    return {
+      type: 'tool.call.delta',
+      turnId,
+      toolCallId,
+      argumentsPart: part.argumentsPart ?? undefined,
+    };
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {

@@ -1,8 +1,11 @@
 import { registerEvent2Class } from '#/app/event/event2';
+import type { IEventBus } from '#/app/event/eventBus';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { AgentLLMRequestSource } from '#/agent/usage/usage';
-import { TurnStepCompleted } from '#/agent/loop/turnEvents';
+import { onCoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import { TurnEnded, TurnPrompt } from '#/agent/loop/turnOps';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import { requestSourceOf } from './requesterContract';
@@ -148,18 +151,23 @@ interface AttributionState {
   };
 }
 
-export class RequestMetadataTracker {
+export class RequestMetadataTracker implements IDisposable {
   private state: AttributionState = {};
+  private readonly subscription: IDisposable;
   readonly ready: Promise<unknown>;
 
   constructor(
     private readonly scopeContext: IAgentScopeContext,
     dispatcher: IEventDispatcher,
+    bus: IEventBus,
     private readonly attribution?: ISessionRequestAttributionService,
   ) {
+    this.subscription = onCoreLoopEvent(bus, 'step.ended', (event) => {
+      this.onStepEnded(event);
+    });
     const participant = {
       id: 'llm.requestMetadata',
-      events: [TurnPrompt, TurnStepCompleted, TurnEnded],
+      events: [TurnPrompt, TurnEnded],
       undoable: false,
       getState: () => this.state,
       commit: (next: AttributionState) => {
@@ -204,14 +212,6 @@ export class RequestMetadataTracker {
                   },
           };
         }
-        if (event instanceof TurnStepCompleted) {
-          if (state.activeTurn?.turnId !== event.turnId) return state;
-          if (state.activeTurn.stepReason === 'tool_results') return state;
-          return {
-            ...state,
-            activeTurn: { ...state.activeTurn, stepReason: 'tool_results' as const },
-          };
-        }
         if (event instanceof TurnEnded) {
           const lastRequestId =
             event.requestId ??
@@ -231,6 +231,24 @@ export class RequestMetadataTracker {
     } else {
       this.ready = Promise.resolve();
     }
+  }
+
+  dispose(): void {
+    this.subscription.dispose();
+  }
+
+  private onStepEnded(event: Extract<LoopEmitted, { type: 'step.ended' }>): void {
+    const activeTurn = this.state.activeTurn;
+    if (activeTurn === undefined || activeTurn.turnId !== event.turnId) return;
+    if (activeTurn.stepReason === 'tool_results') return;
+    const outcome = event.outcome;
+    if (outcome.type !== 'continue' && outcome.type !== 'done') return;
+    const reason = outcome.cause?.reason;
+    if (reason === 'retry' || reason === 'crashed' || reason === 'steered') return;
+    this.state = {
+      ...this.state,
+      activeTurn: { ...activeTurn, stepReason: 'tool_results' },
+    };
   }
 
   resolve(source: AgentLLMRequestSource | undefined): RequestMetadata {

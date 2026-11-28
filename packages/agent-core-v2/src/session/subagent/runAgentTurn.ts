@@ -14,7 +14,7 @@ import {
   type Turn,
   type TurnResult,
 } from '#/agent/loop/loop';
-import { AssistantDelta, TurnStepRetrying, TurnStepStarted } from '#/agent/loop/turnEvents';
+import { onCoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
@@ -255,16 +255,18 @@ function collectLoopOutput(bus: IEventBus, onReady?: () => void): LoopOutputColl
   const text = new RunText();
   let ready = false;
   const subscriptions = [
-    bus.subscribe(TurnStepStarted, () => {
+    onCoreLoopEvent(bus, 'step.started', () => {
       text.startStep();
       if (ready) return;
       ready = true;
       onReady?.();
     }),
-    bus.subscribe(AssistantDelta, (event) => {
-      text.append(event.delta);
+    onCoreLoopEvent(bus, 'llm.delta.part', (event) => {
+      if (event.part.type !== 'text') return;
+      text.append(event.part.text);
     }),
-    bus.subscribe(TurnStepRetrying, () => {
+    onCoreLoopEvent(bus, 'llm.retry', (event) => {
+      if (event.reason === 'recovery') return;
       text.discardStep();
     }),
   ];
@@ -290,13 +292,15 @@ function collectRunOutput(bus: IEventBus): RunOutputCollector {
     return text;
   };
   const subscriptions = [
-    bus.subscribe(TurnStepStarted, (event) => {
+    onCoreLoopEvent(bus, 'step.started', (event) => {
       textOf(event.turnId)?.startStep();
     }),
-    bus.subscribe(AssistantDelta, (event) => {
-      textOf(event.turnId)?.append(event.delta);
+    onCoreLoopEvent(bus, 'llm.delta.part', (event) => {
+      if (event.part.type !== 'text') return;
+      textOf(event.turnId)?.append(event.part.text);
     }),
-    bus.subscribe(TurnStepRetrying, (event) => {
+    onCoreLoopEvent(bus, 'llm.retry', (event) => {
+      if (event.reason === 'recovery') return;
       textOf(event.turnId)?.discardStep();
     }),
   ];

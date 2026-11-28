@@ -43,7 +43,7 @@ import type {
   SessionRestoreOptions,
   SessionSummary,
 } from '@moonshot-ai/klient';
-import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCodes, isError2, type IEventBus } from '@moonshot-ai/agent-core-v2';
 import { RPCError } from '@moonshot-ai/klient';
 
 import type { AcpClient } from './acp-client';
@@ -86,6 +86,7 @@ export interface AcpServerOptions {
   readonly terminalAuthLegacyCommand?: string;
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
   readonly resolveSessionMode?: (sessionId: string) => AcpModeId | undefined;
+  readonly resolveMainAgentBus: (sessionId: string) => IEventBus | undefined;
   readonly slashCommands?: SlashCommandsResolver;
 }
 
@@ -97,6 +98,7 @@ export class AcpServer {
   private readonly terminalAuthLegacyCommand: string | undefined;
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
   private readonly resolveSessionMode: AcpServerOptions['resolveSessionMode'];
+  private readonly resolveMainAgentBus: AcpServerOptions['resolveMainAgentBus'];
   private readonly resolveSlashCommands: (
     session: SessionHandle,
   ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
@@ -106,7 +108,7 @@ export class AcpServer {
     private readonly conn: AcpClient,
     private readonly klient: Klient,
     private readonly acpConnection: IAcpConnection,
-    opts: AcpServerOptions = {},
+    opts: AcpServerOptions,
   ) {
     this.agentInfo = opts.agentInfo;
     this.disableAuth = opts.disableAuth ?? false;
@@ -114,6 +116,7 @@ export class AcpServer {
     this.terminalAuthLegacyCommand = opts.terminalAuthLegacyCommand;
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
     this.resolveSessionMode = opts.resolveSessionMode;
+    this.resolveMainAgentBus = opts.resolveMainAgentBus;
     const slashCommands = opts.slashCommands;
     this.resolveSlashCommands =
       typeof slashCommands === 'function'
@@ -424,6 +427,7 @@ export class AcpServer {
       this.acpConnection,
       Boolean(this.clientCapabilities?.elicitation?.form),
       this.resolveOriginalsDir,
+      this.resolveMainAgentBus,
       hostCommands,
     );
     await acpSession.init(() => this.resolveSessionMode?.(sessionId));
