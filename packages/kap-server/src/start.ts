@@ -9,6 +9,7 @@ import {
   IAppendLogStore,
   IConfigService,
   IEventService,
+  IFlagService,
   IMcpOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
@@ -25,7 +26,6 @@ import {
   NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
-  resolveBootstrapEnvWithLegacyTowerMigration,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -228,17 +228,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         };
   const experimentalProfile =
     opts.hostIdentity.platform === 'kimi_code_desktop' ? 'desktop' : 'cli';
-  const bootstrapEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-    homeDir,
-    configPath,
-    env: baseBootstrapEnv,
-    profile: experimentalProfile,
-  });
   const { app: core } = bootstrap(
     {
       homeDir,
       configPath,
-      env: bootstrapEnv,
+      env: baseBootstrapEnv,
       clientIdentity: opts.hostIdentity,
       args: {
         requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
@@ -322,6 +316,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
     idleReclaimMs,
   );
+
+  await core.accessor.get(IFlagService).ready;
 
   try {
     await core.accessor.get(IProjectService).list();

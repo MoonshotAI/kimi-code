@@ -20,6 +20,7 @@ export type ExperimentalFlagConfig = Partial<Record<FlagId, boolean>>;
 
 export const EXPERIMENTAL_SECTION = 'experimental';
 export const BETA_MASTER_CONFIG_KEY = 'beta';
+export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
 export const LEGACY_CLI_ONLY_EXPERIMENTAL_KEYS: ReadonlySet<string> = new Set([
   'notify_user',
   'wait_for',
@@ -132,6 +133,7 @@ export interface ExperimentalFeatureState {
 export interface IFlagService {
   readonly _serviceBrand: undefined;
 
+  readonly ready: Promise<void>;
   readonly registry: IFlagRegistry;
   readonly profile: ExperimentalProfile;
   readonly onDidChangeFlags: Event<void>;

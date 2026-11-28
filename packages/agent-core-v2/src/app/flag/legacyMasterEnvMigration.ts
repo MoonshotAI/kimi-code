@@ -1,37 +1,14 @@
-import { randomUUID } from 'node:crypto';
-import {
-  accessSync,
-  constants,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  type Stats,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, type Stats } from 'node:fs';
 import { basename, dirname, join, resolve } from 'pathe';
-import lockfile from 'proper-lockfile';
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
-import { parseBooleanEnv } from '#/_base/utils/env';
 import { resolveConfigPath } from '#/app/bootstrap/bootstrap';
 import { isPlainObject } from '#/app/config/configPure';
-import { planConfigWriteback } from '#/app/config/tomlWriteback';
-import { TOWER_FLAG_ENV, TOWER_FLAG_ID } from '#/features/tower/tower';
+import { TOWER_FLAG_ID } from '#/features/tower/tower';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import {
-  EXPERIMENTAL_SECTION,
-  type ExperimentalConfig,
-  ExperimentalConfigSchema,
-  experimentalFromToml,
-  experimentalToToml,
-} from './flag';
+import type { ExperimentalConfig } from './flag';
 import { EXPERIMENTAL_PROFILES, type ExperimentalProfile } from './flagRegistry';
-import { MASTER_ENV } from './flagService';
 
 export const EXPERIMENTAL_MIGRATIONS_FILENAME = 'experimental-migrations.json';
 
@@ -39,52 +16,57 @@ type MigratedProfileConfigMap = Partial<
   Record<ExperimentalProfile, Readonly<Record<string, boolean>>>
 >;
 
-interface ExperimentalMigrationsRecord {
+export interface ExperimentalMigrationsRecord {
   readonly legacyMasterEnvTowerMigrated?: boolean;
   readonly legacyMasterEnvTowerMigratedConfigs?: Readonly<Record<string, boolean>>;
   readonly legacyMasterEnvTowerMigratedProfiles?: Readonly<MigratedProfileConfigMap>;
 }
 
-export interface MigrateLegacyMasterEnvTowerInput {
-  readonly homeDir: string;
-  readonly configPath?: string;
-  readonly env?: NodeJS.ProcessEnv;
-  readonly profile?: ExperimentalProfile;
-  readonly onBeforeWrite?: (attempt: number) => void;
-}
+export type MigrationsMarkerReadResult =
+  | { readonly status: 'missing'; readonly record: ExperimentalMigrationsRecord }
+  | { readonly status: 'valid'; readonly record: ExperimentalMigrationsRecord }
+  | { readonly status: 'corrupt' };
 
-export type MigrateLegacyMasterEnvTowerOutcome =
-  | 'already-migrated'
-  | 'stamped-fresh-install'
-  | 'stamped-noop'
-  | 'pending-master-env'
-  | 'migrated-tower'
-  | 'fallback-env'
-  | 'skipped-error';
+export type LegacyTowerMigrationPlan =
+  | {
+      readonly kind: 'noop';
+      readonly initialMode: 'none';
+    }
+  | {
+      readonly kind: 'fallback-only';
+      readonly initialMode: 'fallback';
+    }
+  | {
+      readonly kind: 'stamp';
+      readonly initialMode: 'none';
+      readonly profiles: readonly ExperimentalProfile[];
+      readonly configKeys: readonly string[];
+      readonly includesDefaultConfig: boolean;
+      readonly initialRecord: ExperimentalMigrationsRecord;
+    }
+  | {
+      readonly kind: 'migrate-config';
+      readonly initialMode: 'pending-persist';
+      readonly profile: ExperimentalProfile;
+      readonly configKey: string;
+      readonly isDefaultConfig: boolean;
+      readonly initialRecord: ExperimentalMigrationsRecord;
+    };
+
+export interface PlanLegacyTowerMigrationInput {
+  readonly homeDir: string;
+  readonly configPath: string;
+  readonly profile: ExperimentalProfile;
+  readonly masterEnv: boolean | undefined;
+  readonly towerEnvOverride: boolean | undefined;
+  readonly validatedExperimental: ExperimentalConfig | undefined;
+  readonly rawExperimental: unknown;
+}
 
 const EXISTING_INSTALL_MARKERS = ['sessions', 'credentials', 'user-history'] as const;
-const MAX_MIGRATION_WRITE_ATTEMPTS = 3;
 const EXPERIMENTAL_PROFILE_SET: ReadonlySet<string> = new Set(EXPERIMENTAL_PROFILES);
-const SYNC_LOCK_WAIT_ARRAY = new Int32Array(new SharedArrayBuffer(4));
-const SYNC_LOCK_MAX_ATTEMPTS = 50;
-const SYNC_LOCK_RETRY_MS = 10;
-
-function acquireSyncFileLock(filePath: string): () => void {
-  const lockfilePath = `${filePath}.lock`;
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return lockfile.lockSync(filePath, { realpath: false, lockfilePath });
-    } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException)?.code !== 'ELOCKED' ||
-        attempt + 1 >= SYNC_LOCK_MAX_ATTEMPTS
-      ) {
-        throw error;
-      }
-      Atomics.wait(SYNC_LOCK_WAIT_ARRAY, 0, 0, SYNC_LOCK_RETRY_MS);
-    }
-  }
-}
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 function safeLstat(filePath: string): Stats | undefined {
   try {
@@ -94,43 +76,7 @@ function safeLstat(filePath: string): Stats | undefined {
   }
 }
 
-function assertWritableSingleLink(targetPath: string, targetStat: Stats): void {
-  if (targetStat.nlink > 1) {
-    const error = new Error(`Refusing to replace hard-linked file: ${targetPath}`) as NodeJS.ErrnoException;
-    error.code = 'EPERM';
-    throw error;
-  }
-  if (process.platform !== 'win32' && (targetStat.mode & 0o222) === 0) {
-    const error = new Error(`Target file is read-only: ${targetPath}`) as NodeJS.ErrnoException;
-    error.code = 'EACCES';
-    throw error;
-  }
-  accessSync(targetPath, constants.W_OK);
-}
-
-function writeFileAtomically(filePath: string, content: string): void {
-  const linkStat = safeLstat(filePath);
-  const targetPath = linkStat !== undefined ? realpathSync(filePath) : filePath;
-  const targetStat = linkStat !== undefined ? statSync(targetPath) : undefined;
-  if (targetStat !== undefined) {
-    assertWritableSingleLink(targetPath, targetStat);
-  }
-  const fileMode = targetStat !== undefined ? targetStat.mode & 0o777 || 0o600 : 0o600;
-  const dir = dirname(targetPath);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tempPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(tempPath, content, { encoding: 'utf8', mode: fileMode });
-    renameSync(tempPath, targetPath);
-  } catch (error) {
-    try {
-      unlinkSync(tempPath);
-    } catch {}
-    throw error;
-  }
-}
-
-function normalizeConfigKey(configPath: string): string {
+export function normalizeMigrationConfigKey(configPath: string): string {
   const resolved = resolve(configPath);
   try {
     return realpathSync(resolved);
@@ -143,16 +89,9 @@ function normalizeConfigKey(configPath: string): string {
   }
 }
 
-function readMigrationsRecord(markerPath: string): ExperimentalMigrationsRecord | undefined {
-  let stat: Stats | undefined;
+function parseMigrationsRecordText(text: string): ExperimentalMigrationsRecord | undefined {
   try {
-    stat = lstatSync(markerPath, { throwIfNoEntry: false });
-  } catch {
-    return undefined;
-  }
-  if (stat === undefined) return {};
-  try {
-    const raw = JSON.parse(readFileSync(markerPath, 'utf8')) as unknown;
+    const raw = JSON.parse(text) as unknown;
     if (!isPlainObject(raw)) return undefined;
     const legacyFlag = raw['legacyMasterEnvTowerMigrated'];
     if (legacyFlag !== undefined && typeof legacyFlag !== 'boolean') return undefined;
@@ -179,7 +118,38 @@ function readMigrationsRecord(markerPath: string): ExperimentalMigrationsRecord 
   }
 }
 
-function isConfigMigrated(
+function readMigrationsRecordSync(markerPath: string): MigrationsMarkerReadResult {
+  let stat: Stats | undefined;
+  try {
+    stat = lstatSync(markerPath, { throwIfNoEntry: false });
+  } catch {
+    return { status: 'corrupt' };
+  }
+  if (stat === undefined) return { status: 'missing', record: {} };
+  if (!stat.isFile() || stat.nlink > 1) return { status: 'corrupt' };
+  try {
+    const record = parseMigrationsRecordText(readFileSync(markerPath, 'utf8'));
+    return record === undefined ? { status: 'corrupt' } : { status: 'valid', record };
+  } catch {
+    return { status: 'corrupt' };
+  }
+}
+
+export async function readMigrationsRecordFromStorage(
+  storage: IFileSystemStorageService,
+): Promise<MigrationsMarkerReadResult> {
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = await storage.read('', EXPERIMENTAL_MIGRATIONS_FILENAME);
+  } catch {
+    return { status: 'corrupt' };
+  }
+  if (bytes === undefined) return { status: 'missing', record: {} };
+  const record = parseMigrationsRecordText(textDecoder.decode(bytes));
+  return record === undefined ? { status: 'corrupt' } : { status: 'valid', record };
+}
+
+export function isConfigMigrated(
   record: ExperimentalMigrationsRecord,
   profile: ExperimentalProfile,
   configKey: string,
@@ -210,64 +180,99 @@ function mergeProfileRecords(
   return merged;
 }
 
-function stampMigrationMarker(
-  markerPath: string,
+function buildStampedMigrationsRecord(
   existing: ExperimentalMigrationsRecord,
+  latest: ExperimentalMigrationsRecord,
   profiles: readonly ExperimentalProfile[],
   configKeys: readonly string[],
   includesDefaultConfig: boolean,
-): boolean {
-  let releaseLock: (() => void) | undefined;
-  try {
-    mkdirSync(dirname(markerPath), { recursive: true, mode: 0o700 });
-    releaseLock = acquireSyncFileLock(markerPath);
-    const latest = readMigrationsRecord(markerPath);
-    if (latest === undefined) return false;
-    const mergedProfiles = mergeProfileRecords(
-      existing.legacyMasterEnvTowerMigratedProfiles,
-      latest.legacyMasterEnvTowerMigratedProfiles,
-    );
-    const mergedBase: ExperimentalMigrationsRecord = {
-      ...existing,
-      ...latest,
-      legacyMasterEnvTowerMigratedConfigs: {
-        ...existing.legacyMasterEnvTowerMigratedConfigs,
-        ...latest.legacyMasterEnvTowerMigratedConfigs,
-      },
-      legacyMasterEnvTowerMigratedProfiles: mergedProfiles,
-    };
-    const stampsCli = profiles.includes('cli');
-    const nextProfiles: MigratedProfileConfigMap = { ...mergedProfiles };
-    for (const targetProfile of profiles) {
-      const bucket: Record<string, boolean> = { ...nextProfiles[targetProfile] };
-      for (const key of configKeys) {
-        bucket[key] = true;
-      }
-      nextProfiles[targetProfile] = bucket;
+): ExperimentalMigrationsRecord {
+  const mergedProfiles = mergeProfileRecords(
+    existing.legacyMasterEnvTowerMigratedProfiles,
+    latest.legacyMasterEnvTowerMigratedProfiles,
+  );
+  const mergedBase: ExperimentalMigrationsRecord = {
+    ...existing,
+    ...latest,
+    legacyMasterEnvTowerMigratedConfigs: {
+      ...existing.legacyMasterEnvTowerMigratedConfigs,
+      ...latest.legacyMasterEnvTowerMigratedConfigs,
+    },
+    legacyMasterEnvTowerMigratedProfiles: mergedProfiles,
+  };
+  const stampsCli = profiles.includes('cli');
+  const nextProfiles: MigratedProfileConfigMap = { ...mergedProfiles };
+  for (const targetProfile of profiles) {
+    const bucket: Record<string, boolean> = { ...nextProfiles[targetProfile] };
+    for (const key of configKeys) {
+      bucket[key] = true;
     }
-    const nextConfigs: Record<string, boolean> = {
-      ...mergedBase.legacyMasterEnvTowerMigratedConfigs,
-    };
-    if (stampsCli) {
-      for (const key of configKeys) {
-        nextConfigs[key] = true;
-      }
-    }
-    const next: ExperimentalMigrationsRecord = {
-      ...mergedBase,
-      ...(stampsCli && includesDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
-      ...(stampsCli ? { legacyMasterEnvTowerMigratedConfigs: nextConfigs } : {}),
-      legacyMasterEnvTowerMigratedProfiles: nextProfiles,
-    };
-    writeFileAtomically(markerPath, `${JSON.stringify(next, null, 2)}\n`);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    try {
-      releaseLock?.();
-    } catch {}
+    nextProfiles[targetProfile] = bucket;
   }
+  const nextConfigs: Record<string, boolean> = {
+    ...mergedBase.legacyMasterEnvTowerMigratedConfigs,
+  };
+  if (stampsCli) {
+    for (const key of configKeys) {
+      nextConfigs[key] = true;
+    }
+  }
+  return {
+    ...mergedBase,
+    ...(stampsCli && includesDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
+    ...(stampsCli ? { legacyMasterEnvTowerMigratedConfigs: nextConfigs } : {}),
+    legacyMasterEnvTowerMigratedProfiles: nextProfiles,
+  };
+}
+
+function canPersistRegularFileOnDisk(filePath: string): boolean {
+  const linkStat = safeLstat(filePath);
+  if (linkStat === undefined) return true;
+  if (!linkStat.isFile() || linkStat.nlink > 1) return false;
+  if (process.platform !== 'win32' && (linkStat.mode & 0o222) === 0) return false;
+  return true;
+}
+
+export function canPersistConfigViaConfigService(
+  configPath: string,
+  homeDir: string,
+  storage: IFileSystemStorageService,
+): boolean {
+  if (dirname(resolve(configPath)) !== resolve(homeDir)) return false;
+  if (!(storage instanceof FileStorageService)) return true;
+  return canPersistRegularFileOnDisk(configPath);
+}
+
+export async function writeStampedMigrationsRecord(
+  storage: IFileSystemStorageService,
+  homeDir: string,
+  initialRecord: ExperimentalMigrationsRecord,
+  profiles: readonly ExperimentalProfile[],
+  configKeys: readonly string[],
+  includesDefaultConfig: boolean,
+): Promise<boolean> {
+  if (
+    storage instanceof FileStorageService &&
+    !canPersistRegularFileOnDisk(join(homeDir, EXPERIMENTAL_MIGRATIONS_FILENAME))
+  ) {
+    return false;
+  }
+  const latest = await readMigrationsRecordFromStorage(storage);
+  if (latest.status === 'corrupt') return false;
+  const next = buildStampedMigrationsRecord(
+    initialRecord,
+    latest.record,
+    profiles,
+    configKeys,
+    includesDefaultConfig,
+  );
+  await storage.write(
+    '',
+    EXPERIMENTAL_MIGRATIONS_FILENAME,
+    textEncoder.encode(`${JSON.stringify(next, null, 2)}\n`),
+    { atomic: true },
+  );
+  return true;
 }
 
 function isExistingInstallation(
@@ -280,289 +285,93 @@ function isExistingInstallation(
   return EXISTING_INSTALL_MARKERS.some((entry) => existsSync(join(homeDir, entry)));
 }
 
-type ConfigInspectionResult =
-  | {
-      readonly kind: 'terminal';
-      readonly outcome: 'fallback-env' | 'skipped-error';
-    }
-  | {
-      readonly kind: 'already-configured';
-    }
-  | {
-      readonly kind: 'needs-migration';
-      readonly targetPath: string;
-      readonly targetStat: Stats | undefined;
-      readonly onDiskText: string | undefined;
-      readonly parsedDoc: Record<string, unknown>;
-      readonly rawExperimental: unknown;
-      readonly validatedExperimental: ExperimentalConfig | undefined;
-    };
-
-function inspectConfigForTowerMigration(
-  configPath: string,
+export function readRawProfileTowerValue(
+  rawExperimental: unknown,
   profile: ExperimentalProfile,
-  masterEnv: boolean | undefined,
-): ConfigInspectionResult {
-  const failOutcome = masterEnv === true ? 'fallback-env' : 'skipped-error';
-  let configLinkStat: Stats | undefined;
-  try {
-    configLinkStat = lstatSync(configPath, { throwIfNoEntry: false });
-  } catch {
-    return { kind: 'terminal', outcome: failOutcome };
-  }
-
-  let targetPath = normalizeConfigKey(configPath);
-  let targetStat: Stats | undefined;
-  let onDiskText: string | undefined;
-  let parsedDoc: Record<string, unknown> = {};
-
-  if (configLinkStat !== undefined) {
-    try {
-      targetPath = realpathSync(configPath);
-      targetStat = statSync(targetPath);
-      onDiskText = readFileSync(targetPath, 'utf8');
-      const parsed = parseToml(onDiskText);
-      if (!isPlainObject(parsed)) {
-        return { kind: 'terminal', outcome: failOutcome };
-      }
-      parsedDoc = parsed;
-    } catch {
-      return { kind: 'terminal', outcome: failOutcome };
-    }
-  }
-
-  const rawExperimental = parsedDoc[EXPERIMENTAL_SECTION];
-  let validatedExperimental: ExperimentalConfig | undefined;
-  if (rawExperimental !== undefined) {
-    if (!isPlainObject(rawExperimental)) {
-      return { kind: 'terminal', outcome: failOutcome };
-    }
-    const normalizedExperimental = experimentalFromToml(rawExperimental);
-    const parsedExperimental = ExperimentalConfigSchema.safeParse(normalizedExperimental);
-    if (!parsedExperimental.success) {
-      return { kind: 'terminal', outcome: failOutcome };
-    }
-    validatedExperimental = parsedExperimental.data;
-  }
-
-  const bucket = validatedExperimental?.[profile];
-  if (bucket !== undefined && Object.hasOwn(bucket, TOWER_FLAG_ID)) {
-    return { kind: 'already-configured' };
-  }
-
-  return {
-    kind: 'needs-migration',
-    targetPath,
-    targetStat,
-    onDiskText,
-    parsedDoc,
-    rawExperimental,
-    validatedExperimental,
-  };
+): unknown {
+  if (!isPlainObject(rawExperimental)) return undefined;
+  const bucket = rawExperimental[profile];
+  if (!isPlainObject(bucket)) return undefined;
+  return bucket[TOWER_FLAG_ID];
 }
 
-function buildTowerMigratedConfigText(
-  snapshot: Extract<ConfigInspectionResult, { readonly kind: 'needs-migration' }>,
-  profile: ExperimentalProfile,
-): string {
-  const nextValidated: ExperimentalConfig = {
-    ...snapshot.validatedExperimental,
-    [profile]: {
-      ...snapshot.validatedExperimental?.[profile],
-      [TOWER_FLAG_ID]: true,
-    },
-  };
-  const nextExperimental = experimentalToToml(nextValidated, snapshot.rawExperimental);
-  const nextDoc: Record<string, unknown> = {
-    ...snapshot.parsedDoc,
-    [EXPERIMENTAL_SECTION]: nextExperimental,
-  };
-  if (snapshot.onDiskText === undefined) {
-    return `${stringifyToml(nextDoc).trimEnd()}\n`;
-  }
-  return (
-    planConfigWriteback(
-      snapshot.onDiskText,
-      [
-        {
-          snakeKey: EXPERIMENTAL_SECTION,
-          previousValue: snapshot.rawExperimental,
-          nextValue: nextExperimental,
-        },
-      ],
-      nextDoc,
-    ) ?? `${stringifyToml(nextDoc).trimEnd()}\n`
-  );
-}
-
-export function migrateLegacyMasterEnvTower(
-  input: MigrateLegacyMasterEnvTowerInput,
-): MigrateLegacyMasterEnvTowerOutcome {
-  const { homeDir } = input;
-  const profile: ExperimentalProfile = input.profile ?? 'cli';
+export function planLegacyMasterEnvTowerMigration(
+  input: PlanLegacyTowerMigrationInput,
+  storage: IFileSystemStorageService,
+): LegacyTowerMigrationPlan {
+  const { homeDir, configPath, profile, masterEnv, towerEnvOverride } = input;
   const defaultConfigPath = resolveConfigPath({ homeDir });
-  const configPath = resolveConfigPath({ homeDir, configPath: input.configPath });
-  const defaultConfigKey = normalizeConfigKey(defaultConfigPath);
-  const configKey = normalizeConfigKey(configPath);
+  const configKey = normalizeMigrationConfigKey(configPath);
+  const defaultConfigKey = normalizeMigrationConfigKey(defaultConfigPath);
   const isDefaultConfig = configKey === defaultConfigKey;
-  const env = input.env ?? process.env;
-  const markerPath = join(homeDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
 
-  const record = readMigrationsRecord(markerPath);
-  if (record !== undefined && isConfigMigrated(record, profile, configKey, isDefaultConfig)) {
-    return 'already-migrated';
+  const marker =
+    storage instanceof FileStorageService
+      ? readMigrationsRecordSync(join(homeDir, EXPERIMENTAL_MIGRATIONS_FILENAME))
+      : ({ status: 'missing', record: {} } as const);
+
+  if (
+    marker.status !== 'corrupt' &&
+    isConfigMigrated(marker.record, profile, configKey, isDefaultConfig)
+  ) {
+    return { kind: 'noop', initialMode: 'none' };
   }
 
-  if (!isExistingInstallation(homeDir, configPath, defaultConfigPath)) {
+  const hasInMemoryConfig = input.rawExperimental !== undefined;
+  const existingInstall =
+    hasInMemoryConfig || isExistingInstallation(homeDir, configPath, defaultConfigPath);
+
+  if (!existingInstall) {
+    if (marker.status === 'corrupt') {
+      return { kind: 'noop', initialMode: 'none' };
+    }
     const freshConfigKeys = isDefaultConfig ? [configKey] : [configKey, defaultConfigKey];
-    return record !== undefined &&
-      stampMigrationMarker(markerPath, record, EXPERIMENTAL_PROFILES, freshConfigKeys, true)
-      ? 'stamped-fresh-install'
-      : 'skipped-error';
+    return {
+      kind: 'stamp',
+      initialMode: 'none',
+      profiles: EXPERIMENTAL_PROFILES,
+      configKeys: freshConfigKeys,
+      includesDefaultConfig: true,
+      initialRecord: marker.record,
+    };
   }
 
-  const masterEnv = parseBooleanEnv(env[MASTER_ENV]);
-  const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
-  if (towerEnvOverride !== undefined) {
-    return record !== undefined &&
-      stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
-      ? 'stamped-noop'
-      : 'skipped-error';
+  const validatedTower = input.validatedExperimental?.[profile]?.[TOWER_FLAG_ID];
+  if (towerEnvOverride !== undefined || validatedTower !== undefined) {
+    if (marker.status === 'corrupt') {
+      return { kind: 'noop', initialMode: 'none' };
+    }
+    return {
+      kind: 'stamp',
+      initialMode: 'none',
+      profiles: [profile],
+      configKeys: [configKey],
+      includesDefaultConfig: isDefaultConfig,
+      initialRecord: marker.record,
+    };
   }
 
-  const initial = inspectConfigForTowerMigration(configPath, profile, masterEnv);
-  if (initial.kind === 'terminal') {
-    return initial.outcome;
-  }
-  if (initial.kind === 'already-configured') {
-    return record !== undefined &&
-      stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
-      ? 'stamped-noop'
-      : 'skipped-error';
+  if (readRawProfileTowerValue(input.rawExperimental, profile) === false) {
+    return { kind: 'noop', initialMode: 'none' };
   }
 
   if (masterEnv !== true) {
-    return record === undefined ? 'skipped-error' : 'pending-master-env';
+    return { kind: 'noop', initialMode: 'none' };
   }
 
-  if (record === undefined) {
-    return 'fallback-env';
+  if (
+    marker.status === 'corrupt' ||
+    !canPersistConfigViaConfigService(configPath, homeDir, storage)
+  ) {
+    return { kind: 'fallback-only', initialMode: 'fallback' };
   }
 
-  try {
-    if (initial.targetStat !== undefined) {
-      assertWritableSingleLink(initial.targetPath, initial.targetStat);
-    }
-    mkdirSync(dirname(initial.targetPath), { recursive: true, mode: 0o700 });
-  } catch {
-    return 'fallback-env';
-  }
-
-  let releaseLock: (() => void) | undefined;
-  try {
-    releaseLock = acquireSyncFileLock(initial.targetPath);
-  } catch {
-    return 'fallback-env';
-  }
-
-  try {
-    let committed = false;
-    for (let attempt = 0; attempt < MAX_MIGRATION_WRITE_ATTEMPTS; attempt += 1) {
-      const current = inspectConfigForTowerMigration(configPath, profile, true);
-      if (current.kind === 'terminal') {
-        return current.outcome;
-      }
-      if (current.kind === 'already-configured') {
-        return stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
-          ? 'stamped-noop'
-          : 'skipped-error';
-      }
-      if (current.targetStat !== undefined) {
-        assertWritableSingleLink(current.targetPath, current.targetStat);
-      }
-      const nextText = buildTowerMigratedConfigText(current, profile);
-      input.onBeforeWrite?.(attempt);
-
-      if (current.onDiskText === undefined || current.targetStat === undefined) {
-        if (safeLstat(configPath) !== undefined) {
-          continue;
-        }
-        try {
-          writeFileSync(current.targetPath, nextText, {
-            encoding: 'utf8',
-            mode: 0o600,
-            flag: 'wx',
-          });
-          committed = true;
-          break;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
-            continue;
-          }
-          throw error;
-        }
-      }
-
-      const fileMode = current.targetStat.mode & 0o777 || 0o600;
-      const tempPath = `${current.targetPath}.${process.pid}.${randomUUID()}.tmp`;
-      try {
-        writeFileSync(tempPath, nextText, { encoding: 'utf8', mode: fileMode });
-        const verifyLink = safeLstat(configPath);
-        if (verifyLink === undefined) {
-          unlinkSync(tempPath);
-          continue;
-        }
-        const verifyTarget = realpathSync(configPath);
-        const verifyStat = statSync(verifyTarget);
-        assertWritableSingleLink(verifyTarget, verifyStat);
-        const verifyText = readFileSync(verifyTarget, 'utf8');
-        if (
-          verifyTarget !== current.targetPath ||
-          verifyStat.ino !== current.targetStat.ino ||
-          verifyStat.mtimeMs !== current.targetStat.mtimeMs ||
-          verifyStat.size !== current.targetStat.size ||
-          verifyText !== current.onDiskText
-        ) {
-          unlinkSync(tempPath);
-          continue;
-        }
-        renameSync(tempPath, current.targetPath);
-        committed = true;
-        break;
-      } catch (error) {
-        try {
-          unlinkSync(tempPath);
-        } catch {}
-        throw error;
-      }
-    }
-    if (!committed) {
-      return 'fallback-env';
-    }
-  } catch {
-    return 'fallback-env';
-  } finally {
-    try {
-      releaseLock?.();
-    } catch {}
-  }
-
-  return stampMigrationMarker(markerPath, record, [profile], [configKey], isDefaultConfig)
-    ? 'migrated-tower'
-    : 'skipped-error';
-}
-
-export function resolveBootstrapEnvWithLegacyTowerMigration(
-  input: MigrateLegacyMasterEnvTowerInput,
-): NodeJS.ProcessEnv | undefined {
-  const outcome = migrateLegacyMasterEnvTower(input);
-  if (outcome !== 'fallback-env') {
-    return input.env;
-  }
-  const baseEnv = input.env ?? process.env;
-  const existingTowerEnv = baseEnv[TOWER_FLAG_ENV];
   return {
-    ...baseEnv,
-    [TOWER_FLAG_ENV]: parseBooleanEnv(existingTowerEnv) === true ? existingTowerEnv : '1',
+    kind: 'migrate-config',
+    initialMode: 'pending-persist',
+    profile,
+    configKey,
+    isDefaultConfig,
+    initialRecord: marker.record,
   };
 }

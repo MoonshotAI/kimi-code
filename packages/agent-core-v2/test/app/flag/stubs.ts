@@ -18,6 +18,7 @@ export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): 
   };
   return {
     _serviceBrand: undefined,
+    ready: Promise.resolve(),
     registry,
     profile: 'cli',
     onDidChangeFlags: Event.None as Event<void>,
