@@ -58,7 +58,7 @@
 | minidb | `pnpm --filter @moonshot-ai/minidb test` | 不在根目录的测试里，CI 也不跑 |
 | pi-tui | `pnpm --filter @moonshot-ai/pi-tui test` | 用的是 `node --test` |
 
-- 修 bug 要带修复前会失败的回归测试。选择能稳定复现故障、观察到对应契约的最小边界。模块公开接口能复现时就测该接口。跨层故障从真实入口验证：KAP 的行为用 `tests/scenarios`，用户在 TUI、Web、Desktop 或 ACP 编辑器里看得到的行为用 `tests/e2e`。覆盖同一 bug 的其他触发方式。
+- 修 bug 要带修复前会失败的回归测试。放在哪一层、确定性测试造不出来时怎么办，按 [`tests/AGENTS.md`](tests/AGENTS.md) 的分流表选，并写进 PR 的 Regression Guard 一节。选择能稳定复现故障、观察到对应契约的最小边界。模块公开接口能复现时就测该接口。跨层故障从真实入口验证：KAP 的行为用 `tests/scenarios`，用户在 TUI、Web、Desktop 或 ACP 编辑器里看得到的行为用 `tests/e2e`。覆盖同一 bug 的其他触发方式。
 - 常规 PR 测试运行在 Linux。涉及桌面端等特定路径时还跑 Windows 专项测试。改动涉及路径、子进程、shell 或终端输入时，在 PR 里写明在哪些平台核对过、怎么核对的。
 - 只汇报你实际运行过的命令和结果。某项检查没法运行，就写「未验证」和原因；不要把已有的失败写成通过。
 

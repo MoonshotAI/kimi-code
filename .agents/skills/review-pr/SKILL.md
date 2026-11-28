@@ -114,8 +114,10 @@ disable-model-invocation: true
 | Requirement or Bug | 需求或 Bug |
 | Bug Reproduction Steps | Bug 复现步骤 |
 | Root Cause | 根本原因 |
+| Regression Guard | 回归守卫 |
 | Code Changes | 代码变更 |
 | Behavior Changes and Affected Users | 行为变化与受影响人群 |
+| How This Was Verified | 怎么验证的 |
 | Checklist | 检查清单 |
 
 旧 PR 若仍用 `Impact Scope` 这一节，按"行为变化与受影响人群"的标准核对。
@@ -136,6 +138,12 @@ disable-model-invocation: true
 - 描述的根因与 diff 是否一致？
 - 是根本修复还是绕过，是否说清楚了？
 
+### 回归守卫
+
+- bug 类 PR：主守卫选的是 `tests/AGENTS.md` 分流表里从上往下第一个命中的行吗？放得比那一行更高或更低的，是 finding。
+- 每个守卫都有修复前是红的证明吗？测试类守卫没有证明的，是 finding；作者说撤回修复后仍是绿的，说明测试没复现原来的故障。
+- 表里的测试文件和标题，在 diff 里真的存在吗？
+
 ### 代码变更
 
 - 描述与实际 diff 是否一致？
@@ -151,6 +159,12 @@ disable-model-invocation: true
 - 人群是否具名，还是只写了"部分用户"？
 - 写了 `None` 的，证据是否成立？
 - 受影响模块与测试覆盖是否与 diff 文件列表一致？有没有带风险的未测路径？
+
+### 怎么验证的
+
+- 列的是实际跑过的命令和结果，还是泛泛的「测试都过了」？
+- 按根 `AGENTS.md`「结束前的验证」，这个 diff 该跑的检查都跑了吗？没跑的有没有写「Not verified」和原因？
+- 改到路径、子进程、shell 或终端输入的，写明在哪些平台核对过了吗？
 
 ### 检查清单
 
