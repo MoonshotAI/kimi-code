@@ -507,6 +507,57 @@ describe('refreshProviderModels', () => {
     });
   });
 
+  it('keeps the provider display name the user set when a custom-registry refresh rewrites the provider', async () => {
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const providerId = 'example_chat-completions';
+    const host = makeRefreshHost({
+      providers: {
+        [providerId]: {
+          type: 'openai',
+          baseUrl: 'https://api.example.test/v1',
+          apiKey: 'sk-test-token',
+          displayName: 'My Registry',
+          source: { kind: 'apiJson', url: registryUrl, apiKey: 'sk-test-token' },
+        },
+      },
+      models: {
+        [`${providerId}/reasoner-pro`]: { provider: providerId, model: 'reasoner-pro', maxContextSize: 262144 },
+      },
+      telemetry: true,
+    } as unknown as ManagedKimiConfigShape);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchMock>(async () =>
+        new Response(
+          JSON.stringify({
+            [providerId]: {
+              id: providerId,
+              name: 'Example Chat Completions',
+              api: 'https://api.example.test/v1',
+              type: 'openai',
+              models: {
+                'reasoner-pro': { id: 'reasoner-pro', name: 'Reasoner Pro', limit: { context: 262144, output: 8192 } },
+                'reasoner-max': { id: 'reasoner-max', name: 'Reasoner Max', limit: { context: 262144, output: 8192 } },
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    );
+
+    const result = await refreshProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.changed.map((change) => change.providerId)).toEqual([providerId]);
+    expect(host.current().providers[providerId]?.['displayName']).toBe('My Registry');
+    expect(host.current().models?.[`${providerId}/reasoner-max`]).toBeDefined();
+  });
+
   it('adds custom-registry providers that appear under an existing source URL', async () => {
     const registryUrl = 'https://registry.example.test/v1/models/api.json';
     const apiKey = 'sk-test-token';

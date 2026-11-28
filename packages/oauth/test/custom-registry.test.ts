@@ -568,6 +568,33 @@ describe('applyCustomRegistryProvider', () => {
     expect(alias?.['displayName']).toBe('GPT 5.5');
   });
 
+  it('keeps the provider display name the user set when the registry provider is rebuilt', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'registry_chat-completions': {
+          type: 'openai',
+          baseUrl: 'https://registry.example.test/v1',
+          displayName: 'My Registry',
+        } as ManagedKimiConfigShape['providers'][string],
+      },
+      models: {},
+    };
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        id: 'registry_chat-completions',
+        name: 'Sample Registry (chat completions)',
+        api: 'https://registry.example.test/v1',
+        type: 'openai',
+        models: { 'gpt-5.5': { id: 'gpt-5.5', name: 'GPT 5.5' } },
+      },
+      KOKUB_SOURCE,
+    );
+
+    expect(config.providers['registry_chat-completions']?.['displayName']).toBe('My Registry');
+  });
+
   it('maps support_efforts / default_effort onto the model alias', () => {
     const config: ManagedKimiConfigShape = { providers: {} };
     const entry: CustomRegistryProviderEntry = {

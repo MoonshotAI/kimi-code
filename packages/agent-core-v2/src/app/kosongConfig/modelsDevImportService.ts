@@ -173,6 +173,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     }
 
     const provider: ProviderConfig = { type: resolution.wire };
+    if (existing?.displayName !== undefined) provider.displayName = existing.displayName;
     provider.baseUrl = resolution.baseUrl;
     const credential = reconcileProviderCredentialUpdate(
       existing ?? {},

@@ -440,6 +440,9 @@ export function applyCustomRegistryProvider(
         };
   if (entry.search_url !== undefined) providerRecord['searchUrl'] = entry.search_url;
   if (entry.feedback_url !== undefined) providerRecord['feedbackUrl'] = entry.feedback_url;
+  if (isRecord(existing) && typeof existing['displayName'] === 'string') {
+    providerRecord['displayName'] = existing['displayName'];
+  }
   config.providers[providerKey] = providerRecord as ManagedKimiConfigShape['providers'][string];
 
   const existingModels = config.models ?? {};
