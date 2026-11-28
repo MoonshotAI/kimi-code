@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch, type Ref } from 'vue';
 import { STORAGE_KEYS, safeGetJson, safeSetJson } from '@moonshot-ai/app-core/lib';
 import type { TextFieldLike } from '@moonshot-ai/app-composer/runtime';
 import { composerSnapshotDocument, docToText, parseComposerSnapshot, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
+import { getDraftPromotion } from '../client/draftPromotion';
 
 const MAX_HISTORY = 100;
 const MAX_HISTORY_BYTES = 1024 * 1024;
@@ -64,6 +65,23 @@ function loadMap(sessionId: string | undefined): Record<string, InputHistoryEntr
   return {};
 }
 
+function appendEntry(list: InputHistoryEntry[], entry: InputHistoryEntry): InputHistoryEntry[] {
+  if (JSON.stringify(list.at(-1)) === JSON.stringify(entry)) return list;
+  const next = [...list, entry];
+  return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+}
+
+let draftEntries: InputHistoryEntry[] = [];
+
+export function settleDraftInputHistory(activeSessionId: string | undefined): void {
+  if (!activeSessionId || draftEntries.length === 0) return;
+  const entries = draftEntries;
+  draftEntries = [];
+  if (getDraftPromotion()?.sessionId !== activeSessionId) return;
+  const { [activeSessionId]: previous = [], ...others } = loadMap(activeSessionId);
+  safeSetJson(STORAGE_KEYS.inputHistory, boundedHistory({ ...others, [activeSessionId]: entries.reduce(appendEntry, previous) }));
+}
+
 export function forgetInputHistory(sid: string): void {
   const map = loadMap(sid);
   if (!(sid in map)) return;
@@ -84,7 +102,6 @@ export function useInputHistory(deps: InputHistoryDeps) {
   function push(entry: string, snapshot?: ComposerDocumentSnapshot): void {
     const sid = sessionId();
     resetBrowsing();
-    if (!sid) return;
     const trimmed = entry.trim();
     if (!trimmed && (snapshot?.attachmentOrder.length ?? 0) === 0) return;
     const compact = snapshot === undefined ? undefined : { ...snapshot, attachments: snapshot.attachments.map(entry => {
@@ -93,13 +110,16 @@ export function useInputHistory(deps: InputHistoryDeps) {
     }) };
     const parsed = compact === undefined ? null : parseComposerSnapshot(compact);
     const stored: InputHistoryEntry = parsed === null ? trimmed : { text: trimmed, snapshot: parsed };
+    if (!sid) {
+      draftEntries = appendEntry(draftEntries, stored);
+      return;
+    }
     const persisted = loadMap(sid);
     const list = persisted[sid] ?? historyMap.value[sid] ?? [];
-    if (JSON.stringify(list.at(-1)) === JSON.stringify(stored)) return;
-    const next = [...list, stored];
-    const capped = next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+    const next = appendEntry(list, stored);
+    if (next === list) return;
     const { [sid]: _previous, ...others } = persisted;
-    historyMap.value = boundedHistory({ ...others, [sid]: capped });
+    historyMap.value = boundedHistory({ ...others, [sid]: next });
     safeSetJson(STORAGE_KEYS.inputHistory, historyMap.value);
   }
 
@@ -176,7 +196,8 @@ export function useInputHistory(deps: InputHistoryDeps) {
     return currentList.value.length > 0;
   }
 
-  watch(sessionId, () => {
+  watch(sessionId, (sid, previous) => {
+    if (!previous && sid) historyMap.value = boundedHistory(loadMap(sid));
     if (historyIndex !== -1) {
       historyIndex = -1;
       applyHistoryText(draftBeforeHistory);
