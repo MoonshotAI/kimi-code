@@ -33,6 +33,7 @@ export interface SelectionEditComponent {
 	deleteSelection(start: number, end: number): boolean;
 	moveCursorToOffset(offset: number): void;
 	handleSelectionInput?(data: string, selection: SelectionInputContext): SelectionInputResult;
+	invalidateSelectionInput?(): void;
 	getSelectionPointForOffset?(offset: number, affinity: "forward" | "backward"): EditorSelectionPoint | undefined;
 	getSelectionNewlineOffset?(row: number): number | undefined;
 	getLineSelection?(row: number): EditorSelectionRange | undefined;

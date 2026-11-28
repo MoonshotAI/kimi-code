@@ -45,7 +45,6 @@ describe('update preference commands', () => {
       editorCommand: null,
       disablePasteBurst: false,
       selectionCopyMode: 'immediate',
-      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       cacheExpiryHint: true,
       autoSessionTitle: true,

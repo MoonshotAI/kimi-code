@@ -48,11 +48,15 @@ export class SelectionInputTransaction {
 	}
 
 	takeSelection(): SelectionInputContext | undefined {
-		if ((!this.dispatching && !this.isInPaste()) || !this.selection) return undefined;
+		if (!this.dispatching || !this.selection) return undefined;
 		const selection = this.selection;
 		this.selection = undefined;
 		this.replacementUsed = true;
 		return selection;
+	}
+
+	invalidate(): void {
+		this.selection = undefined;
 	}
 
 	private dispatch(data: string, selection: SelectionInputContext, replace: boolean): SelectionInputResult {

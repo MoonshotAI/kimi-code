@@ -308,6 +308,11 @@ export class UsagePanelComponent implements Component {
     this.lines = this.buildLines();
   }
 
+  selectionExclusions(width: number) {
+    if (Math.max(0, width) - BOX_OVERHEAD < 1) return [];
+    return [{ start: 0, end: LEFT_MARGIN }];
+  }
+
   render(width: number): string[] {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];

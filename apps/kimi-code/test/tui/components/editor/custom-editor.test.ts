@@ -8,6 +8,7 @@ import {
   type AutocompleteProvider,
   type AutocompleteSuggestions,
   type TUI,
+  type TuiMouseEvent,
   visibleWidth,
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
@@ -764,6 +765,109 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toBe('alpha X');
     editor.handleInput('\u001F');
     expect(editor.getText()).toBe('alpha beta');
+  });
+
+  it('retains a queued split paste selection when every paste chunk was queued', async () => {
+    const editor = makeEditor();
+    editor.setText('alpha beta');
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = resolve;
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    editor.handleSelectionInput('\u001B[200~', { start: 6, end: 11, generation: 1 });
+    editor.handleInput('X');
+    editor.handleInput('\u001B[201~');
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
+    resolvePaste(true);
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
+
+    await vi.waitFor(() => expect(editor.getText()).toBe('alpha X'));
+    editor.handleInput('\u001F');
+    expect(editor.getText()).toBe('alpha beta');
+  });
+
+  it('invalidates a queued split paste selection when a click moves the caret', async () => {
+    const editor = makeEditor();
+    editor.setText('alpha beta');
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = resolve;
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    editor.handleSelectionInput('\u001B[200~', { start: 6, end: 11, generation: 1 });
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
+    resolvePaste(true);
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
+
+    editor.render(20);
+    editor.handleMouse({
+      type: 'click',
+      button: 'left',
+      x: 4,
+      y: 1,
+      screenX: 4,
+      screenY: 1,
+      width: 20,
+      height: 3,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      clickCount: 1,
+    } satisfies TuiMouseEvent);
+    expect(editor.getCursor().col).toBe(0);
+    editor.handleInput('X');
+    editor.handleInput('\u001B[201~');
+
+    expect(editor.getText()).toBe('Xalpha beta');
+  });
+
+  it('invalidates a queued split paste selection before the image queue flushes', async () => {
+    const editor = makeEditor();
+    editor.setText('alpha beta');
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = resolve;
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    editor.handleSelectionInput('\u001B[200~', { start: 6, end: 11, generation: 1 });
+    editor.render(20);
+    editor.handleMouse({
+      type: 'click',
+      button: 'left',
+      x: 4,
+      y: 1,
+      screenX: 4,
+      screenY: 1,
+      width: 20,
+      height: 3,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      clickCount: 1,
+    } satisfies TuiMouseEvent);
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
+    resolvePaste(true);
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
+
+    editor.handleInput('X');
+    editor.handleInput('\u001B[201~');
+    expect(editor.getText()).toBe('Xalpha beta');
   });
 
   it('does not clear a selection for rejected input queued behind an image paste', async () => {

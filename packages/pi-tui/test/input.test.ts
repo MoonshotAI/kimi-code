@@ -431,6 +431,21 @@ describe("Input component", () => {
 			);
 			assert.strictEqual(input.getValue(), "alpha betaX");
 		});
+
+		it("does not use a pending selection after a split paste leaves selection dispatch", () => {
+			const input = new Input();
+			input.setValue("alpha beta");
+			input.moveCursorToOffset(input.getValue().length);
+
+			assert.deepStrictEqual(
+				input.handleSelectionInput("\x1b[200~", { start: 6, end: 11, generation: 1 }),
+				{ handled: true, clearSelection: false },
+			);
+			input.moveCursorToOffset(0);
+			input.handleInput("X\x1b[201~");
+
+			assert.strictEqual(input.getValue(), "Xalpha beta");
+		});
 	});
 
 	describe("Kill ring", () => {

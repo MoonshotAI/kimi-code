@@ -18,13 +18,13 @@ export type { WorkLocation };
 import type {
   FollowUpBehavior,
   MarkdownConfig,
-  MouseConfig,
   NotificationsConfig,
   SelectionCopyMode,
   StatusLineConfig,
   TranscriptConfig,
   TuiMode,
   UpgradePreferences,
+  WheelScrollLines,
 } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
@@ -83,7 +83,7 @@ export interface AppState {
   editorCommand: string | null;
   disablePasteBurst?: boolean;
   selectionCopyMode?: SelectionCopyMode;
-  mouse?: MouseConfig;
+  wheelScrollLines?: WheelScrollLines;
   renderLatex?: boolean;
   cacheExpiryHint?: boolean;
   disableFeedbackSurvey?: boolean;

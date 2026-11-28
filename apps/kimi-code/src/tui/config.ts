@@ -201,17 +201,6 @@ export type TuiMode = z.infer<typeof TuiModeSchema>;
 export const SelectionCopyModeSchema = z.enum(['off', 'immediate', 'right-click']);
 export type SelectionCopyMode = z.infer<typeof SelectionCopyModeSchema>;
 
-export const MouseWheelScrollLinesSchema = z.union([z.literal('auto'), z.number().int().min(1)]);
-export const MouseConfigSchema = z.object({
-  wheelScrollLines: MouseWheelScrollLinesSchema,
-  altWheelAcceleration: z.boolean(),
-});
-export type MouseConfig = z.infer<typeof MouseConfigSchema>;
-export const DEFAULT_MOUSE_CONFIG: MouseConfig = {
-  wheelScrollLines: 'auto',
-  altWheelAcceleration: true,
-};
-
 export const FollowUpBehaviorSchema = z.enum(['queue', 'steer']);
 export type FollowUpBehavior = z.infer<typeof FollowUpBehaviorSchema>;
 export const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
@@ -272,12 +261,6 @@ export const TuiConfigFileSchema = z.object({
       auto_install: z.boolean().optional(),
     })
     .optional(),
-  mouse: z
-    .object({
-      wheel_scroll_lines: z.union([z.string(), z.number()]).optional(),
-      alt_wheel_acceleration: z.boolean().optional(),
-    })
-    .optional(),
   status_line: StatusLineFileConfigSchema.optional(),
   markdown: z
     .object({
@@ -296,7 +279,7 @@ export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   tuiMode: TuiModeSchema.optional(),
   selectionCopyMode: SelectionCopyModeSchema.optional(),
-  mouse: MouseConfigSchema.optional(),
+  wheelScrollLines: WheelScrollLinesSchema.optional(),
   renderLatex: z.boolean().optional(),
   disablePasteBurst: z.boolean(),
   cacheExpiryHint: z.boolean().optional(),
@@ -328,7 +311,6 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
   selectionCopyMode: 'immediate',
-  mouse: DEFAULT_MOUSE_CONFIG,
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
@@ -473,15 +455,15 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`);
     }
   }
-  const legacyWheelScrollLinesValue = config.wheel_scroll_lines;
-  let wheelScrollLines = DEFAULT_MOUSE_CONFIG.wheelScrollLines;
-  if (legacyWheelScrollLinesValue !== undefined) {
-    const parsed = WheelScrollLinesSchema.safeParse(legacyWheelScrollLinesValue);
+  const wheelScrollLinesValue = config.wheel_scroll_lines;
+  let wheelScrollLines: WheelScrollLines | undefined;
+  if (wheelScrollLinesValue !== undefined) {
+    const parsed = WheelScrollLinesSchema.safeParse(wheelScrollLinesValue);
     if (parsed.success) {
       wheelScrollLines = parsed.data;
     } else {
       warn(
-        `[tui.toml] ignoring invalid wheel_scroll_lines value: ${formatInvalidTomlValue(legacyWheelScrollLinesValue)} (expected "auto" or a positive integer)`,
+        `[tui.toml] ignoring invalid wheel_scroll_lines value: ${formatInvalidTomlValue(wheelScrollLinesValue)} (expected "auto" or a positive integer)`,
       );
     }
   }
@@ -509,27 +491,11 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown cursor_copy_mode value: ${cursorCopyModeValue}`);
     }
   }
-  const mouseWheelScrollLinesValue = config.mouse?.wheel_scroll_lines;
-  if (mouseWheelScrollLinesValue !== undefined) {
-    const parsed = MouseWheelScrollLinesSchema.safeParse(mouseWheelScrollLinesValue);
-    if (parsed.success) {
-      wheelScrollLines = parsed.data;
-    } else {
-      const shown = typeof mouseWheelScrollLinesValue === 'string'
-        ? mouseWheelScrollLinesValue
-        : JSON.stringify(mouseWheelScrollLinesValue);
-      warn(`[tui.toml] ignoring invalid mouse.wheel_scroll_lines value: ${shown}`);
-    }
-  }
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     tuiMode,
     selectionCopyMode,
-    mouse: {
-      wheelScrollLines,
-      altWheelAcceleration:
-        config.mouse?.alt_wheel_acceleration ?? DEFAULT_MOUSE_CONFIG.altWheelAcceleration,
-    },
+    wheelScrollLines,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
@@ -574,10 +540,6 @@ export function normalizeTuiConfig(
 
 export function renderTuiConfig(config: TuiConfig): string {
   const selectionCopyMode = config.selectionCopyMode ?? DEFAULT_TUI_CONFIG.selectionCopyMode ?? 'immediate';
-  const mouse = config.mouse ?? DEFAULT_MOUSE_CONFIG;
-  const wheelScrollLinesValue = mouse.wheelScrollLines === 'auto'
-    ? '"auto"'
-    : String(mouse.wheelScrollLines);
   const statusItems = config.statusLine?.items;
   const statusCommand = config.statusLine?.command;
   const statusLines: string[] = [];
@@ -592,6 +554,12 @@ export function renderTuiConfig(config: TuiConfig): string {
     config.tuiMode === undefined
       ? '# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)'
       : `tui_mode = "${config.tuiMode}" # "regular" | "fullscreen" ("fullscreen" is experimental)`;
+  const wheelScrollLinesComment =
+    '# fullscreen only: "auto" or lines per wheel event (e.g. 1, 2, 3, 5, 10)';
+  const wheelScrollLinesLine =
+    config.wheelScrollLines === undefined
+      ? `# wheel_scroll_lines = "auto" ${wheelScrollLinesComment}`
+      : `wheel_scroll_lines = ${config.wheelScrollLines === 'auto' ? '"auto"' : String(config.wheelScrollLines)} ${wheelScrollLinesComment}`;
   const markdownSection =
     config.markdown?.mermaid === 'off'
       ? `[markdown]\nmermaid = "off" # "final" | "off"\n`
@@ -628,6 +596,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 ${tuiModeLine}
 cursor_copy_mode = "${selectionCopyMode}" # fullscreen: "off" (Ctrl-C), "immediate", or "right-click" (copy then paste when readable)
+${wheelScrollLinesLine}
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
@@ -643,10 +612,6 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
-
-[mouse]
-wheel_scroll_lines = ${wheelScrollLinesValue} # "auto" or a positive whole number of lines
-alt_wheel_acceleration = ${String(mouse.altWheelAcceleration)} # Alt+wheel scrolls five times as far
 
 ${markdownSection}
 ${transcriptSection}

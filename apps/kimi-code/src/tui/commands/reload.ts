@@ -4,9 +4,9 @@ import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 import { currentTheme, lightColors } from '#/tui/theme';
 import {
   DEFAULT_MARKDOWN_CONFIG,
-  DEFAULT_MOUSE_CONFIG,
   loadTuiConfig,
   resolveTuiMode,
+  resolveWheelScrollLines,
   type TuiConfig,
 } from '../config';
 import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
@@ -75,7 +75,7 @@ export async function applyReloadedTuiConfig(
     tuiMode: config.tuiMode,
     disablePasteBurst: config.disablePasteBurst,
     selectionCopyMode: config.selectionCopyMode,
-    mouse: config.mouse,
+    wheelScrollLines: config.wheelScrollLines,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     autoSessionTitle: config.autoSessionTitle,
@@ -90,11 +90,9 @@ export async function applyReloadedTuiConfig(
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
   if (host.state.ui instanceof TuiAltScreen) {
     const selectionCopyMode = config.selectionCopyMode ?? 'immediate';
-    const mouse = config.mouse ?? DEFAULT_MOUSE_CONFIG;
     host.state.ui.setCopyOnSelect(selectionCopyMode === 'immediate');
     host.state.ui.setCopyOnRightClick(selectionCopyMode === 'right-click');
-    host.state.ui.setWheelScrollLines(mouse.wheelScrollLines);
-    host.state.ui.setAltWheelAcceleration(mouse.altWheelAcceleration);
+    host.state.ui.setWheelScrollLines(resolveWheelScrollLines(config.wheelScrollLines));
   }
   if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);

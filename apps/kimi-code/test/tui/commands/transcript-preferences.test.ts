@@ -179,9 +179,7 @@ describe('scroll speed preference', () => {
 
     const host = makeHost({ toolCallDensity: 'compact', thinking: 'grouped' });
     Object.assign(host.state, { ui });
-    Object.assign(host.state.appState, {
-      mouse: { wheelScrollLines: wheelScrollLines ?? 'auto', altWheelAcceleration: true },
-    });
+    Object.assign(host.state.appState, { wheelScrollLines });
     return { host, ui, vt };
   }
 
@@ -199,18 +197,15 @@ describe('scroll speed preference', () => {
     await applyScrollSpeedChoice(host, 5);
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mouse: expect.objectContaining({ wheelScrollLines: 5 }),
-        transcript: host.state.appState.transcript,
-      }),
+      expect.objectContaining({ wheelScrollLines: 5, transcript: host.state.appState.transcript }),
     );
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe(5);
+    expect(host.state.appState.wheelScrollLines).toBe(5);
     expect(host.showStatus).toHaveBeenCalledWith('Scroll speed set to 5 lines.', 'success');
     expect(await measureSingleWheelUp(ui, vt)).toBe(5);
 
     await applyScrollSpeedChoice(host, 1);
 
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe(1);
+    expect(host.state.appState.wheelScrollLines).toBe(1);
     expect(host.showStatus).toHaveBeenCalledWith('Scroll speed set to 1 line.', 'success');
     expect(await measureSingleWheelUp(ui, vt)).toBe(1);
   });
@@ -240,7 +235,7 @@ describe('scroll speed preference', () => {
 
     await applyScrollSpeedChoice(host, 10);
 
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe(2);
+    expect(host.state.appState.wheelScrollLines).toBe(2);
     expect(host.setAppState).not.toHaveBeenCalled();
     expect(await measureSingleWheelUp(ui, vt)).toBe(2);
     expect(host.showStatus).toHaveBeenCalledWith(
@@ -256,10 +251,7 @@ describe('scroll speed preference', () => {
     await applySelectionCopyModeChoice(host, 'off');
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
-        selectionCopyMode: 'off',
-        mouse: expect.objectContaining({ wheelScrollLines: 7 }),
-      }),
+      expect.objectContaining({ selectionCopyMode: 'off', wheelScrollLines: 7 }),
     );
   });
 
@@ -286,10 +278,10 @@ describe('scroll speed preference', () => {
     picker.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(host.state.appState.mouse?.wheelScrollLines).toBe(3);
+      expect(host.state.appState.wheelScrollLines).toBe(3);
     });
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ mouse: expect.objectContaining({ wheelScrollLines: 3 }) }),
+      expect.objectContaining({ wheelScrollLines: 3 }),
     );
     expect(await measureSingleWheelUp(ui, vt)).toBe(3);
   });

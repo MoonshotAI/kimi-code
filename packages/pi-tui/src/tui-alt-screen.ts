@@ -708,7 +708,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.invalidate();
 		}
 		this.lastDocument = [];
-		this.selectionGeneration += 1;
+		this.advanceSelectionGeneration();
 		this.selectionAnchor = undefined;
 		this.selectionFocus = undefined;
 		this.selectionGranularity = "character";
@@ -1088,7 +1088,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.clearComponentMouseGesture();
 			this.lastComponentClick = undefined;
 			if (hadActiveSelection) {
-				this.selectionGeneration += 1;
+				this.advanceSelectionGeneration();
 				this.selectionAnchor = undefined;
 				this.selectionFocus = undefined;
 				this.selectionGranularity = "character";
@@ -1236,7 +1236,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				generation: this.selectionGeneration,
 			});
 			if (result.handled) {
-				if (result.clearSelection) this.clearTextSelection();
+				if (result.clearSelection) this.clearTextSelection(true);
 				this.requestRender();
 				return { consume: true };
 			}
@@ -1415,8 +1415,15 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return count;
 	}
 
-	private clearTextSelection(): void {
+	private advanceSelectionGeneration(): void {
+		const focused = this.getFocusedComponent();
+		if (focused && isSelectionEditComponent(focused)) focused.invalidateSelectionInput?.();
 		this.selectionGeneration += 1;
+	}
+
+	private clearTextSelection(preserveSelectionInput = false): void {
+		if (preserveSelectionInput) this.selectionGeneration += 1;
+		else this.advanceSelectionGeneration();
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
 		this.selectionPressBlocked = false;
@@ -1712,7 +1719,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const target = this.getScrollbarTargetAt(event.x, event.y);
 		if (!target) return false;
 		this.stopSelectionAutoScroll();
-		this.selectionGeneration += 1;
+		this.advanceSelectionGeneration();
 		this.selectionPressActive = false;
 		this.selectionPressBlocked = false;
 		this.selectionAnchor = undefined;
@@ -2092,7 +2099,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private updateSelectionFocus(point: SelectionPoint): void {
-		this.selectionGeneration += 1;
+		this.advanceSelectionGeneration();
 		if (this.selectionGranularity === "character" || !this.selectionInitialRange) {
 			this.selectionFocus = point;
 		} else {
@@ -2223,7 +2230,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const clickedUrl = isClick ? this.pressedUrl : undefined;
 			this.pressedUrl = undefined;
 			if (clickedUrl && this.openUrl) {
-				this.selectionGeneration += 1;
+				this.advanceSelectionGeneration();
 				this.selectionAnchor = undefined;
 				this.selectionFocus = undefined;
 				try {
@@ -2272,7 +2279,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			return;
 		}
 		this.stopSelectionAutoScroll();
-		this.selectionGeneration += 1;
+		this.advanceSelectionGeneration();
 		this.selectionPressActive = true;
 		this.selectionPressBlocked = false;
 		this.selectionOverlay = undefined;
@@ -2923,9 +2930,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					}
 				}
 			}
-			const exclusions = sourceLine?.selectionExclusions?.map((range) => ({
-				start: range.start + offset,
-				end: range.end + offset,
+			const exclusionSource = sourceRegion
+				? selectionBox?.scrollContentLines?.[sourceRow]
+				: sourceLine;
+			const exclusionOffset = sourceRegion ? (selectionBox?.rect.x ?? 0) : offset;
+			const exclusions = exclusionSource?.selectionExclusions?.map((range) => ({
+				start: range.start + exclusionOffset,
+				end: range.end + exclusionOffset,
 			}));
 			const included = includedSelectionRanges({
 				start: columns.start,

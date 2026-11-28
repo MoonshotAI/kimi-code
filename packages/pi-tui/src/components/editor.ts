@@ -1441,6 +1441,10 @@ export class Editor implements Component, Focusable, SelectionEditComponent {
 		return this.selectionInput.handle(data, selection);
 	}
 
+	invalidateSelectionInput(): void {
+		this.selectionInput.invalidate();
+	}
+
 	protected canHandleSelectionInput(data: string): boolean {
 		return this.selectionInput.canHandle(data);
 	}

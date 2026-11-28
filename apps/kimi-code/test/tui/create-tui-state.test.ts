@@ -179,10 +179,10 @@ describe('createTUIState', () => {
     expect((state.ui as unknown as { editorSelection: boolean }).editorSelection).toBe(true);
   });
 
-  it('defaults wheel scrolling to auto and applies fixed line and Alt settings', () => {
-    const startWith = (mouse?: AppState['mouse']) => {
+  it('defaults wheel scrolling to auto and keeps official Alt acceleration enabled', () => {
+    const startWith = (wheelScrollLines?: WheelScrollLines) => {
       const state = createTUIState({
-        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', mouse },
+        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', wheelScrollLines },
         startup: { continueLast: false, yolo: false, auto: false, plan: false },
       });
       return state.ui as unknown as {
@@ -193,9 +193,9 @@ describe('createTUIState', () => {
 
     expect(startWith().wheelScroll.lines).toBe('auto');
     expect(startWith().altWheelAcceleration).toBe(true);
-    const configured = startWith({ wheelScrollLines: 4, altWheelAcceleration: false });
+    const configured = startWith(4);
     expect(configured.wheelScroll.lines).toBe(4);
-    expect(configured.altWheelAcceleration).toBe(false);
+    expect(configured.altWheelAcceleration).toBe(true);
   });
 
   async function mountFullscreenWheelProbe(wheelScrollLines?: WheelScrollLines): Promise<{
@@ -206,7 +206,7 @@ describe('createTUIState', () => {
       initialAppState: {
         ...fakeInitialAppState(),
         tuiMode: 'fullscreen',
-        mouse: { wheelScrollLines: wheelScrollLines ?? 'auto', altWheelAcceleration: true },
+        wheelScrollLines,
       },
       startup: { continueLast: false, yolo: false, auto: false, plan: false },
     });

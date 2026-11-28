@@ -1746,6 +1746,43 @@ describe("mouse-aware components", () => {
 		}
 	});
 
+	it("invalidates a split editor paste selection when a click moves the caret", async () => {
+		const terminal = new VirtualTerminal(20, 8);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false, editorSelection: true });
+		const editor = new Editor(tui, editorTheme);
+		editor.setText("alpha beta");
+		tui.setLayoutRoot(editor);
+		tui.setFocus(editor);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			const viewport = terminal.getViewport();
+			const row = viewport.findIndex((line) => line.includes("alpha beta"));
+			assert.ok(row >= 0);
+			const alphaColumn = visibleWidth(viewport[row]!.slice(0, viewport[row]!.indexOf("alpha")));
+			const betaColumn = visibleWidth(viewport[row]!.slice(0, viewport[row]!.indexOf("beta")));
+			terminal.sendInput(`\x1b[<0;${betaColumn + 1};${row + 1}M`);
+			terminal.sendInput(`\x1b[<32;${betaColumn + 4};${row + 1}M`);
+			terminal.sendInput(`\x1b[<0;${betaColumn + 4};${row + 1}m`);
+			await terminal.waitForRender();
+			assert.strictEqual(tui.hasActiveSelection(), true);
+
+			terminal.sendInput("\x1b[200~");
+			await terminal.waitForRender();
+			terminal.sendInput(`\x1b[<0;${alphaColumn + 1};${row + 1}M`);
+			terminal.sendInput(`\x1b[<0;${alphaColumn + 1};${row + 1}m`);
+			await terminal.waitForRender();
+			assert.strictEqual(tui.hasActiveSelection(), false);
+			assert.strictEqual(editor.getCursor().col, 0);
+
+			terminal.sendInput("X\x1b[201~");
+			await terminal.waitForRender();
+			assert.strictEqual(editor.getText(), "Xalpha beta");
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("replaces an editor selection with a normalized large paste in one change and undo unit", async () => {
 		const terminal = new VirtualTerminal(20, 8);
 		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false, editorSelection: true });

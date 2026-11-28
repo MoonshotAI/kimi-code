@@ -78,7 +78,6 @@ auto_install = false
     expect(config).toEqual({
       theme: 'light',
       selectionCopyMode: 'immediate',
-      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -179,43 +178,29 @@ cursor_copy_mode = "right-click"
     expect(warnings).toEqual(['[tui.toml] ignoring unknown cursor_copy_mode value: unknown']);
   });
 
-  it('defaults wheel scrolling to auto and parses fixed line counts and Alt acceleration', () => {
-    expect(parseTuiConfig('').mouse).toEqual({ wheelScrollLines: 'auto', altWheelAcceleration: true });
-    expect(renderTuiConfig(DEFAULT_TUI_CONFIG)).toContain('wheel_scroll_lines = "auto"');
-
-    const config = parseTuiConfig(`
-[mouse]
-wheel_scroll_lines = 4
-alt_wheel_acceleration = false
-`);
-    expect(config.mouse).toEqual({ wheelScrollLines: 4, altWheelAcceleration: false });
-    expect(renderTuiConfig(config)).toContain('wheel_scroll_lines = 4');
-    expect(parseTuiConfig(renderTuiConfig(config)).mouse).toEqual(config.mouse);
-  });
-
-  it.each(['fast', 0, 1.5])('warns and uses auto for invalid wheel_scroll_lines = %s', (value) => {
-    const warnings: string[] = [];
-    const source = `[mouse]\nwheel_scroll_lines = ${typeof value === 'string' ? `"${value}"` : String(value)}`;
-    const config = parseTuiConfig(source, (message) => warnings.push(message));
-
-    expect(config.mouse?.wheelScrollLines).toBe('auto');
-    expect(warnings).toEqual([
-      `[tui.toml] ignoring invalid mouse.wheel_scroll_lines value: ${String(value)}`,
-    ]);
-  });
-
-  it('writes wheel_scroll_lines as auto in the mouse table when creating the default config', async () => {
+  it('keeps wheel_scroll_lines commented at auto when creating the default config', async () => {
     const created = await loadTuiConfig(filePath);
 
-    expect(created.mouse?.wheelScrollLines).toBe(DEFAULT_WHEEL_SCROLL_LINES);
-    expect(resolveWheelScrollLines(created.mouse?.wheelScrollLines)).toBe(DEFAULT_WHEEL_SCROLL_LINES);
+    expect(created.wheelScrollLines).toBeUndefined();
+    expect(resolveWheelScrollLines(created.wheelScrollLines)).toBe(DEFAULT_WHEEL_SCROLL_LINES);
     expect(resolveWheelScrollLines(undefined)).toBe('auto');
 
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain(
-      '\n[mouse]\nwheel_scroll_lines = "auto" # "auto" or a positive whole number of lines\n',
+      '\n# wheel_scroll_lines = "auto" # fullscreen only: "auto" or lines per wheel event (e.g. 1, 2, 3, 5, 10)\n',
     );
-    expect((await loadTuiConfig(filePath)).mouse?.wheelScrollLines).toBe('auto');
+    expect(text).not.toMatch(/^wheel_scroll_lines\s*=/m);
+    expect(text).not.toContain('[mouse]');
+    expect(text).not.toContain('alt_wheel_acceleration');
+    expect((await loadTuiConfig(filePath)).wheelScrollLines).toBeUndefined();
+  });
+
+  it('ignores removed mouse settings', () => {
+    const config = parseTuiConfig('[mouse]\nwheel_scroll_lines = 4\nalt_wheel_acceleration = false');
+
+    expect(config.wheelScrollLines).toBeUndefined();
+    expect(renderTuiConfig(config)).not.toContain('[mouse]');
+    expect(renderTuiConfig(config)).not.toContain('alt_wheel_acceleration');
   });
 
   it.each<readonly [string, WheelScrollLines, string]>([
@@ -223,21 +208,22 @@ alt_wheel_acceleration = false
     ['3', 3, 'wheel_scroll_lines = 3'],
     ['7', 7, 'wheel_scroll_lines = 7'],
   ])(
-    'parses legacy top-level wheel_scroll_lines = %s and round-trips it through the mouse table',
+    'parses, round-trips, and preserves wheel_scroll_lines = %s across unrelated saves',
     async (tomlLiteral, expected, renderedPrefix) => {
       const parsed = parseTuiConfig(`theme = "dark"\nwheel_scroll_lines = ${tomlLiteral}\n`);
-      expect(parsed.mouse?.wheelScrollLines).toBe(expected);
-      expect(resolveWheelScrollLines(parsed.mouse?.wheelScrollLines)).toBe(expected);
+      expect(parsed.wheelScrollLines).toBe(expected);
+      expect(resolveWheelScrollLines(parsed.wheelScrollLines)).toBe(expected);
 
       await saveTuiConfig({ ...parsed, theme: 'light' }, filePath);
       const text = readFileSync(filePath, 'utf-8');
       expect(text).toContain(
-        `\n${renderedPrefix} # "auto" or a positive whole number of lines\n`,
+        `\n${renderedPrefix} # fullscreen only: "auto" or lines per wheel event (e.g. 1, 2, 3, 5, 10)\n`,
       );
       expect(text).not.toContain('# wheel_scroll_lines');
+      expect(text).not.toContain('[mouse]');
       expect(await loadTuiConfig(filePath)).toMatchObject({
         theme: 'light',
-        mouse: { wheelScrollLines: expected },
+        wheelScrollLines: expected,
       });
     },
   );
@@ -263,7 +249,7 @@ alt_wheel_acceleration = false
       const config = await loadTuiConfig(filePath, (message) => warnings.push(message));
 
       expect(config.theme).toBe('dark');
-      expect(config.mouse?.wheelScrollLines).toBe('auto');
+      expect(config.wheelScrollLines).toBeUndefined();
       expect(warnings).toEqual([
         `[tui.toml] ignoring invalid wheel_scroll_lines value: ${shown} (expected "auto" or a positive integer)`,
       ]);
@@ -285,7 +271,7 @@ alt_wheel_acceleration = false
       );
 
       expect(config.theme).toBe('dark');
-      expect(config.mouse?.wheelScrollLines).toBe('auto');
+      expect(config.wheelScrollLines).toBeUndefined();
       expect(warnings).toEqual([
         `[tui.toml] ignoring invalid wheel_scroll_lines value: ${shown} (expected "auto" or a positive integer)`,
       ]);
@@ -301,7 +287,6 @@ command = "   "
     expect(config).toEqual({
       theme: 'auto',
       selectionCopyMode: 'immediate',
-      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -354,7 +339,6 @@ command = "   "
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
       selectionCopyMode: 'immediate',
-      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,

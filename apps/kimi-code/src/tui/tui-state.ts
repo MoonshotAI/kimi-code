@@ -23,7 +23,7 @@ import { BtwPanelComponent } from './components/panes/btw-panel';
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { SessionRow, SessionsScope } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
-import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_MOUSE_CONFIG, DEFAULT_TUI_CONFIG } from './config';
+import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, resolveWheelScrollLines } from './config';
 import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
 import { CLICK_GUARD_MS } from './constant/terminal';
 import type { TasksBrowserState } from './controllers/tasks-browser';
@@ -100,13 +100,11 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
   const fullscreen = (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen';
   const selectionCopyMode = initialAppState.selectionCopyMode ?? 'immediate';
-  const mouse = initialAppState.mouse ?? DEFAULT_MOUSE_CONFIG;
   const ui = fullscreen
       ? new TuiAltScreen(terminal, undefined, undefined, {
           openUrl,
           refocusMouseGuardMs: CLICK_GUARD_MS,
-          wheelScrollLines: mouse.wheelScrollLines,
-          altWheelAcceleration: mouse.altWheelAcceleration,
+          wheelScrollLines: resolveWheelScrollLines(initialAppState.wheelScrollLines),
           searchSelectAll: true,
           editorSelection: true,
           copyOnSelect: selectionCopyMode === 'immediate',

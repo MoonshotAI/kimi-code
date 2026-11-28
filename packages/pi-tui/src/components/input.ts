@@ -202,6 +202,10 @@ export class Input implements Component, Focusable, SelectionEditComponent {
 		return this.selectionInput.handle(data, selection);
 	}
 
+	invalidateSelectionInput(): void {
+		this.selectionInput.invalidate();
+	}
+
 	setValue(value: string): void {
 		this.value = value;
 		this.cursor = Math.min(this.cursor, value.length);

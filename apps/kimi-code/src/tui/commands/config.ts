@@ -36,7 +36,6 @@ import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selecto
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import {
   DEFAULT_MARKDOWN_CONFIG,
-  DEFAULT_MOUSE_CONFIG,
   DEFAULT_TUI_CONFIG,
   resolveFollowUpBehavior,
   resolveTuiMode,
@@ -102,7 +101,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     selectionCopyMode:
       host.state.appState.selectionCopyMode ?? DEFAULT_TUI_CONFIG.selectionCopyMode,
-    mouse: host.state.appState.mouse ?? DEFAULT_MOUSE_CONFIG,
+    wheelScrollLines: host.state.appState.wheelScrollLines,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
@@ -1116,7 +1115,7 @@ export async function applySelectionCopyModeChoice(
 function showScrollSpeedPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ScrollSpeedSelectorComponent({
-      currentValue: resolveWheelScrollLines(host.state.appState.mouse?.wheelScrollLines),
+      currentValue: resolveWheelScrollLines(host.state.appState.wheelScrollLines),
       onSelect: (lines) => {
         host.restoreEditor();
         void applyScrollSpeedChoice(host, lines);
@@ -1133,23 +1132,19 @@ export async function applyScrollSpeedChoice(
   lines: WheelScrollLines,
 ): Promise<void> {
   const label = formatWheelScrollSpeedLabel(lines);
-  if (lines === resolveWheelScrollLines(host.state.appState.mouse?.wheelScrollLines)) {
+  if (lines === resolveWheelScrollLines(host.state.appState.wheelScrollLines)) {
     host.showStatus(`Scroll speed already ${label}.`);
     return;
   }
 
-  const mouse = {
-    ...(host.state.appState.mouse ?? DEFAULT_MOUSE_CONFIG),
-    wheelScrollLines: lines,
-  };
   try {
-    await saveTuiConfig({ ...currentTuiConfig(host), mouse });
+    await saveTuiConfig({ ...currentTuiConfig(host), wheelScrollLines: lines });
   } catch (error) {
     host.showStatus(`Failed to save scroll speed setting: ${formatErrorMessage(error)}`, 'error');
     return;
   }
 
-  host.setAppState({ mouse });
+  host.setAppState({ wheelScrollLines: lines });
   if (host.state.ui instanceof TuiAltScreen) host.state.ui.setWheelScrollLines(lines);
   host.showStatus(`Scroll speed set to ${label}.`, 'success');
 }

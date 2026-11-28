@@ -217,13 +217,10 @@ auto_install = false
     expect(host.state.appState.followUpBehavior).toBeUndefined();
   });
 
-  it('applies mouse scrolling and selection copy modes to the live fullscreen renderer', async () => {
+  it('applies top-level wheel scrolling and selection copy modes to the live fullscreen renderer', async () => {
     await writeTuiConfig(`
 cursor_copy_mode = "right-click"
-
-[mouse]
 wheel_scroll_lines = 3
-alt_wheel_acceleration = false
 `);
     const host = makeHost();
     const ui = new TuiAltScreen(new VirtualTerminal(40, 10));
@@ -238,10 +235,10 @@ alt_wheel_acceleration = false
       altWheelAcceleration: boolean;
     };
     expect(internals.wheelScroll.lines).toBe(3);
-    expect(internals.altWheelAcceleration).toBe(false);
+    expect(internals.altWheelAcceleration).toBe(true);
     expect(host.state.appState).toMatchObject({
       selectionCopyMode: 'right-click',
-      mouse: { wheelScrollLines: 3, altWheelAcceleration: false },
+      wheelScrollLines: 3,
     });
   });
 
@@ -301,7 +298,7 @@ alt_wheel_acceleration = false
 
     await handleReloadTuiCommand(host);
 
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe(4);
+    expect(host.state.appState.wheelScrollLines).toBe(4);
     const before = ui.viewportTop;
     vt.sendInput('\u001B[<64;1;1M');
     await vt.waitForRender();
@@ -316,7 +313,7 @@ alt_wheel_acceleration = false
 
     await handleReloadCommand(host);
 
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe(5);
+    expect(host.state.appState.wheelScrollLines).toBe(5);
     const before = ui.viewportTop;
     vt.sendInput('\u001B[<64;1;1M');
     await vt.waitForRender();
@@ -335,12 +332,12 @@ alt_wheel_acceleration = false
     const host = makeHost();
     const { ui, vt } = await attachFullscreenRenderer(host);
     await handleReloadTuiCommand(host);
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe(4);
+    expect(host.state.appState.wheelScrollLines).toBe(4);
 
     await writeTuiConfig('tui_mode = "fullscreen"\n');
     await handleReloadTuiCommand(host);
 
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe('auto');
+    expect(host.state.appState.wheelScrollLines).toBeUndefined();
     const start = ui.viewportTop;
     vt.sendInput('\u001B[<64;1;1M');
     await vt.waitForRender();
@@ -369,7 +366,7 @@ alt_wheel_acceleration = false
     await writeTuiConfig('tui_mode = "fullscreen"\nwheel_scroll_lines = "3"\n');
     await handleReloadTuiCommand(host);
 
-    expect(host.state.appState.mouse?.wheelScrollLines).toBe('auto');
+    expect(host.state.appState.wheelScrollLines).toBeUndefined();
     expect(host.showStatus).toHaveBeenCalledWith(
       '[tui.toml] ignoring invalid wheel_scroll_lines value: "3" (expected "auto" or a positive integer)',
       'warning',

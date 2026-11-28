@@ -16,6 +16,8 @@ import {
   type SelectionInputContext,
   type SelectionInputResult,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   type TuiRenderLine,
 } from '@moonshot-ai/pi-tui';
 
@@ -136,6 +138,8 @@ export class CustomEditor extends Editor {
   private consumeBuffer = '';
   private pasteInFlight = false;
   private readonly pasteInputQueue: Array<{ data: string; selection?: SelectionInputContext }> = [];
+  private queuedSelectionPaste: SelectionInputContext | undefined;
+  private continuingQueuedSelectionPaste = false;
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
   private promptPrediction: string | undefined;
@@ -386,12 +390,29 @@ export class CustomEditor extends Editor {
   }
 
   override handleSelectionInput(data: string, selection: SelectionInputContext): SelectionInputResult {
+    if (this.queuedSelectionPaste !== undefined && this.queuedSelectionPaste.generation !== selection.generation) {
+      this.invalidateSelectionInput();
+    }
     if (this.pasteInFlight) {
       if (!this.canHandleSelectionInput(data)) return { handled: false };
       this.pasteInputQueue.push({ data, selection });
+      if (data.includes(BRACKET_PASTE_START) && !data.includes(BRACKET_PASTE_END)) {
+        this.queuedSelectionPaste = selection;
+      }
       return { handled: true, clearSelection: true };
     }
     return super.handleSelectionInput(data, selection);
+  }
+
+  override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === 'click') this.invalidateSelectionInput();
+    return super.handleMouse(event);
+  }
+
+  override invalidateSelectionInput(): void {
+    this.queuedSelectionPaste = undefined;
+    for (const queued of this.pasteInputQueue) queued.selection = undefined;
+    super.invalidateSelectionInput();
   }
 
   override handleInput(data: string): void {
@@ -403,6 +424,17 @@ export class CustomEditor extends Editor {
     if (this.pasteInFlight) {
       this.pasteInputQueue.push({ data: normalized });
       return;
+    }
+
+    const queuedSelection = this.queuedSelectionPaste;
+    if (queuedSelection !== undefined && !this.continuingQueuedSelectionPaste) {
+      if (normalized.includes(BRACKET_PASTE_END)) this.queuedSelectionPaste = undefined;
+      this.continuingQueuedSelectionPaste = true;
+      try {
+        if (super.handleSelectionInput(normalized, queuedSelection).handled) return;
+      } finally {
+        this.continuingQueuedSelectionPaste = false;
+      }
     }
 
     if (!matchesKey(normalized, Key.escape)) {

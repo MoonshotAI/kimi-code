@@ -21,6 +21,9 @@ import { MoonLoader } from '#/tui/components/chrome/moon-loader';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
+import { PlanBoxComponent } from '#/tui/components/messages/plan-box';
+import { WorktreeProgressComponent } from '#/tui/components/messages/worktree-progress';
+import { UsagePanelComponent } from '#/tui/components/messages/usage-panel';
 import { NoticeMessageComponent, StatusMessageComponent } from '#/tui/components/messages/status-message';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
@@ -41,6 +44,8 @@ import {
   setEditorSlot,
 } from '#/tui/tui-state';
 import { currentTheme } from '#/tui/theme';
+import { darkColors } from '#/tui/theme/colors';
+import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { AppState, TranscriptEntry } from '#/tui/types';
 import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
 import {
@@ -687,7 +692,7 @@ describe('fullscreen layout', () => {
       for (const call of calls) state.transcriptContainer.addChild(call);
       state.transcriptContainer.toggleToolOutputExpansion();
       const copied = await copyComponentSelection(state.transcriptContainer, 20, logicalLineRange, 'S');
-      expect(copied?.replaceAll('\n', '')).toBe(source);
+      expect(copied).toBe(source);
     } finally {
       for (const call of calls) call.dispose();
       state.ui.stop();
@@ -701,6 +706,144 @@ describe('fullscreen layout', () => {
     await expect(copyComponentSelection(thinking, 20, logicalLineRange)).resolves.toBe(source);
     thinking.dispose();
   });
+
+  it('copies a Plan logical line without visual wrapping or frame decorations', async () => {
+    const source = `START${'x'.repeat(50)}END`;
+    const plan = new PlanBoxComponent(source, createMarkdownTheme(), darkColors.success);
+
+    await expectComponentCopyGestures(plan, 24, source, logicalLineRange, 'S');
+  });
+
+  it('copies a Worktree logical line without visual wrapping or generated indentation', async () => {
+    const source = `START${'x'.repeat(50)}END`;
+    const worktree = new WorktreeProgressComponent(() => {});
+    worktree.update({ phase: 'move_failed', name: 'fix-login', sourceDir: '/tmp/project', reason: source });
+    try {
+      await expectComponentCopyGestures(worktree, 24, source, logicalLineRange, 'S');
+    } finally {
+      worktree.dispose();
+    }
+  });
+
+  it('excludes only the two columns before the Status left border from selections and copies', async () => {
+    const panel = new UsagePanelComponent(() => ['alpha', '', 'beta'], 'primary', ' Status ');
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      state.transcriptContainer.addChild(
+        new Text(Array.from({ length: 40 }, (_, index) => `filler ${String(index)}`).join('\n'), 0, 0),
+      );
+      state.transcriptContainer.addChild(new StatusMessageComponent('before', 'error'));
+      state.transcriptContainer.addChild(panel);
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('before'));
+      const lastRow = rows.findIndex((row) => row.includes('╰'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      const lastColumn = rows[lastRow]!.length - 1;
+
+      vt.sendInput(`\u001B[<0;1;${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+      await vt.waitForRender();
+
+      const selectedLines = alt.getScreenLines().slice(firstRow, lastRow + 1);
+      const highlights = selectedLines.flatMap((line) => highlightedText(line));
+      expect(highlights.some((text) => text.startsWith('╭') && text.includes(' Status ') && text.includes('╮'))).toBe(true);
+      expect(highlights.some((text) => text.startsWith('╰') && text.includes('╯'))).toBe(true);
+      expect(highlights.some((text) => /^│ alpha +│/.test(text))).toBe(true);
+      expect(highlights.some((text) => /^│ beta +│/.test(text))).toBe(true);
+      for (const line of selectedLines) {
+        const highlightColumns = [...line.matchAll(/\u001B\[7m/g)].map((match) =>
+          stripAnsi(line.slice(0, match.index)).length,
+        );
+        expect(highlightColumns.every((column) => column >= CHROME_GUTTER)).toBe(true);
+      }
+      expect(highlights.every((text) => !text.startsWith('  │'))).toBe(true);
+
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      const copied = clipboardText.copyTextToClipboard.mock.calls.at(-1)?.[0];
+      expect(copied).toContain('before');
+      expect(copied).toContain(' Status ');
+      expect(copied).toMatch(/\n╭.*╮/);
+      expect(copied).toMatch(/\n╰.*╯/);
+      expect(copied).toMatch(/\n│ alpha +│/);
+      expect(copied).toMatch(/\n│ beta +│/);
+      expect(copied).not.toContain('  │ alpha');
+      expect(copied).not.toContain('  │ beta');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it.each([false, true])(
+    'invalidates a queued editor paste on transcript click (flush before click: %s)',
+    async (flushBeforeClick) => {
+      const { state, vt } = await mountFullscreen();
+      let resolvePaste!: (handled: boolean) => void;
+      state.editor.onPasteImage = () =>
+        new Promise<boolean>((resolve) => {
+          resolvePaste = resolve;
+        });
+      state.editor.setText('alpha beta');
+      state.transcriptContainer.addChild(new Text('transcript', 0, 0));
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      try {
+        let rows = screenRows(vt);
+        const editorRow = rows.findIndex((row) => row.includes('alpha beta'));
+        const betaColumn = rows[editorRow]!.indexOf('beta');
+        expect(editorRow).toBeGreaterThanOrEqual(0);
+        vt.sendInput(`\u001B[<0;${betaColumn + 1};${editorRow + 1}M`);
+        vt.sendInput(`\u001B[<32;${betaColumn + 4};${editorRow + 1}M`);
+        vt.sendInput(`\u001B[<0;${betaColumn + 4};${editorRow + 1}m`);
+        await vt.waitForRender();
+        expect(alt.hasActiveSelection()).toBe(true);
+
+        state.editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+        vt.sendInput('\u001B[200~');
+        await vt.waitForRender();
+        expect(alt.hasActiveSelection()).toBe(false);
+        const pasteQueueFlushed = vi.spyOn(
+          state.editor as unknown as { flushPasteInputQueue(): void },
+          'flushPasteInputQueue',
+        );
+        const flushPaste = async () => {
+          resolvePaste(true);
+          await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
+        };
+        if (flushBeforeClick) await flushPaste();
+
+        rows = screenRows(vt);
+        const transcriptRow = rows.findIndex((row) => row.includes('transcript'));
+        const transcriptColumn = rows[transcriptRow]!.indexOf('transcript');
+        expect(transcriptRow).toBeGreaterThanOrEqual(0);
+        vt.sendInput(`\u001B[<0;${transcriptColumn + 1};${transcriptRow + 1}M`);
+        vt.sendInput(`\u001B[<0;${transcriptColumn + 1};${transcriptRow + 1}m`);
+        await vt.waitForRender();
+        expect(alt.getFocusedComponent()).toBe(state.editor);
+        if (!flushBeforeClick) await flushPaste();
+
+        const beforePaste = state.editor.getText();
+        const cursor = state.editor.getCursor();
+        expect(beforePaste).toBe('alpha beta');
+        expect(cursor.line).toBe(0);
+        const expected = `${beforePaste.slice(0, cursor.col)}X${beforePaste.slice(cursor.col)}`;
+        vt.sendInput('X');
+        vt.sendInput('\u001B[201~');
+        await vt.waitForRender();
+        expect(state.editor.getText()).toBe(expected);
+      } finally {
+        state.ui.stop();
+      }
+    },
+  );
 
   it('copies expanded Thought indentation while leaving copied blank lines empty', async () => {
     clipboardText.copyTextToClipboard.mockClear();

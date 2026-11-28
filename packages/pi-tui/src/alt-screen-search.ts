@@ -336,6 +336,10 @@ export class AltScreenSearchComponent implements Component, Focusable, Selection
 		return result;
 	}
 
+	invalidateSelectionInput(): void {
+		this.input.invalidateSelectionInput();
+	}
+
 	setHoveredNavigationDirection(direction: -1 | 1 | undefined): boolean {
 		if (direction === this.hoveredNavigationDirection) return false;
 		this.hoveredNavigationDirection = direction;
