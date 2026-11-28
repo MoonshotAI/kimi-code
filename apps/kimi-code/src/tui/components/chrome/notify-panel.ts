@@ -77,13 +77,18 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
   private ended = false;
   private keptOpen = false;
   private promptPending = false;
-  private readonly screenRows: (() => number) | undefined;
+  private screenRows: (() => number) | undefined;
   private hitTargets: readonly HitTarget[] = [];
   onReturnFocus: ((key: string | undefined) => void) | undefined;
 
   constructor(layout?: NotifyPanelLayout) {
     super(layout);
     this.screenRows = layout?.screenRows;
+  }
+
+  override setLayout(layout?: NotifyPanelLayout): void {
+    this.screenRows = layout?.screenRows;
+    super.setLayout(layout);
   }
 
   upsert(entry: NotifyEntry): void {

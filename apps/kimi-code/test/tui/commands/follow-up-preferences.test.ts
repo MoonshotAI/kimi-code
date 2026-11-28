@@ -44,6 +44,11 @@ function makeHost(followUpBehavior?: FollowUpBehavior) {
     }),
     showStatus: vi.fn(),
     showNotice: vi.fn(),
+    switchTuiMode: vi.fn((mode: 'regular' | 'fullscreen') => ({
+      status: 'switched' as const,
+      from: 'regular' as const,
+      to: mode,
+    })),
   };
 }
 

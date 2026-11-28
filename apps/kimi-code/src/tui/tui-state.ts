@@ -3,16 +3,12 @@ import {
   ProcessTerminal,
   type Component,
   TuiAltScreen,
-  TuiMainScreen,
   VStack,
   type TUI,
 } from '@moonshot-ai/pi-tui';
 
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
-import { clipboard } from '#/utils/clipboard/clipboard-native';
-import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
-import { openUrl } from '#/utils/open-url';
 
 import { DockSection } from './components/chrome/dock-section';
 import { FooterComponent } from './components/chrome/footer';
@@ -25,9 +21,9 @@ import type { SessionRow, SessionsScope } from './components/dialogs/session-pic
 import { CustomEditor } from './components/editor/custom-editor';
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, resolveWheelScrollLines } from './config';
 import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
-import { CLICK_GUARD_MS } from './constant/terminal';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
+import { TuiRendererSession } from './tui-renderer';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
@@ -37,7 +33,6 @@ import {
   type TranscriptEntry,
   type TUIStartupState,
 } from './types';
-import { formatErrorMessage } from './utils/event-payload';
 import {
   setMarkdownAltScreenActive,
   setMarkdownMermaidMode,
@@ -46,8 +41,142 @@ import {
 } from './utils/markdown-options';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 
+const EDITOR_SLOT_ENTRY = { shrink: 1, minSize: 3 } as const;
+
+class DockSlotContainer extends VStack {
+  private gutter = 0;
+
+  setGutter(gutter: number): void {
+    if (this.gutter === gutter) return;
+    this.gutter = gutter;
+    this.invalidate();
+  }
+
+  override render(width: number): string[] {
+    if (this.gutter === 0) return super.render(width);
+    const inner = Math.max(1, width - this.gutter * 2);
+    const lead = ' '.repeat(this.gutter);
+    return super.render(inner).map((line) => `${lead}${line}`);
+  }
+}
+
+export class TuiLayoutShell {
+  private readonly footerWrap: GutterContainer;
+  private readonly dockSlots: readonly DockSlotContainer[];
+  private footerMounted = false;
+  private disposeLayoutEffect: (() => void) | undefined;
+
+  constructor(footer: FooterComponent, dockSlots: readonly DockSlotContainer[] = []) {
+    this.footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+    this.footerWrap.addChild(footer);
+    this.dockSlots = dockSlots;
+  }
+
+  mount(state: TUIState): void {
+    this.disposeLayoutEffect?.();
+    this.disposeLayoutEffect = undefined;
+
+    const slotted = editorSlotComponent(state);
+    const fullscreen = state.ui instanceof TuiAltScreen;
+    setMarkdownAltScreenActive(fullscreen);
+    state.footer.setRunningFullscreen(fullscreen);
+    state.queuePane.setLayout(fullscreen ? { maxBodyRows: DOCK_QUEUE_ROWS } : undefined);
+    state.notifyPanel.setLayout(
+      fullscreen
+        ? { maxBodyRows: DOCK_UPDATES_ROWS, screenRows: () => state.ui.terminal.rows }
+        : undefined,
+    );
+    for (const child of state.btwPanelContainer.children) {
+      if (child instanceof BtwPanelComponent) child.setFullscreen(fullscreen);
+    }
+    const slotGutter = fullscreen ? 0 : CHROME_GUTTER;
+    for (const slot of this.dockSlots) {
+      slot.setGutter(slotGutter);
+    }
+
+    if (state.ui instanceof TuiAltScreen) {
+      const ui = state.ui;
+      const fullscreenView = new TranscriptView(state.transcriptContainer);
+      const dockContainer = new VStack();
+      dockContainer.addChild(state.activityContainer, { shrink: 1, minSize: 0 });
+      dockContainer.addChild(state.notifyPanelContainer, { shrink: 1, minSize: 0 });
+      const unlessBlocked = (): boolean => !isBlockingPromptPending(state);
+      dockContainer.addChild(state.queueContainer, { shrink: 1, minSize: 0, visible: unlessBlocked });
+      dockContainer.addChild(state.btwPanelContainer, {
+        shrink: 1,
+        minSize: 0,
+        visible: unlessBlocked,
+      });
+      dockContainer.addChild(state.surveyContainer, { shrink: 0, minSize: 0 });
+      const editorSlot = new VStack();
+      editorSlot.addChild(state.editorContainer, EDITOR_SLOT_ENTRY);
+      dockContainer.addChild(editorSlot, EDITOR_SLOT_ENTRY);
+      if (this.footerMounted) {
+        this.attachFooterToDock(dockContainer, state);
+      }
+      const root = new VStack();
+      root.addChild(fullscreenView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+      root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
+      state.transcriptView = fullscreenView;
+      state.dockContainer = dockContainer;
+      state.editorSlot = editorSlot;
+      if (slotted !== undefined) {
+        setEditorSlot(state, slotted);
+      }
+      ui.clear();
+      ui.setLayoutRoot(root);
+      this.disposeLayoutEffect = ui.addLayoutEffect(() => {
+        if (ui.getLayoutRoot() !== root) return;
+        const stickyChanged = fullscreenView.updateStickyMessage();
+        const dockOverflowChanged = consumeDockOverflowChange(state);
+        if (stickyChanged || dockOverflowChanged) ui.requestRender();
+      });
+      return;
+    }
+
+    state.transcriptView = undefined;
+    state.dockContainer = undefined;
+    state.editorSlot = undefined;
+    if (slotted !== undefined) {
+      setEditorSlot(state, slotted);
+    }
+    state.ui.clear();
+    state.ui.addChild(state.transcriptContainer);
+    state.ui.addChild(state.activityContainer);
+    state.ui.addChild(state.notifyPanelContainer);
+    state.ui.addChild(state.queueContainer);
+    state.ui.addChild(state.btwPanelContainer);
+    state.ui.addChild(state.surveyContainer);
+    state.ui.addChild(state.editorContainer);
+    if (this.footerMounted) {
+      state.ui.addChild(this.footerWrap);
+    }
+  }
+
+  mountFooter(state: TUIState): void {
+    if (this.footerMounted) return;
+    this.footerMounted = true;
+    const dock = state.dockContainer;
+    if (dock === undefined) {
+      state.ui.addChild(this.footerWrap);
+      return;
+    }
+    this.attachFooterToDock(dock, state);
+  }
+
+  private attachFooterToDock(dock: VStack, state: TUIState): void {
+    dock.addChild(this.footerWrap, {
+      shrink: 1,
+      minSize: 1,
+      visible: () => !isBlockingPromptPending(state),
+    });
+  }
+}
+
 export interface TUIState {
   ui: TUI;
+  readonly rendererSession: TuiRendererSession;
+  readonly layoutShell: TuiLayoutShell;
   terminal: ProcessTerminal;
   transcriptContainer: TranscriptContainer;
   transcriptView?: TranscriptView;
@@ -98,55 +227,28 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const terminal = new ProcessTerminal();
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
   setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
-  const fullscreen = (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen';
-  const ui = fullscreen
-      ? new TuiAltScreen(terminal, undefined, undefined, {
-          openUrl,
-          refocusMouseGuardMs: CLICK_GUARD_MS,
-          copyOnSelect:
-            initialAppState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
-          wheelScrollLines: resolveWheelScrollLines(initialAppState.wheelScrollLines),
-          onRightClickPaste: () => {
-            const target = ui.getFocusedComponent();
-            if (!target?.handleInput || clipboard?.getText === undefined) return;
-            void clipboard
-              .getText()
-              .then((text) => {
-                if (!text || ui.getFocusedComponent() !== target) return;
-                target.handleInput?.(`\u001B[200~${text}\u001B[201~`);
-                ui.requestRender();
-              })
-              .catch(() => {});
-          },
-          scrollToEndIndicator: () => currentTheme.fg('primary', ' ↓ Jump to bottom '),
-          copySelection: async (text) => {
-            try {
-              const method = await copyTextToClipboard(text);
-              return method === 'native' ? true : 'Copied via terminal';
-            } catch (error) {
-              return formatErrorMessage(error);
-            }
-          },
-        })
-      : new TuiMainScreen(terminal);
-  if (options.animationFrameRate !== undefined) ui.setAnimationFrameRate(options.animationFrameRate);
+  const initialMode =
+    (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen' ? 'fullscreen' : 'regular';
+  const rendererSession = new TuiRendererSession({
+    terminal,
+    initialMode,
+    copyOnSelect: (initialAppState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect) !== false,
+    wheelScrollLines: resolveWheelScrollLines(initialAppState.wheelScrollLines),
+    animationFrameRate: options.animationFrameRate,
+  });
+  const ui = rendererSession.ui;
 
-  setMarkdownAltScreenActive(ui instanceof TuiAltScreen);
   setMarkdownRenderRequester(() => {
     ui.requestRender(true);
   });
 
   const transcriptContainer = new TranscriptContainer(CHROME_GUTTER, CHROME_GUTTER, ui);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const queueContainer = fullscreen ? new VStack() : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const queuePane = new QueuePaneComponent(fullscreen ? { maxBodyRows: DOCK_QUEUE_ROWS } : undefined);
-  const notifyPanelContainer = fullscreen ? new VStack() : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const notifyPanel = new NotifyPanelComponent(
-    fullscreen ? { maxBodyRows: DOCK_UPDATES_ROWS, screenRows: () => ui.terminal.rows } : undefined,
-  );
-  const btwPanelContainer = fullscreen
-    ? new VStack()
-    : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const queueContainer = new DockSlotContainer();
+  const queuePane = new QueuePaneComponent();
+  const notifyPanelContainer = new DockSlotContainer();
+  const notifyPanel = new NotifyPanelComponent();
+  const btwPanelContainer = new DockSlotContainer();
   const surveyContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editor = new CustomEditor(ui, {
@@ -157,42 +259,21 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     () => {
       ui.requestRender();
     },
-    fullscreen,
+    initialMode === 'fullscreen',
   );
-
-  let transcriptView: TranscriptView | undefined;
-  let dockContainer: VStack | undefined;
-  let editorSlot: VStack | undefined;
-  if (ui instanceof TuiAltScreen) {
-    const fullscreenView = new TranscriptView(transcriptContainer);
-    transcriptView = fullscreenView;
-    dockContainer = new VStack();
-    dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
-    dockContainer.addChild(notifyPanelContainer, { shrink: 1, minSize: 0 });
-    const unlessBlocked = (): boolean => !isBlockingPromptPending(state);
-    dockContainer.addChild(queueContainer, { shrink: 1, minSize: 0, visible: unlessBlocked });
-    dockContainer.addChild(btwPanelContainer, { shrink: 1, minSize: 0, visible: unlessBlocked });
-    dockContainer.addChild(surveyContainer, { shrink: 0, minSize: 0 });
-    editorSlot = new VStack();
-    editorSlot.addChild(editorContainer, EDITOR_SLOT_ENTRY);
-    dockContainer.addChild(editorSlot, EDITOR_SLOT_ENTRY);
-    const root = new VStack();
-    root.addChild(fullscreenView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
-    root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
-    ui.setLayoutRoot(root);
-    ui.addLayoutEffect(() => {
-      if (ui.getLayoutRoot() !== root) return;
-      const stickyChanged = fullscreenView.updateStickyMessage();
-      const dockOverflowChanged = consumeDockOverflowChange(state);
-      if (stickyChanged || dockOverflowChanged) ui.requestRender();
-    });
-  }
+  const layoutShell = new TuiLayoutShell(footer, [
+    notifyPanelContainer,
+    queueContainer,
+    btwPanelContainer,
+  ]);
 
   const state: TUIState = {
     ui,
+    rendererSession,
+    layoutShell,
     terminal,
     transcriptContainer,
-    transcriptView,
+    transcriptView: undefined,
     activityContainer,
     notifyPanelContainer,
     notifyPanel,
@@ -201,8 +282,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     btwPanelContainer,
     surveyContainer,
     editorContainer,
-    dockContainer,
-    editorSlot,
+    dockContainer: undefined,
+    editorSlot: undefined,
     editor,
     footer,
     theme,
@@ -225,25 +306,13 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     queuedMessageDispatchPending: false,
     swarmModeEntry: undefined,
   };
+  layoutShell.mount(state);
   return state;
 }
 
 export function mountFooter(state: TUIState): void {
-  const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  footerWrap.addChild(state.footer);
-  const dock = state.dockContainer;
-  if (dock === undefined) {
-    state.ui.addChild(footerWrap);
-    return;
-  }
-  dock.addChild(footerWrap, {
-    shrink: 1,
-    minSize: 1,
-    visible: () => !isBlockingPromptPending(state),
-  });
+  state.layoutShell.mountFooter(state);
 }
-
-const EDITOR_SLOT_ENTRY = { shrink: 1, minSize: 3 } as const;
 
 export function setEditorSlot(
   state: Pick<TUIState, 'editorContainer' | 'editorSlot'>,

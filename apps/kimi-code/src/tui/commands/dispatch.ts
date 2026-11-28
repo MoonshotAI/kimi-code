@@ -13,8 +13,9 @@ import type { ModelMigrationController } from '../controllers/model-migration';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
-import type { FollowUpDelivery } from '../config';
+import type { FollowUpDelivery, TuiMode } from '../config';
 import type { ResolvedTheme } from '../theme/colors';
+import type { TuiModeSwitchResult } from '../tui-renderer';
 import type { TUIState } from '../tui-state';
 import type {
   AppState,
@@ -165,6 +166,7 @@ export interface SlashCommandHost {
 
   applyTheme(theme: ThemeName, resolved?: ResolvedTheme): Promise<void>;
   refreshTerminalThemeTracking(): void;
+  switchTuiMode(mode: TuiMode): TuiModeSwitchResult;
 
   stop(exitCode?: number): Promise<void>;
   requestExit(): Promise<void>;

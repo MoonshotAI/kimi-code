@@ -10,12 +10,14 @@ import {
   handleReloadCommand,
   handleReloadTuiCommand,
 } from '#/tui/commands/reload';
-import { currentTheme } from '#/tui/theme';
 import type { SlashCommandHost } from '#/tui/commands';
 import {
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
 } from '#/tui/commands/experimental-flags';
+import type { TuiMode } from '#/tui/config';
+import { TUI_MODE_SWITCH_BLOCKED_NOTICE } from '#/tui/constant/kimi-tui';
+import type { TuiModeSwitchResult } from '#/tui/tui-renderer';
 import {
   createMarkdownOptions,
   getMarkdownMermaidMode,
@@ -217,7 +219,7 @@ auto_install = false
     expect(host.state.appState.followUpBehavior).toBeUndefined();
   });
 
-  it('notices a required restart when tui_mode differs from the running UI mode', async () => {
+  it('switches TUI mode live when tui_mode differs from the running UI mode', async () => {
     await writeTuiConfig('tui_mode = "fullscreen"\n');
     const host = makeHost();
 
@@ -226,9 +228,60 @@ auto_install = false
     expect(host.setAppState).toHaveBeenCalledWith(
       expect.objectContaining({ tuiMode: 'fullscreen' }),
     );
+    expect(host.switchTuiMode).toHaveBeenCalledWith('fullscreen');
+    expect(host.state.transcriptContainer.setPresentationOptions).not.toHaveBeenCalled();
+    expect(host.showNotice).not.toHaveBeenCalled();
+  });
+
+  it('shows the blocked notice and still updates transcript presentation when live switch is blocked', async () => {
+    await writeTuiConfig('tui_mode = "fullscreen"\n');
+    const host = makeHost({
+      switchResult: { status: 'blocked', reason: 'active-overlay' },
+    });
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.switchTuiMode).toHaveBeenCalledWith('fullscreen');
+    expect(host.state.transcriptContainer.setPresentationOptions).toHaveBeenCalledOnce();
+    expect(host.showNotice).toHaveBeenCalledWith(TUI_MODE_SWITCH_BLOCKED_NOTICE);
+  });
+
+  it('shows the env override notice when KIMI_CODE_TUI_FULL_SCREEN overrides tui.toml', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '0');
+    await writeTuiConfig('tui_mode = "fullscreen"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.switchTuiMode).not.toHaveBeenCalled();
+    expect(host.state.transcriptContainer.setPresentationOptions).toHaveBeenCalledOnce();
     expect(host.showNotice).toHaveBeenCalledWith(
-      'TUI mode takes effect after restarting Kimi Code.',
+      'Unset KIMI_CODE_TUI_FULL_SCREEN for tui_mode in tui.toml to take effect.',
     );
+  });
+
+  it('shows the fallback notice when terminal fallback overrides tui.toml fullscreen', async () => {
+    vi.stubEnv('TERM', 'dumb');
+    await writeTuiConfig('tui_mode = "fullscreen"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.switchTuiMode).not.toHaveBeenCalled();
+    expect(host.state.transcriptContainer.setPresentationOptions).toHaveBeenCalledOnce();
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'This terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.',
+    );
+  });
+
+  it('switches back to regular when tui_mode is removed from tui.toml while fullscreen is active', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost({ runningMode: 'fullscreen' });
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.switchTuiMode).toHaveBeenCalledWith('regular');
+    expect(host.showNotice).not.toHaveBeenCalled();
   });
 
   it('does not notice when tui_mode matches the running UI mode', async () => {
@@ -237,17 +290,19 @@ auto_install = false
 
     await handleReloadTuiCommand(host);
 
+    expect(host.switchTuiMode).toHaveBeenCalledWith('regular');
+    expect(host.state.transcriptContainer.setPresentationOptions).toHaveBeenCalledOnce();
     expect(host.showNotice).not.toHaveBeenCalled();
   });
 
   it('does not notice when tui_mode is unset and experimental flag keeps fullscreen active', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
     await writeTuiConfig('theme = "dark"\n');
-    const host = makeHost();
-    (host.state as { ui: { mode: string } }).ui.mode = 'fullscreen';
+    const host = makeHost({ runningMode: 'fullscreen' });
 
     await handleReloadTuiCommand(host);
 
+    expect(host.switchTuiMode).toHaveBeenCalledWith('fullscreen');
     expect(host.showNotice).not.toHaveBeenCalled();
   });
 
@@ -369,9 +424,14 @@ async function writeTuiConfig(text: string): Promise<void> {
 
 function makeHost({
   session,
+  runningMode = 'regular',
+  switchResult,
 }: {
   readonly session?: Record<string, unknown>;
+  readonly runningMode?: TuiMode;
+  readonly switchResult?: TuiModeSwitchResult;
 } = {}) {
+  const ui: { mode: TuiMode } = { mode: runningMode };
   const state = {
     appState: {
       theme: 'dark',
@@ -386,9 +446,7 @@ function makeHost({
     editor: {
       setDisablePasteBurst: vi.fn(),
     },
-    ui: {
-      mode: 'regular' as const,
-    },
+    ui,
     theme: {
       palette: {
         success: '#00ff00',
@@ -419,6 +477,13 @@ function makeHost({
     refreshTerminalThemeTracking: vi.fn(),
     refreshSlashCommandAutocomplete: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
+    switchTuiMode: vi.fn((mode: TuiMode): TuiModeSwitchResult => {
+      if (switchResult !== undefined) return switchResult;
+      if (mode === state.ui.mode) return { status: 'unchanged', mode };
+      const from = state.ui.mode;
+      (state.ui as { mode: TuiMode }).mode = mode;
+      return { status: 'switched', from, to: mode };
+    }),
     showStatus: vi.fn(),
     showNotice: vi.fn(),
   } as unknown as SlashCommandHost & {
@@ -429,6 +494,7 @@ function makeHost({
     };
     readonly refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     readonly reloadCurrentSessionView: ReturnType<typeof vi.fn>;
+    readonly switchTuiMode: ReturnType<typeof vi.fn>;
     readonly showStatus: ReturnType<typeof vi.fn>;
     readonly showNotice: ReturnType<typeof vi.fn>;
   };

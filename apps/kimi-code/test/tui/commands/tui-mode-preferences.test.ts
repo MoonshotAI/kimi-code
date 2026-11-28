@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyCopyOnSelectChoice, applyTuiModeChoice } from '#/tui/commands/config';
+import { TUI_MODE_SWITCH_BLOCKED_NOTICE } from '#/tui/constant/kimi-tui';
+import type { TuiMode } from '#/tui/config';
+import type { TuiModeSwitchResult } from '#/tui/tui-renderer';
 
 const mocks = vi.hoisted(() => ({
   saveTuiConfig: vi.fn(),
@@ -19,7 +22,9 @@ vi.mock('../../../src/tui/config', async () => {
 function makeHost(
   tuiMode: 'regular' | 'fullscreen' | undefined,
   runningMode: 'regular' | 'fullscreen' = 'regular',
+  switchResult?: TuiModeSwitchResult,
 ) {
+  const ui = { mode: runningMode };
   return {
     state: {
       appState: {
@@ -30,11 +35,18 @@ function makeHost(
         upgrade: { autoInstall: true },
         transcript: { toolCallDensity: 'compact' as const, thinking: 'grouped' as const },
       },
-      ui: { mode: runningMode },
+      ui,
     },
     setAppState: vi.fn(),
     showStatus: vi.fn(),
     showNotice: vi.fn(),
+    switchTuiMode: vi.fn((mode: TuiMode): TuiModeSwitchResult => {
+      if (switchResult !== undefined) return switchResult;
+      if (mode === ui.mode) return { status: 'unchanged', mode };
+      const from = ui.mode;
+      ui.mode = mode;
+      return { status: 'switched', from, to: mode };
+    }),
     track: vi.fn(),
   };
 }
@@ -52,7 +64,7 @@ describe('tui mode preference commands', () => {
     vi.unstubAllEnvs();
   });
 
-  it('saves fullscreen to tui.toml, mirrors appState, tracks switch, and notices the required restart', async () => {
+  it('saves fullscreen to tui.toml, mirrors appState, tracks switch, and switches live without restart notice', async () => {
     mocks.saveTuiConfig.mockClear();
     const host = makeHost(undefined, 'regular');
 
@@ -63,13 +75,12 @@ describe('tui mode preference commands', () => {
     );
     expect(host.setAppState).toHaveBeenCalledWith({ tuiMode: 'fullscreen' });
     expect(host.track).toHaveBeenCalledWith('tui_mode_switch', { tui_mode: 'fullscreen' });
+    expect(host.switchTuiMode).toHaveBeenCalledWith('fullscreen');
     expect(host.showStatus).toHaveBeenCalledWith('TUI mode set to fullscreen.', 'success');
-    expect(host.showNotice).toHaveBeenCalledWith(
-      'TUI mode takes effect after restarting Kimi Code.',
-    );
+    expect(host.showNotice).not.toHaveBeenCalled();
   });
 
-  it('persists regular when switching away from a default fullscreen session', async () => {
+  it('persists regular and switches live when moving away from a default fullscreen session', async () => {
     mocks.saveTuiConfig.mockClear();
     const host = makeHost(undefined, 'fullscreen');
 
@@ -80,12 +91,56 @@ describe('tui mode preference commands', () => {
     );
     expect(host.setAppState).toHaveBeenCalledWith({ tuiMode: 'regular' });
     expect(host.track).toHaveBeenCalledWith('tui_mode_switch', { tui_mode: 'regular' });
-    expect(host.showNotice).toHaveBeenCalledWith(
-      'TUI mode takes effect after restarting Kimi Code.',
-    );
+    expect(host.switchTuiMode).toHaveBeenCalledWith('regular');
+    expect(host.showStatus).toHaveBeenCalledWith('TUI mode set to regular.', 'success');
+    expect(host.showNotice).not.toHaveBeenCalled();
   });
 
-  it('skips the restart notice when switching back to the running mode', async () => {
+  it('saves config and shows the blocked notice when live switching is blocked', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = makeHost(undefined, 'regular', { status: 'blocked', reason: 'active-overlay' });
+
+    await applyTuiModeChoice(host, 'fullscreen');
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ tuiMode: 'fullscreen' }),
+    );
+    expect(host.setAppState).toHaveBeenCalledWith({ tuiMode: 'fullscreen' });
+    expect(host.switchTuiMode).toHaveBeenCalledWith('fullscreen');
+    expect(host.showStatus).toHaveBeenCalledWith('TUI mode set to fullscreen.', 'success');
+    expect(host.showNotice).toHaveBeenCalledWith(TUI_MODE_SWITCH_BLOCKED_NOTICE);
+  });
+
+  it('retries live switching without rewriting tui.toml when reselecting an already-saved mode that differs from runtime', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = makeHost('fullscreen', 'regular');
+
+    await applyTuiModeChoice(host, 'fullscreen');
+
+    expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
+    expect(host.setAppState).not.toHaveBeenCalled();
+    expect(host.track).not.toHaveBeenCalled();
+    expect(host.switchTuiMode).toHaveBeenCalledWith('fullscreen');
+    expect(host.showStatus).toHaveBeenCalledWith('Switched TUI mode to fullscreen.', 'success');
+    expect(host.showNotice).not.toHaveBeenCalled();
+  });
+
+  it('shows the blocked notice when retrying an already-saved mode is still blocked', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = makeHost('fullscreen', 'regular', {
+      status: 'blocked',
+      reason: 'screen-takeover',
+    });
+
+    await applyTuiModeChoice(host, 'fullscreen');
+
+    expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
+    expect(host.switchTuiMode).toHaveBeenCalledWith('fullscreen');
+    expect(host.showStatus).toHaveBeenCalledWith('TUI mode already fullscreen.');
+    expect(host.showNotice).toHaveBeenCalledWith(TUI_MODE_SWITCH_BLOCKED_NOTICE);
+  });
+
+  it('skips notices when switching config back to the running mode', async () => {
     mocks.saveTuiConfig.mockClear();
     const host = makeHost('fullscreen', 'regular');
 
@@ -95,6 +150,7 @@ describe('tui mode preference commands', () => {
       expect.objectContaining({ tuiMode: 'regular' }),
     );
     expect(host.setAppState).toHaveBeenCalledWith({ tuiMode: 'regular' });
+    expect(host.switchTuiMode).toHaveBeenCalledWith('regular');
     expect(host.showNotice).not.toHaveBeenCalled();
   });
 
@@ -134,6 +190,7 @@ describe('tui mode preference commands', () => {
     await applyTuiModeChoice(host, 'regular');
 
     expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
+    expect(host.switchTuiMode).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith('TUI mode already regular.');
     expect(host.showNotice).toHaveBeenCalledWith(
       'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.',
@@ -151,7 +208,7 @@ describe('tui mode preference commands', () => {
     );
   });
 
-  it('reports a save failure without touching appState', async () => {
+  it('reports a save failure without touching appState or switching mode', async () => {
     mocks.saveTuiConfig.mockRejectedValueOnce(new Error('disk full'));
     const host = makeHost(undefined, 'regular');
 
@@ -159,11 +216,12 @@ describe('tui mode preference commands', () => {
 
     expect(host.setAppState).not.toHaveBeenCalled();
     expect(host.track).not.toHaveBeenCalled();
+    expect(host.switchTuiMode).not.toHaveBeenCalled();
     expect(host.showNotice).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith('Failed to save TUI mode: disk full', 'error');
   });
 
-  it('explains when KIMI_CODE_TUI_FULL_SCREEN overrides the saved preference instead of promising a restart', async () => {
+  it('explains when KIMI_CODE_TUI_FULL_SCREEN overrides the saved preference', async () => {
     vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '0');
     mocks.saveTuiConfig.mockClear();
     const host = makeHost(undefined, 'regular');
@@ -173,6 +231,7 @@ describe('tui mode preference commands', () => {
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
       expect.objectContaining({ tuiMode: 'fullscreen' }),
     );
+    expect(host.switchTuiMode).not.toHaveBeenCalled();
     expect(host.showNotice).toHaveBeenCalledWith(
       'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.',
     );
@@ -188,6 +247,7 @@ describe('tui mode preference commands', () => {
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
       expect.objectContaining({ tuiMode: 'fullscreen' }),
     );
+    expect(host.switchTuiMode).not.toHaveBeenCalled();
     expect(host.showNotice).toHaveBeenCalledWith(
       'Saved to tui.toml; this terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.',
     );

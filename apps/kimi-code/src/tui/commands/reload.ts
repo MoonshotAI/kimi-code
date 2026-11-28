@@ -9,10 +9,10 @@ import {
   resolveWheelScrollLines,
   type TuiConfig,
 } from '../config';
-import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { TUI_MODE_SWITCH_BLOCKED_NOTICE } from '../constant/kimi-tui';
 import { setMarkdownMermaidMode, setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
-import { applyTranscriptPresentation } from './config';
+import { applyTranscriptPresentation, tuiModeOverrideNotice } from './config';
 import { setExperimentalFeatures } from './experimental-flags';
 
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
@@ -86,14 +86,27 @@ export async function applyReloadedTuiConfig(
     markdown: config.markdown,
     transcript: config.transcript,
   });
-  applyTranscriptPresentation(host);
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
-  if (host.state.ui instanceof TuiAltScreen) {
-    host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
-    host.state.ui.setWheelScrollLines(resolveWheelScrollLines(config.wheelScrollLines));
+  const applyNonSwitchedUpdates = (): void => {
+    applyTranscriptPresentation(host);
+    if (host.state.ui instanceof TuiAltScreen) {
+      host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
+      host.state.ui.setWheelScrollLines(resolveWheelScrollLines(config.wheelScrollLines));
+    }
+  };
+  const resolution = resolveTuiMode(config.tuiMode);
+  const overrideNotice = tuiModeOverrideNotice(resolution, config.tuiMode, 'reload');
+  if (overrideNotice !== undefined) {
+    applyNonSwitchedUpdates();
+    host.showNotice(overrideNotice);
+    return;
   }
-  if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {
-    host.showNotice(TUI_MODE_RESTART_NOTICE);
+  const switchResult = host.switchTuiMode(resolution.mode);
+  if (switchResult.status !== 'switched') {
+    applyNonSwitchedUpdates();
+  }
+  if (switchResult.status === 'blocked') {
+    host.showNotice(TUI_MODE_SWITCH_BLOCKED_NOTICE);
   }
 }
 

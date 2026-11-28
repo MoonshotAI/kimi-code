@@ -49,7 +49,7 @@ function createPasteHarness(
       activeDialog: null,
       appState: { streamingPhase: 'idle', isCompacting: false },
       footer: { setTransientHint: vi.fn() },
-      ui: { requestRender: vi.fn() },
+      ui: { requestRender: vi.fn(), addInputListener: vi.fn(() => () => {}) },
     },
     session:
       options.sessionDir === undefined

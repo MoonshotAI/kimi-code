@@ -8,12 +8,16 @@ import {
   type TuiMouseEvent,
   type Terminal,
   TuiAltScreen,
+  TuiMainScreen,
+  type WheelScrollLines,
 } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { showSettingsSelector } from '#/tui/commands/config';
+import { currentTuiConfig, showSettingsSelector } from '#/tui/commands/config';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { handleGoalCommand } from '#/tui/commands/goal';
-import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { applyReloadedTuiConfig } from '#/tui/commands/reload';
+import { dispatchInput, type SlashCommandHost } from '#/tui/commands/dispatch';
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { MoonLoader } from '#/tui/components/chrome/moon-loader';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
@@ -23,7 +27,10 @@ import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import * as userMessages from '#/tui/components/messages/user-message';
 import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
+import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
+import { ENABLE_TERMINAL_FOCUS_REPORTING } from '#/tui/constant/terminal';
+import { TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
 import { createTUIState, KimiTUI, type KimiTUIOptions, type KimiTUIStartupInput } from '#/tui/kimi-tui';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
@@ -37,6 +44,7 @@ import {
   setEditorSlot,
 } from '#/tui/tui-state';
 import { currentTheme } from '#/tui/theme';
+import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { AppState, TranscriptEntry } from '#/tui/types';
 import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
 import {
@@ -1712,5 +1720,445 @@ describe('fullscreen layout', () => {
     expect(responses).toEqual([{ response: 'rejected', feedback: undefined, selected_label: undefined }]);
 
     state.ui.stop();
+  });
+});
+
+describe('runtime TUI mode switching', () => {
+  function mountKimiTui(
+    initialMode: 'regular' | 'fullscreen',
+    options: { copyOnSelect?: boolean; height?: number; wheelScrollLines?: WheelScrollLines } = {},
+  ): {
+    tui: KimiTUI;
+    vt: VirtualTerminal;
+    setProgress: ReturnType<typeof vi.spyOn>;
+  } {
+    const input: KimiTUIStartupInput = {
+      cliOptions: {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
+        environment: undefined,
+      },
+      tuiConfig: {
+        theme: 'dark',
+        disablePasteBurst: false,
+        copyOnSelect: options.copyOnSelect ?? true,
+        wheelScrollLines: options.wheelScrollLines,
+        editorCommand: null,
+        notifications: { enabled: true, condition: 'unfocused' },
+        upgrade: { autoInstall: true },
+        transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
+        tuiMode: initialMode,
+      },
+      version: '0.0.0-test',
+      workDir: '/tmp/kimi-test',
+    };
+    const tui = new KimiTUI(
+      { onConfigSectionChanged: () => () => {}, track: () => {} } as never,
+      input,
+    );
+    const setProgress = vi.spyOn(tui.state.terminal, 'setProgress').mockImplementation(() => {});
+    const vt = new VirtualTerminal(WIDTH, options.height ?? HEIGHT);
+    (tui.state.ui as { terminal: Terminal }).terminal = vt;
+    mountFooter(tui.state);
+    setEditorSlot(tui.state, tui.state.editor);
+    tui.state.ui.setFocus(tui.state.editor);
+    tui.state.ui.start();
+    onTestFinished(() => {
+      tui.state.ui.stop();
+    });
+    return { tui, vt, setProgress };
+  }
+
+  function footerEverShowsGroupingTip(tui: KimiTUI): boolean {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (let tick = 0; tick < 60; tick++) {
+        vi.setSystemTime(tick * 10_000);
+        const rendered = stripAnsi(tui.state.footer.render(160).join('\n'));
+        if (rendered.includes(TRANSCRIPT_GROUPING_TIP.text)) return true;
+      }
+      return false;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('switches regular -> fullscreen -> regular preserving editor draft, notify history, queue, footer tips, transcript grouping, NotifyUser prefix, and Mermaid Copy Source', async () => {
+    setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+    onTestFinished(() => {
+      setExperimentalFeatures([]);
+    });
+
+    const { tui, vt } = mountKimiTui('regular');
+    const stableUi = tui.state.ui;
+    const stableQueueContainer = tui.state.queueContainer;
+    const stableNotifyContainer = tui.state.notifyPanelContainer;
+
+    tui.state.editor.setText('draft survives switch');
+    tui.state.notifyPanel.upsert({ id: 'n1', agentId: 'main', time: 0, text: 'main update' });
+    tui.state.notifyPanel.upsert({
+      id: 'n2',
+      agentId: 'agent-1',
+      agentName: 'explore',
+      time: 1,
+      text: 'explore update',
+    });
+    tui.state.notifyPanel.prevChannel();
+    tui.state.notifyPanel.upsert({
+      id: 'n3',
+      agentId: 'agent-1',
+      agentName: 'explore',
+      time: 2,
+      text: 'explore unread update',
+    });
+    tui.state.notifyPanelContainer.addChild(tui.state.notifyPanel);
+
+    tui.state.queuedMessages.push(
+      { text: 'queued one' },
+      { text: 'queued two' },
+      { text: 'queued three' },
+      { text: 'queued four' },
+    );
+    tui.updateQueueDisplay();
+
+    addReadGroup(tui.state);
+    const notifyTool = new ToolCallComponent(
+      {
+        id: 'notify-1',
+        name: 'NotifyUser',
+        args: { title: 'Build finished', message: 'All green' },
+      },
+      { tool_call_id: 'notify-1', output: 'Update shown to the user.', is_error: false },
+      tui.state.ui,
+      '/work',
+    );
+    tui.state.transcriptContainer.addChild(notifyTool);
+    const mermaidMsg = new AssistantMessageComponent(true);
+    mermaidMsg.updateContent('```mermaid\ngraph LR\n  A --> B\n```');
+    tui.state.transcriptContainer.addChild(mermaidMsg);
+    await vt.waitForRender();
+
+    expect(tui.state.ui).toBeInstanceOf(TuiMainScreen);
+    expect(tui.state.notifyPanel.layout).toBeUndefined();
+    expect(tui.state.queuePane.layout).toBeUndefined();
+    expect(stripAnsi(tui.state.queuePane.render(100).join('\n'))).not.toContain('4 queued ·');
+    expect(footerEverShowsGroupingTip(tui)).toBe(false);
+    expect(stripAnsi(mermaidMsg.render(100).join('\n'))).not.toContain('[Copy Source]');
+    const regularNotifyHeader = stripAnsi(notifyTool.render(100)[1] ?? '');
+    expect(regularNotifyHeader).toContain('Build finished');
+
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'switched',
+      from: 'regular',
+      to: 'fullscreen',
+    });
+    await vt.waitForRender();
+
+    expect(tui.state.ui).toBe(stableUi);
+    expect(tui.state.ui).toBeInstanceOf(TuiAltScreen);
+    expect(tui.state.queueContainer).toBe(stableQueueContainer);
+    expect(tui.state.notifyPanelContainer).toBe(stableNotifyContainer);
+    expect(tui.state.editor.getText()).toBe('draft survives switch');
+    expect(tui.state.editor.focused).toBe(true);
+    expect(tui.state.notifyPanel.layout).toBeDefined();
+    expect(tui.state.notifyPanel.getChannels()).toEqual([
+      { label: 'main', entries: [{ id: 'n1', text: 'main update' }], unread: 0 },
+      {
+        label: 'explore',
+        entries: [
+          { id: 'n2', text: 'explore update' },
+          { id: 'n3', text: 'explore unread update' },
+        ],
+        unread: 1,
+      },
+    ]);
+    expect(tui.state.queuePane.layout).toBeDefined();
+    expect(stripAnsi(tui.state.queuePane.render(100).join('\n'))).toContain('4 queued ·');
+    expect(footerEverShowsGroupingTip(tui)).toBe(true);
+    expect(stripAnsi(tui.state.transcriptContainer.render(100).join('\n'))).toContain(
+      'Thought for 3s, read 6 files',
+    );
+    const fullscreenNotifyHeader = stripAnsi(notifyTool.render(100)[1] ?? '');
+    expect(fullscreenNotifyHeader).toContain('Build finished');
+    expect(fullscreenNotifyHeader).not.toBe(regularNotifyHeader);
+    expect(stripAnsi(mermaidMsg.render(100).join('\n'))).toContain('[Copy Source]');
+
+    expect(tui.switchTuiMode('regular')).toEqual({
+      status: 'switched',
+      from: 'fullscreen',
+      to: 'regular',
+    });
+    await vt.waitForRender();
+
+    expect(tui.state.ui).toBe(stableUi);
+    expect(tui.state.ui).toBeInstanceOf(TuiMainScreen);
+    expect(tui.state.editor.getText()).toBe('draft survives switch');
+    expect(tui.state.editor.focused).toBe(true);
+    expect(tui.state.notifyPanel.layout).toBeUndefined();
+    expect(tui.state.notifyPanel.getEntries().map((entry) => entry.id)).toEqual(['n1', 'n2', 'n3']);
+    expect(tui.state.notifyPanel.getChannels()[1]?.unread).toBe(1);
+    expect(tui.state.queuePane.layout).toBeUndefined();
+    expect(stripAnsi(tui.state.queuePane.render(100).join('\n'))).not.toContain('4 queued ·');
+    expect(footerEverShowsGroupingTip(tui)).toBe(false);
+    expect(stripAnsi(tui.state.transcriptContainer.render(100).join('\n'))).not.toContain(
+      'Thought for 3s, read 6 files',
+    );
+    expect(stripAnsi(notifyTool.render(100)[1] ?? '')).toBe(regularNotifyHeader);
+    expect(stripAnsi(mermaidMsg.render(100).join('\n'))).not.toContain('[Copy Source]');
+  });
+
+  it('activates EditorKeyboardController selection copy after cold-starting in regular and switching to fullscreen', async () => {
+    clipboardText.copyTextToClipboard.mockResolvedValueOnce('native');
+    const { tui, vt } = mountKimiTui('regular', { copyOnSelect: false });
+    tui.state.transcriptContainer.addChild(new Text('selectable phrase', 0, 0));
+    await vt.waitForRender();
+
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'switched',
+      from: 'regular',
+      to: 'fullscreen',
+    });
+    await vt.waitForRender();
+
+    const rows = screenRows(vt);
+    const row = rows.findIndex((line) => line.includes('selectable phrase'));
+    expect(row).toBeGreaterThanOrEqual(0);
+    const col = rows[row]!.indexOf('selectable phrase');
+    vt.sendInput(`\u001B[<0;${String(col + 1)};${String(row + 1)}M`);
+    vt.sendInput(`\u001B[<32;${String(col + 17)};${String(row + 1)}M`);
+    vt.sendInput(`\u001B[<0;${String(col + 17)};${String(row + 1)}m`);
+    await vt.waitForRender();
+
+    expect((tui.state.ui as TuiAltScreen).hasActiveSelection()).toBe(true);
+    vt.sendInput('\u0003');
+    expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('selectable phrase');
+    expect((tui.state.ui as TuiAltScreen).hasActiveSelection()).toBe(false);
+  });
+
+  it('re-enables DECSET 1004 after fullscreen -> regular while preserving listener order (ClipboardImageHint before TerminalFocus)', async () => {
+    const { tui, vt } = mountKimiTui('fullscreen');
+    const internal = tui as unknown as {
+      terminalFocusTrackingDispose: (() => void) | undefined;
+    };
+    const focusOrder: string[] = [];
+    const disposeHintProbe = tui.state.ui.addInputListener((data) => {
+      if (data === TERMINAL_FOCUS_IN) focusOrder.push('clipboard-hint');
+      return undefined;
+    });
+    const disposeFocus = installTerminalFocusTracking(tui.state, () => {
+      focusOrder.push('terminal-focus');
+    });
+    internal.terminalFocusTrackingDispose = disposeFocus;
+    onTestFinished(() => {
+      disposeHintProbe();
+      disposeFocus();
+    });
+    await vt.waitForRender();
+
+    const writes: string[] = [];
+    const writeSpy = vi.spyOn(vt, 'write').mockImplementation((data: string) => {
+      writes.push(data);
+    });
+    onTestFinished(() => {
+      writeSpy.mockRestore();
+    });
+
+    expect(tui.switchTuiMode('regular')).toEqual({
+      status: 'switched',
+      from: 'fullscreen',
+      to: 'regular',
+    });
+
+    const disableIdx = writes.findIndex((chunk) => chunk.includes('\u001B[?1004l'));
+    const reenableIdx = writes.findLastIndex((chunk) => chunk.includes(ENABLE_TERMINAL_FOCUS_REPORTING));
+    expect(disableIdx).toBeGreaterThanOrEqual(0);
+    expect(reenableIdx).toBeGreaterThan(disableIdx);
+
+    vt.sendInput(TERMINAL_FOCUS_OUT);
+    expect(tui.state.terminalState.focused).toBe(false);
+    vt.sendInput(TERMINAL_FOCUS_IN);
+    expect(tui.state.terminalState.focused).toBe(true);
+    expect(focusOrder).toEqual(['clipboard-hint', 'terminal-focus']);
+  });
+
+  it('restores active OSC 9;4 terminal progress after switching mode while busy', async () => {
+    const { tui, vt, setProgress } = mountKimiTui('regular');
+    tui.state.terminalState.supportsProgress = true;
+    tui.state.livePane.mode = 'waiting';
+    tui.state.appState.streamingPhase = 'waiting';
+    tui.updateActivityPane();
+    expect(setProgress).toHaveBeenLastCalledWith(true);
+    setProgress.mockClear();
+
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'switched',
+      from: 'regular',
+      to: 'fullscreen',
+    });
+    await vt.waitForRender();
+
+    expect(setProgress).toHaveBeenCalledWith(true);
+  });
+
+  it('blocks switching during screen takeover, editor replacement, or active dialog without mutating layout', async () => {
+    const { tui, vt } = mountKimiTui('regular');
+    await vt.waitForRender();
+
+    const viewer = new Text('screen takeover viewer', 0, 0);
+    const takeover = beginScreenTakeover(tui.state.ui, viewer);
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'blocked',
+      reason: 'screen-takeover',
+    });
+    expect(tui.state.ui.mode).toBe('regular');
+    expect(tui.state.ui.children).toEqual([viewer]);
+    endScreenTakeover(tui.state.ui, takeover);
+
+    tui.state.editorReplacementMounted = true;
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'blocked',
+      reason: 'editor-replacement',
+    });
+    expect(tui.state.ui.mode).toBe('regular');
+    tui.state.editorReplacementMounted = false;
+
+    tui.state.activeDialog = 'help';
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'blocked',
+      reason: 'editor-replacement',
+    });
+    expect(tui.state.ui.mode).toBe('regular');
+    tui.state.activeDialog = null;
+
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'switched',
+      from: 'regular',
+      to: 'fullscreen',
+    });
+  });
+
+  it('preserves main-screen scrollback without CSI 3J when applyReloadedTuiConfig switches regular -> fullscreen -> regular', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+    vi.stubEnv('TERM', 'xterm-256color');
+    vi.stubEnv('TERMUX_VERSION', '');
+    vi.stubEnv('TMUX', '');
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const { tui, vt } = mountKimiTui('regular', { height: 12 });
+    const host = tui as unknown as SlashCommandHost;
+    for (let index = 1; index <= 18; index++) {
+      const label = `RELOAD_ROW_${String(index).padStart(2, '0')}`;
+      tui.state.transcriptContainer.addChild(new Text(label, 0, 0));
+    }
+    tui.state.ui.requestRender();
+    await vt.waitForRender();
+    expect(vt.getScrollBuffer().filter((row) => row.trim() === 'RELOAD_ROW_01')).toHaveLength(1);
+
+    const writeSpy = vi.spyOn(vt, 'write');
+    await applyReloadedTuiConfig(host, {
+      ...currentTuiConfig(host),
+      tuiMode: 'fullscreen',
+    });
+    expect(tui.state.ui).toBeInstanceOf(TuiAltScreen);
+    await vt.waitForRender();
+
+    await applyReloadedTuiConfig(host, {
+      ...currentTuiConfig(host),
+      tuiMode: 'regular',
+    });
+    expect(tui.state.ui).toBeInstanceOf(TuiMainScreen);
+    await vt.waitForRender();
+
+    expect(writeSpy.mock.calls.every(([chunk]) => !chunk.includes('\u001B[3J'))).toBe(true);
+    const buffer = vt.getScrollBuffer();
+    expect(buffer.filter((row) => row.trim() === 'RELOAD_ROW_01')).toHaveLength(1);
+    expect(buffer.some((row) => row.trim() === 'RELOAD_ROW_18')).toBe(true);
+  });
+
+  it('refreshes /find autocomplete, wheelScrollLines, and active BtwPanelComponent across live mode switches', async () => {
+    const { tui, vt } = mountKimiTui('regular', { height: 18, wheelScrollLines: 4 });
+    tui.refreshSlashCommandAutocomplete();
+    const stableBtwContainer = tui.state.btwPanelContainer;
+    tui.state.transcriptContainer.addChild(
+      new Text(
+        `needle target\n${Array.from({ length: 50 }, (_, index) => `transcript line ${String(index + 1)}`).join('\n')}`,
+        0,
+        0,
+      ),
+    );
+    const btwPanel = new BtwPanelComponent({
+      markdownTheme: createMarkdownTheme(),
+      canUseScrollKeys: () => true,
+      terminalRows: () => vt.rows,
+      fullscreen: false,
+      onPrompt: () => {},
+    });
+    btwPanel.submit('side check');
+    btwPanel.appendAnswer(Array.from({ length: 12 }, (_, index) => `btw-${String(index + 1)}`).join('\n\n'));
+    btwPanel.markDone();
+    tui.state.btwPanelContainer.addChild(new Spacer(1));
+    tui.state.btwPanelContainer.addChild(btwPanel);
+    await vt.waitForRender();
+
+    vt.sendInput('/fin');
+    await vt.waitForRender();
+    expect(stripAnsi(tui.state.editor.render(80).join('\n'))).not.toContain('Search the conversation');
+    tui.state.editor.setText('');
+
+    expect(tui.switchTuiMode('fullscreen')).toEqual({
+      status: 'switched',
+      from: 'regular',
+      to: 'fullscreen',
+    });
+    await vt.waitForRender();
+
+    expect(tui.state.btwPanelContainer).toBe(stableBtwContainer);
+    expect(screenRows(vt).join('\n')).toContain('↑↓ scroll');
+    expect(screenRows(vt).join('\n')).toContain('btw-12');
+
+    const alt = tui.state.ui as TuiAltScreen;
+    const beforeTop = alt.viewportTop;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    expect(beforeTop - alt.viewportTop).toBe(4);
+
+    vt.sendInput('/fin');
+    await vt.waitForRender();
+    expect(stripAnsi(tui.state.editor.render(80).join('\n'))).toContain('Search the conversation');
+    tui.state.editor.setText('');
+
+    dispatchInput(tui as unknown as SlashCommandHost, '/find needle');
+    await vt.waitForRender();
+    expect(screenRows(vt).join('\n')).toContain('↑ Previous · ↓ Next');
+    expect(screenRows(vt).join('\n')).toContain('1/1');
+    expect(tui.switchTuiMode('regular')).toEqual({ status: 'blocked', reason: 'active-overlay' });
+
+    vt.sendInput('\u001B');
+    await vt.waitForRender();
+
+    expect(tui.switchTuiMode('regular')).toEqual({
+      status: 'switched',
+      from: 'fullscreen',
+      to: 'regular',
+    });
+    await vt.waitForRender();
+
+    expect(tui.state.btwPanelContainer).toBe(stableBtwContainer);
+    expect(stripAnsi(btwPanel.render(60)[0] ?? '')).toMatch(/^╭ BTW ─/);
+    vt.sendInput('/fin');
+    await vt.waitForRender();
+    expect(stripAnsi(tui.state.editor.render(80).join('\n'))).not.toContain('Search the conversation');
   });
 });

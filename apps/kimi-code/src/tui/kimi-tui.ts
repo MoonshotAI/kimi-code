@@ -37,7 +37,6 @@ import {
   matchesKey,
   Spacer,
   TuiAltScreen,
-  TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
 
 import { resolveAdditionalDirs, resolveLaunchPaths } from '#/cli/launch-paths';
@@ -77,7 +76,6 @@ import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import type { FooterGitBinding } from './components/chrome/footer';
-import { GutterContainer } from './components/chrome/gutter-container';
 import { MoonLoader, type SpinnerLabel, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
 import { pickRandomWorkingTip } from './components/chrome/working-tips';
@@ -126,6 +124,7 @@ import {
 import {
   removeLegacySurveySetting,
   resolveFollowUpBehavior,
+  resolveWheelScrollLines,
   transcriptGroupingActive,
   type FollowUpDelivery,
   type TuiConfig,
@@ -143,8 +142,13 @@ import {
   SHUTTING_DOWN_HINT,
 } from './constant/kimi-tui';
 import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
-import { CHROME_GUTTER, DETACH_HINT_TEXT, DOCK_APPROVAL_ROWS, DOCK_QUESTION_ROWS, DOCK_SESSION_PICKER_ROWS } from './constant/rendering';
-import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
+import {
+  DETACH_HINT_TEXT,
+  DOCK_APPROVAL_ROWS,
+  DOCK_QUESTION_ROWS,
+  DOCK_SESSION_PICKER_ROWS,
+} from './constant/rendering';
+import { ENABLE_TERMINAL_FOCUS_REPORTING, MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
@@ -177,6 +181,7 @@ import { createQuestionAskHandler } from './reverse-rpc/question/handler';
 import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
 import { currentTheme, getColorPalette, getBuiltInPalette } from './theme';
 import type { ColorToken, ResolvedTheme, ThemeName } from './theme';
+import type { TuiModeSwitchResult } from './tui-renderer';
 import { createTUIState, mountFooter, setEditorSlot, type TUIState } from './tui-state';
 import {
   INITIAL_LIVE_PANE,
@@ -229,7 +234,12 @@ import { combineSteerInput } from './utils/steer-input';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
-import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
+import {
+  beginScreenTakeover,
+  endScreenTakeover,
+  hasActiveScreenTakeover,
+  type ScreenTakeover,
+} from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import {
   missingWorkdirNotice,
@@ -636,7 +646,6 @@ export class KimiTUI {
     this.worktreeExit = new WorktreeExitController(this);
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
-    this.buildLayout();
   }
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
@@ -1524,39 +1533,55 @@ export class KimiTUI {
     this.terminalFocusTrackingDispose = undefined;
   }
 
-  private buildLayout(): void {
-    const { ui } = this.state;
-    if (ui instanceof TuiAltScreen) return;
-    ui.clear();
-    ui.addChild(this.state.transcriptContainer);
-    ui.addChild(this.state.activityContainer);
-    ui.addChild(this.state.notifyPanelContainer);
-    ui.addChild(this.state.queueContainer);
-    ui.addChild(this.state.btwPanelContainer);
-    ui.addChild(this.state.surveyContainer);
-    ui.addChild(this.state.editorContainer);
+  switchTuiMode(mode: TuiMode): TuiModeSwitchResult {
+    if (this.isShuttingDown) {
+      return { status: 'blocked', reason: 'shutting-down' };
+    }
+    if (this.state.rendererSession.isSwitching) {
+      return { status: 'blocked', reason: 'switching' };
+    }
+    if (mode === this.state.ui.mode) {
+      return { status: 'unchanged', mode };
+    }
+    if (this.state.externalEditorRunning) {
+      return { status: 'blocked', reason: 'external-editor' };
+    }
+    if (hasActiveScreenTakeover(this.state.ui)) {
+      return { status: 'blocked', reason: 'screen-takeover' };
+    }
+    if (this.state.editorReplacementMounted || this.state.activeDialog !== null) {
+      return { status: 'blocked', reason: 'editor-replacement' };
+    }
+    const result = this.state.rendererSession.switchMode(mode, {
+      copyOnSelect: this.state.appState.copyOnSelect !== false,
+      wheelScrollLines: resolveWheelScrollLines(this.state.appState.wheelScrollLines),
+      onBeforeStart: () => {
+        this.remountLayout();
+        this.editorKeyboard.resetSelectionCopyState();
+      },
+    });
+    if (result.status === 'switched') {
+      if (result.from === 'fullscreen' && this.terminalFocusTrackingDispose !== undefined) {
+        this.state.ui.terminal.write(ENABLE_TERMINAL_FOCUS_REPORTING);
+      }
+      this.setupAutocomplete();
+      this.state.terminalState.progressActive = false;
+      this.updateActivityPane();
+    }
+    return result;
+  }
+
+  private remountLayout(): void {
+    this.state.layoutShell.mount(this.state);
+    applyTranscriptPresentation(this);
+    this.state.transcriptContainer.invalidate();
+    this.updateQueueDisplay();
   }
 
   private stopUiForExit(): void {
-    const ui = this.state.ui;
-    if (!(ui instanceof TuiAltScreen)) {
-      ui.stop();
-      return;
-    }
-    ui.stop({ preserveScreen: true });
-    const main = new TuiMainScreen(ui.terminal);
-    main.addChild(this.state.transcriptContainer);
-    main.addChild(this.state.activityContainer);
-    main.addChild(this.state.notifyPanelContainer);
-    main.addChild(this.state.queueContainer);
-    main.addChild(this.state.btwPanelContainer);
-    main.addChild(this.state.surveyContainer);
-    main.addChild(this.state.editorContainer);
-    const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-    footerWrap.addChild(this.state.footer);
-    main.addChild(footerWrap);
-    main.renderNow();
-    main.stop();
+    this.state.rendererSession.exitToMainScreen(() => {
+      this.remountLayout();
+    });
   }
 
   handlePlanToggle(next: boolean): void {

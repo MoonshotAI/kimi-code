@@ -113,45 +113,75 @@ export class BtwPanelComponent extends VStack {
   private maxScrollTop = 0;
   private contentRevision = 0;
   private turnLinesCache: TurnLinesCache | undefined;
-  private readonly frameBox: BtwFrameBox | undefined;
-  private readonly bodyScroll: OverflowScrollView | undefined;
-  private readonly rowEntryOptions: { maxSize?: number } | undefined;
+  private fullscreen = false;
+  private pendingScrollTop: number | undefined;
+  private frameBox: BtwFrameBox | undefined;
+  private bodyScroll: OverflowScrollView | undefined;
+  private rowEntryOptions: { maxSize?: number } | undefined;
 
   constructor(private readonly options: BtwPanelOptions) {
     super();
-    if (options.fullscreen === true) {
-      const bodyComponent: Component = {
-        render: (width) => {
-          this.syncFullscreenHeader();
-          return this.renderUnclippedBody(width);
-        },
-        invalidate: () => {},
-      };
-      this.bodyScroll = new OverflowScrollView(bodyComponent, {
-        follow: 'end',
-        onScroll: (top) => {
-          this.scrollTop = top;
-          if (this.bodyScroll !== undefined && this.bodyScroll.viewportHeight > 0) {
-            this.followTail = this.bodyScroll.isFollowingEnd;
-          }
-        },
-      });
-      this.frameBox = new BtwFrameBox(options.onClose);
-      this.frameBox.addChild(this.bodyScroll);
-      const row = new HStack([
-        { component: new Spacer(0), basis: CHROME_GUTTER, shrink: 0 },
-        { component: this.frameBox, basis: 0, grow: 1, shrink: 1 },
-        { component: new Spacer(0), basis: CHROME_GUTTER, shrink: 0 },
-      ]);
-      const entryOpts: StackEntryOptions = {
-        shrink: 1,
-        minSize: 0,
-        maxSize: this.maxFullscreenPanelRows(),
-      };
-      this.addChild(row, entryOpts);
-      this.rowEntryOptions = this.entries[0];
-      this.syncFullscreenHeader();
+    this.mountFullscreen(options.fullscreen === true);
+  }
+
+  setFullscreen(fullscreen: boolean): void {
+    if (this.fullscreen === fullscreen) return;
+    this.mountFullscreen(fullscreen);
+    this.invalidate();
+  }
+
+  private mountFullscreen(fullscreen: boolean): void {
+    if (this.bodyScroll !== undefined && this.bodyScroll.viewportHeight > 0) {
+      this.scrollTop = this.bodyScroll.scrollTop;
+      this.followTail = this.bodyScroll.isFollowingEnd;
     }
+    this.fullscreen = fullscreen;
+    this.clear();
+    this.frameBox = undefined;
+    this.bodyScroll = undefined;
+    this.rowEntryOptions = undefined;
+    this.pendingScrollTop = undefined;
+    if (!fullscreen) return;
+    if (!this.followTail) {
+      this.pendingScrollTop = this.scrollTop;
+    }
+    const bodyComponent: Component = {
+      render: (width) => {
+        this.syncFullscreenHeader();
+        return this.renderUnclippedBody(width);
+      },
+      invalidate: () => {},
+    };
+    this.bodyScroll = new OverflowScrollView(bodyComponent, {
+      follow: 'end',
+      onScroll: (top) => {
+        this.scrollTop = top;
+        if (this.bodyScroll !== undefined && this.bodyScroll.viewportHeight > 0) {
+          this.followTail = this.bodyScroll.isFollowingEnd;
+        }
+      },
+      onLayout: () => {
+        const target = this.pendingScrollTop;
+        if (target === undefined || this.bodyScroll === undefined) return;
+        this.pendingScrollTop = undefined;
+        this.bodyScroll.scrollTo(target);
+      },
+    });
+    this.frameBox = new BtwFrameBox(this.options.onClose);
+    this.frameBox.addChild(this.bodyScroll);
+    const row = new HStack([
+      { component: new Spacer(0), basis: CHROME_GUTTER, shrink: 0 },
+      { component: this.frameBox, basis: 0, grow: 1, shrink: 1 },
+      { component: new Spacer(0), basis: CHROME_GUTTER, shrink: 0 },
+    ]);
+    const entryOpts: StackEntryOptions = {
+      shrink: 1,
+      minSize: 0,
+      maxSize: this.maxFullscreenPanelRows(),
+    };
+    this.addChild(row, entryOpts);
+    this.rowEntryOptions = this.entries[0];
+    this.syncFullscreenHeader();
   }
 
   override invalidate(): void {
@@ -164,6 +194,7 @@ export class BtwPanelComponent extends VStack {
     if (normalized.length === 0 || this.isRunning()) return;
     this.followTail = true;
     this.scrollTop = 0;
+    this.pendingScrollTop = undefined;
     this.transientNotices.length = 0;
     this.turns.push({
       prompt: normalized,
@@ -180,6 +211,7 @@ export class BtwPanelComponent extends VStack {
     this.transientNotices.push(message);
     this.contentRevision += 1;
     this.followTail = true;
+    this.pendingScrollTop = undefined;
     this.bodyScroll?.scrollToEnd();
   }
 
@@ -236,7 +268,7 @@ export class BtwPanelComponent extends VStack {
   }
 
   override render(width: number): string[] {
-    const gutter = this.options.fullscreen === true ? CHROME_GUTTER : 0;
+    const gutter = this.fullscreen ? CHROME_GUTTER : 0;
     const panelWidth = Math.max(4, width - gutter * 2);
     const contentWidth = Math.max(1, panelWidth - 4);
     const body = this.fitBodyLines(this.getTurnLines(contentWidth));
@@ -415,6 +447,7 @@ export class BtwPanelComponent extends VStack {
   }
 
   scroll(direction: 'up' | 'down'): boolean {
+    this.pendingScrollTop = undefined;
     if (this.bodyScroll !== undefined) {
       const delta = direction === 'up' ? -1 : 1;
       const moved = this.bodyScroll.scrollBy(delta) !== delta;
