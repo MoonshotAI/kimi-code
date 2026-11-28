@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -14,14 +14,21 @@ import { abortable } from '#/_base/utils/abort';
 import { ErrorCodes, Error2 } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
 import { getShareBinRgPath, isRemoteEnvironment, shareBinRgPath } from '#/environment/shareBinRg';
+import { hasOhosElfCodeSign, isElfBinary, selfSignOhosElf } from './ohosElfCodeSign';
 
 export { getShareBinRgPath } from '#/environment/shareBinRg';
 
 const RG_VERSION = '15.0.0';
+const OHOS_RG_VERSION = '15.1.0';
+const OHOS_RG_TARGET = 'aarch64-unknown-linux-ohos';
+const OHOS_RG_ARCHIVE_URL =
+  'https://raw.atomgit.com/OpenHarmonyPCDeveloper/ohos-ripgrep/blobs/82766f57856322add0eb7bb393b1393ef58190c8/output/ripgrep_15.1.0.tar.gz';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
 const RG_ARCHIVE_SHA256: Record<string, string> = {
   'ripgrep-15.0.0-aarch64-apple-darwin.tar.gz':
     '98bb2e61e7277ba0ea72d2ae2592497fd8d2940934a16b122448d302a6637e3b',
+  'ripgrep-15.1.0-aarch64-unknown-linux-ohos.tar.gz':
+    '65932fb647372a27d699eceebbb87186e5c1034c2a7ccdee007648a883362908',
   'ripgrep-15.0.0-aarch64-pc-windows-msvc.zip':
     '572709c8770cb7f9385d725cb06d2bcd9537ec24d4dd17b1be1d65a876f8b591',
   'ripgrep-15.0.0-aarch64-unknown-linux-gnu.tar.gz':
@@ -99,7 +106,21 @@ async function resolveRgPath(
   options: EnsureRgPathOptions,
 ): Promise<RgResolution> {
   const existing = await findExistingRg(probe, shareDir, options.allowCachedFallback === true);
-  if (existing) return existing;
+  if (existing) {
+    if (
+      detectTarget() === OHOS_RG_TARGET &&
+      (existing.source === 'system-path' || existing.source === 'share-bin-cached')
+    ) {
+      const bytes = await readFile(existing.path);
+      if (isElfBinary(bytes) && !hasOhosElfCodeSign(bytes)) {
+        const binPath = await stageAndInstallRg(join(shareDir, 'bin'), (staged) =>
+          writeFile(staged, selfSignOhosElf(bytes)),
+        );
+        return { path: binPath, source: 'share-bin-cached' };
+      }
+    }
+    return existing;
+  }
   throwIfAborted(options.signal);
   if (options.allowCachedFallback === true) {
     return downloadRgWithLock(probe, shareDir, options.resolveRegion);
@@ -198,13 +219,26 @@ async function installRemoteRg(
     await fs.remove(staged).catch(() => {});
   }
   if (host.pathClass === 'win32') return;
+  await markRemoteRgExecutable(probe, binPath, host.osKind);
+}
+
+export async function markRemoteRgExecutable(
+  probe: RgProbe,
+  binPath: string,
+  osKind: string,
+): Promise<void> {
   const chmodRun = await probe.exec(['chmod', '755', binPath]).catch(() => ({ exitCode: -1 }));
-  if (chmodRun.exitCode !== 0) {
-    throw new Error2(
-      ErrorCodes.OS_FS_UNAVAILABLE,
-      `failed to mark ${binPath} executable on the target`,
-    );
+  if (chmodRun.exitCode === 0) return;
+  if (osKind === 'openharmony') {
+    const ohosChmodRun = await probe
+      .exec(['/system/bin/chmod', '755', binPath])
+      .catch(() => ({ exitCode: -1 }));
+    if (ohosChmodRun.exitCode === 0) return;
   }
+  throw new Error2(
+    ErrorCodes.OS_FS_UNAVAILABLE,
+    `failed to mark ${binPath} executable on the target`,
+  );
 }
 
 export async function findExistingRg(
@@ -294,6 +328,7 @@ function rgTargetFor(osKind: string, osArch: string): string | undefined {
     return arch === 'x86_64' ? 'x86_64-unknown-linux-musl' : 'aarch64-unknown-linux-gnu';
   }
   if (osKind === 'Windows') return `${arch}-pc-windows-msvc`;
+  if (osKind === 'openharmony') return arch === 'aarch64' ? OHOS_RG_TARGET : undefined;
   return undefined;
 }
 
@@ -302,15 +337,18 @@ interface RgArchive {
   readonly expectedSha256: string;
   readonly url: string;
   readonly isWindows: boolean;
+  readonly extractedBinaryPath: string;
 }
 
 function rgArchiveForTarget(
   target: string,
   resolveRegion: (() => KimiRegion | undefined) | undefined,
 ): RgArchive {
+  const isOhos = target === OHOS_RG_TARGET;
   const isWindows = target.includes('windows');
   const archiveExt = isWindows ? 'zip' : 'tar.gz';
-  const archiveName = `ripgrep-${RG_VERSION}-${target}.${archiveExt}`;
+  const version = isOhos ? OHOS_RG_VERSION : RG_VERSION;
+  const archiveName = `ripgrep-${version}-${target}.${archiveExt}`;
   const expectedSha256 = RG_ARCHIVE_SHA256[archiveName];
   if (expectedSha256 === undefined) {
     throw new Error2(
@@ -319,7 +357,12 @@ function rgArchiveForTarget(
       { details: { archiveName } },
     );
   }
-  return { archiveName, expectedSha256, url: `${rgBaseUrl(resolveRegion)}/${archiveName}`, isWindows };
+  const binName = isWindows ? 'rg.exe' : 'rg';
+  const extractedBinaryPath = isOhos
+    ? join('bin', binName)
+    : join(`ripgrep-${version}-${target}`, binName);
+  const url = isOhos ? OHOS_RG_ARCHIVE_URL : `${rgBaseUrl(resolveRegion)}/${archiveName}`;
+  return { archiveName, expectedSha256, url, isWindows, extractedBinaryPath };
 }
 
 async function fetchRgArchive(archive: RgArchive, archivePath: string): Promise<void> {
@@ -345,14 +388,22 @@ async function fetchRgArchive(archive: RgArchive, archivePath: string): Promise<
   await verifyArchiveChecksum(archivePath, archive.archiveName, archive.expectedSha256);
 }
 
-async function extractRgArchive(archive: RgArchive, target: string, archivePath: string, tmp: string): Promise<string> {
+async function extractRgArchive(archive: RgArchive, archivePath: string, tmp: string): Promise<string> {
   const binName = archive.isWindows ? 'rg.exe' : 'rg';
   if (archive.isWindows) {
     const destination = join(tmp, binName);
     await extractRgFromZip(archivePath, destination);
     return destination;
   }
-  const extractDir = join(tmp, 'extract');
+  return extractRgFromTarGz(archivePath, archive.extractedBinaryPath, join(tmp, 'extract'));
+}
+
+export async function extractRgFromTarGz(
+  archivePath: string,
+  relativeBinaryPath: string,
+  extractDir: string,
+): Promise<string> {
+  const binName = basename(relativeBinaryPath);
   await mkdir(extractDir, { recursive: true });
   await extractTar({
     file: archivePath,
@@ -360,7 +411,7 @@ async function extractRgArchive(archive: RgArchive, target: string, archivePath:
     gzip: true,
     filter: (entryPath: string) => entryPath.endsWith(`/${binName}`),
   });
-  const extracted = join(extractDir, `ripgrep-${RG_VERSION}-${target}`, binName);
+  const extracted = join(extractDir, relativeBinaryPath);
   if (!existsSync(extracted)) {
     throw new Error2(
       ErrorCodes.OS_FS_UNAVAILABLE,
@@ -370,6 +421,24 @@ async function extractRgArchive(archive: RgArchive, target: string, archivePath:
     );
   }
   return extracted;
+}
+
+async function stageAndInstallRg(
+  binDir: string,
+  writeStaged: (staged: string) => Promise<void>,
+): Promise<string> {
+  await mkdir(binDir, { recursive: true });
+  const destination = join(binDir, rgBinaryName());
+  const installDir = await mkdtemp(join(binDir, '.rg-install-'));
+  const staged = join(installDir, rgBinaryName());
+  try {
+    await writeStaged(staged);
+    await chmod(staged, 0o755);
+    await rename(staged, destination);
+  } finally {
+    await rm(installDir, { recursive: true, force: true });
+  }
+  return destination;
 }
 
 async function downloadAndInstallRg(
@@ -394,19 +463,17 @@ async function downloadAndInstallRg(
   try {
     const archivePath = join(tmp, archive.archiveName);
     await fetchRgArchive(archive, archivePath);
-    const extracted = await extractRgArchive(archive, target, archivePath, tmp);
+    const extracted = await extractRgArchive(archive, archivePath, tmp);
     if (archive.isWindows) {
       await copyFile(extracted, destination);
     } else {
-      const installDir = await mkdtemp(join(binDir, '.rg-install-'));
-      const staged = join(installDir, rgBinaryName());
-      try {
-        await copyFile(extracted, staged);
-        await chmod(staged, 0o755);
-        await rename(staged, destination);
-      } finally {
-        await rm(installDir, { recursive: true, force: true });
-      }
+      await stageAndInstallRg(binDir, async (staged) => {
+        if (target === OHOS_RG_TARGET) {
+          await writeFile(staged, selfSignOhosElf(await readFile(extracted)));
+        } else {
+          await copyFile(extracted, staged);
+        }
+      });
     }
     return destination;
   } finally {
@@ -423,8 +490,9 @@ async function downloadRgBinary(
   try {
     const archivePath = join(tmp, archive.archiveName);
     await fetchRgArchive(archive, archivePath);
-    const extracted = await extractRgArchive(archive, target, archivePath, tmp);
-    return await readFile(extracted);
+    const extracted = await extractRgArchive(archive, archivePath, tmp);
+    const bytes = await readFile(extracted);
+    return target === OHOS_RG_TARGET ? selfSignOhosElf(bytes) : bytes;
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -525,6 +593,16 @@ export async function extractRgFromZip(archivePath: string, destination: string)
 export function rgUnavailableMessage(cause: unknown, environment?: Environment): string {
   const detail =
     cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
+  const isOhos = environment?.host?.osKind === 'openharmony';
+  const fixOptions = isOhos
+    ? '  OpenHarmony: install the HNP package or download rg from https://atomgit.com/OpenHarmonyPCDeveloper/ohos-ripgrep'
+    : `  macOS:   brew install ripgrep\n` +
+      `  Ubuntu:  sudo apt-get install ripgrep\n` +
+      `  Other:   https://github.com/BurntSushi/ripgrep#installation`;
+  const fallback = isOhos
+    ? 'Alternatively, drop an OpenHarmony rg binary'
+    : 'Alternatively, drop a static rg binary';
+  const selfSignNote = isOhos ? ' (unsigned binaries are self-signed automatically)' : '';
   if (isRemoteEnvironment(environment)) {
     const shareBin = shareBinRgPath(environment);
     return (
@@ -533,11 +611,9 @@ export function rgUnavailableMessage(cause: unknown, environment?: Environment):
       `Error: ${detail}\n` +
       `\n` +
       `Fix options (install on the target):\n` +
-      `  macOS:   brew install ripgrep\n` +
-      `  Ubuntu:  sudo apt-get install ripgrep\n` +
-      `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
+      `${fixOptions}\n` +
       `\n` +
-      `Alternatively, drop a static rg binary at ${shareBin} on the target`
+      `${fallback} at ${shareBin} on the target${selfSignNote}`
     );
   }
   const shareBin = getShareBinRgPath();
@@ -547,10 +623,8 @@ export function rgUnavailableMessage(cause: unknown, environment?: Environment):
     `Error: ${detail}\n` +
     `\n` +
     `Fix options:\n` +
-    `  macOS:   brew install ripgrep\n` +
-    `  Ubuntu:  sudo apt-get install ripgrep\n` +
-    `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
+    `${fixOptions}\n` +
     `\n` +
-    `Alternatively, drop a static rg binary at ${shareBin}`
+    `${fallback} at ${shareBin}${selfSignNote}`
   );
 }
