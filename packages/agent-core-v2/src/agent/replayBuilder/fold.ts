@@ -1,5 +1,5 @@
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
-import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { placeToolCall, type LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
@@ -160,6 +160,7 @@ class WireReplayFoldState {
   readonly toolStore: Record<string, unknown> = {};
   private history: ContextMessage[] = [];
   private readonly openSteps = new Map<string, ContextMessage>();
+  private readonly openCallIndexes = new Map<string, number[] | undefined>();
   private readonly pendingToolResultIds = new Set<string>();
   private deferred: DeferredReplayEntry[] = [];
   private goal: FoldGoalState | undefined;
@@ -337,10 +338,12 @@ class WireReplayFoldState {
         const message: ContextMessage = { role: 'assistant', content: [], toolCalls: [] };
         this.pushHistory([message], time);
         this.openSteps.set(event.uuid, message);
+        this.openCallIndexes.set(event.uuid, []);
         return;
       }
       case 'step.end': {
         this.openSteps.delete(event.uuid);
+        this.openCallIndexes.delete(event.uuid);
         this.flushDeferred(time);
         return;
       }
@@ -361,15 +364,22 @@ class WireReplayFoldState {
             `Received tool_call for unknown step_uuid '${event.stepUuid}' (no open step_begin)`,
           );
         }
-        openStep.toolCalls.push({
-          type: 'function',
+        const call = {
+          type: 'function' as const,
           id: event.toolCallId,
           rawId: event.rawId,
           name: event.name,
           arguments:
             event.argsRaw ?? (event.args === undefined ? null : JSON.stringify(event.args)),
           extras: event.extras,
-        });
+        };
+        const placed = this.openCallIndexes.get(event.stepUuid);
+        if (placed === undefined || event.callIndex === undefined) {
+          this.openCallIndexes.set(event.stepUuid, undefined);
+          openStep.toolCalls.push(call);
+        } else {
+          openStep.toolCalls.splice(placeToolCall(placed, event.callIndex), 0, call);
+        }
         if (event.display !== undefined) {
           openStep.toolCallDisplays ??= {};
           openStep.toolCallDisplays[event.toolCallId] = event.display;
@@ -427,6 +437,7 @@ class WireReplayFoldState {
       if (undone) this.replay.splice(i, 1);
     }
     this.openSteps.clear();
+    this.openCallIndexes.clear();
     this.pendingToolResultIds.clear();
     this.deferred = [];
   }
@@ -434,6 +445,7 @@ class WireReplayFoldState {
   private clearContext(): void {
     this.history = [];
     this.openSteps.clear();
+    this.openCallIndexes.clear();
     this.pendingToolResultIds.clear();
     this.deferred = [];
   }
@@ -467,6 +479,7 @@ class WireReplayFoldState {
         ? [summaryMessage, ...this.history.slice(compactedCount)]
         : [summaryMessage];
     this.openSteps.clear();
+    this.openCallIndexes.clear();
     this.pendingToolResultIds.clear();
     this.deferred = [];
   }

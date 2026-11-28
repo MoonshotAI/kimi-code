@@ -53,8 +53,10 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     appendOpenContent: (part) => {
       openEntry?.message.content.push(part);
     },
-    appendOpenToolCall: (call) => {
-      if (openEntry?.message.role === 'assistant') openEntry.message.toolCalls.push(call);
+    insertOpenToolCall: (call, _display, position) => {
+      if (openEntry?.message.role !== 'assistant') return;
+      const { toolCalls } = openEntry.message;
+      toolCalls.splice(position ?? toolCalls.length, 0, call);
     },
     dropOpenAssistant: () => {
       if (openEntry === undefined) return;

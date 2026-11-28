@@ -1,4 +1,4 @@
-import { agent, askUserQuestion, bash, edit, glob, grep, read, say, todoList, write, type PromptCacheEntry } from '@moonshot-ai/testkit/model';
+import { agent, askUserQuestion, bash, batch, edit, glob, grep, read, say, todoList, write, type PromptCacheEntry } from '@moonshot-ai/testkit/model';
 
 import { expect, scenario } from '../../support/scenario';
 
@@ -104,6 +104,30 @@ scenario(
     await product.expectReply('Still here after the restart.');
 
     expect(model.requests('main').at(-1)?.texts('user')).toContain('Create never.txt.');
+    lastTwoMainRequestsShareTheirPrefix(model.promptCache());
+  },
+);
+
+scenario(
+  'keeps the prompt cache prefix when the session restarts after a permission rule denied one call of a parallel batch',
+  {
+    workspace: { 'notes.txt': 'alpha\n', 'keep.txt': 'kept\n', 'other.txt': 'omega\n' },
+    config: { extra: { permission: { rules: [{ decision: 'deny', pattern: 'Bash(rm *)', reason: 'keep.txt stays.' }] } } },
+  },
+  async ({ product, model, workspace }) => {
+    model.script(batch(read('notes.txt'), bash('rm keep.txt'), read('other.txt')), say('Read both, and keep.txt stayed.'));
+    await product.send('Read notes.txt and other.txt, and remove keep.txt.');
+    await product.waitIdle();
+    await product.expectReply('Read both, and keep.txt stayed.');
+    await workspace.expectFile('keep.txt', 'kept\n');
+
+    await product.restart();
+    model.script(say('Still here after the restart.'));
+    await product.send('Continue after the restart.');
+    await product.waitIdle();
+    await product.expectReply('Still here after the restart.');
+
+    expect(model.requests('main').at(-1)?.texts('tool').join('\n')).toContain('was denied by permission rule');
     lastTwoMainRequestsShareTheirPrefix(model.promptCache());
   },
 );
