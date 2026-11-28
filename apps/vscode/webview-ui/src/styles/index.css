@@ -238,3 +238,13 @@ textarea:focus {
   border-radius: 3px;
   text-align: center;
 }
+
+body.vscode-high-contrast :is(code, pre, .kbd):not(pre code) {
+  color: var(--vscode-editor-foreground);
+  background-color: var(--vscode-textCodeBlock-background);
+  border: 1px solid var(--vscode-contrastBorder, currentColor);
+}
+
+body.vscode-high-contrast pre code {
+  color: inherit;
+}
