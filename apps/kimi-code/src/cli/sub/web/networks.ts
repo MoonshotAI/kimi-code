@@ -1,4 +1,4 @@
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
 
 export interface NetworkAddress {
   address: string;
@@ -6,8 +6,14 @@ export interface NetworkAddress {
 }
 
 export function listNetworkAddresses(): NetworkAddress[] {
+  let interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>;
+  try {
+    interfaces = networkInterfaces();
+  } catch {
+    return [];
+  }
   const raw: NetworkAddress[] = [];
-  for (const entries of Object.values(networkInterfaces())) {
+  for (const entries of Object.values(interfaces)) {
     for (const info of entries ?? []) {
       if (info.internal) {
         continue;
