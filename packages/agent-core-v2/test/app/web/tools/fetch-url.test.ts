@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
+import { MoonshotFetchURLProvider } from '#/app/web/providers/moonshot-fetch-url';
 import { FetchURLTool } from '#/agent/tools/fetch-url/fetchUrlTool';
 import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types';
 
@@ -37,7 +38,7 @@ function abortError(): Error {
 }
 
 describe('FetchURLTool abort signal', () => {
-  it('forwards ctx.signal to the fetcher', async () => {
+  it('passes a live deadline signal to the fetcher', async () => {
     const controller = new AbortController();
     const fetch = vi
       .fn<UrlFetcher['fetch']>()
@@ -52,12 +53,15 @@ describe('FetchURLTool abort signal', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     const [, options] = fetch.mock.calls[0]!;
     expect(options?.toolCallId).toBe('call_fetch');
-    expect(options?.signal).toBe(controller.signal);
+    expect(options?.signal).not.toBe(controller.signal);
+    expect(options?.signal?.aborted).toBe(false);
   });
 
   it('re-throws when the signal aborts mid-fetch', async () => {
     const controller = new AbortController();
-    const fetch = vi.fn<UrlFetcher['fetch']>().mockImplementation(async () => {
+    let fetchSignal: AbortSignal | undefined;
+    const fetch = vi.fn<UrlFetcher['fetch']>().mockImplementation(async (_url, options) => {
+      fetchSignal = options?.signal;
       controller.abort(new Error('Aborted by the user'));
       throw abortError();
     });
@@ -67,6 +71,30 @@ describe('FetchURLTool abort signal', () => {
     });
 
     await expect(execute(tool, 'https://example.com', controller.signal)).rejects.toThrow();
+    expect(fetchSignal?.aborted).toBe(true);
+  });
+
+  it('rejects with the user cancellation when the fetcher never settles', async () => {
+    const controller = new AbortController();
+    const reason = new Error('Aborted by the user');
+    let fetchSignal: AbortSignal | undefined;
+    const fetch = vi.fn<UrlFetcher['fetch']>().mockImplementation(
+      async (_url, options) => {
+        fetchSignal = options?.signal;
+        return new Promise<UrlFetchResult>(() => {});
+      },
+    );
+    const tool = new FetchURLTool({
+      _serviceBrand: undefined,
+      getUrlFetcher: () => ({ fetch }),
+    });
+    const pending = execute(tool, 'https://example.com', controller.signal);
+    const rejection = expect(pending).rejects.toBe(reason);
+
+    controller.abort(reason);
+
+    await rejection;
+    expect(fetchSignal?.aborted).toBe(true);
   });
 
   it('returns a normal error result when fetch fails without abort', async () => {
@@ -84,6 +112,85 @@ describe('FetchURLTool abort signal', () => {
       throw new Error('expected string error output');
     }
     expect(result.output).toContain('boom');
+  });
+});
+
+describe('FetchURLTool default timeout', () => {
+  it('returns a timeout error after 30 seconds when the fetcher never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      let fetchSignal: AbortSignal | undefined;
+      const fetch = vi.fn<UrlFetcher['fetch']>().mockImplementation(
+        async (_url, options) => {
+          fetchSignal = options?.signal;
+          return new Promise<UrlFetchResult>(() => {});
+        },
+      );
+      const tool = new FetchURLTool({
+        _serviceBrand: undefined,
+        getUrlFetcher: () => ({ fetch }),
+      });
+      let settled = false;
+      const pending = execute(tool, 'https://example.com', controller.signal).then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(settled).toBe(false);
+      expect(fetchSignal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      const result = await pending;
+      expect(result.isError).toBe(true);
+      if (typeof result.output !== 'string') throw new Error('expected string error output');
+      expect(result.output).toContain('timed out after 30 seconds');
+      expect(fetchSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shares the deadline with the cloud provider and does not start fallback after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      let cloudSignal: AbortSignal | undefined;
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+        cloudSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+        });
+      });
+      const localFetch = vi.fn<UrlFetcher['fetch']>();
+      const provider = new MoonshotFetchURLProvider({
+        apiKey: 'YOUR_API_KEY',
+        baseUrl: 'https://example.com/fetch',
+        fetchImpl,
+        localFallback: { fetch: localFetch },
+      });
+      const tool = new FetchURLTool({
+        _serviceBrand: undefined,
+        getUrlFetcher: () => provider,
+      });
+      let settled = false;
+      const pending = execute(tool, 'https://example.com', controller.signal).then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(settled).toBe(true);
+      const result = await pending;
+      expect(result.isError).toBe(true);
+      expect(cloudSignal?.aborted).toBe(true);
+      expect(localFetch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

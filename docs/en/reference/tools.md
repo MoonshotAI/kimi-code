@@ -61,7 +61,7 @@ Foreground mode blocks the current turn until the command completes or times out
 
 **`WebSearch`** accepts `query` (search terms). Requires the host to provide a search implementation; when not injected, the tool does not appear in the tool list.
 
-**`FetchURL`** accepts a single `url` parameter and returns the page content. For HTML pages, the host extracts the body text rather than returning the full HTML; plain text or Markdown pages are passed through directly. Also requires a host-provided implementation.
+**`FetchURL`** accepts a single `url` parameter and returns the page content. For HTML pages, the host extracts the body text rather than returning the full HTML; plain text or Markdown pages are passed through directly. Also requires a host-provided implementation. Each call has a 30-second total timeout, covering redirects, response body reading, and fallback fetches.
 
 Both web tools always run from the machine running Kimi Code, even when the session is bound to a [remote environment](../guides/remote-environment.md) — requests never egress from the target environment.
 
