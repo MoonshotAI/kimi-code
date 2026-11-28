@@ -108,6 +108,25 @@ export function thinkingLevelForModelSwitch(
   return thinkingLevelFromConfig(configThinking, model) ?? defaultThinkingLevelFor(model);
 }
 
+export function thinkingLevelKeptAcrossModelSwitch(
+  model: ModelThinkingInfo | undefined,
+  currentLevel: ThinkingLevel | undefined,
+): ThinkingLevel {
+  return currentLevel !== undefined && levelDeclaredBy(model, currentLevel)
+    ? currentLevel
+    : defaultThinkingLevelFor(model);
+}
+
+export function thinkingLevelAfterSessionModelSwitch(
+  from: ModelThinkingInfo | undefined,
+  to: ModelThinkingInfo | undefined,
+  currentLevel: ThinkingLevel | undefined,
+): ThinkingLevel {
+  return modelThinkingAvailability(from) === 'unsupported'
+    ? defaultThinkingLevelFor(to)
+    : thinkingLevelKeptAcrossModelSwitch(to, currentLevel);
+}
+
 let thinkingWriteSeq = 0;
 
 export function markThinkingPending(

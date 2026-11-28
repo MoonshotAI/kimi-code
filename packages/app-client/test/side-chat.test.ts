@@ -159,7 +159,6 @@ function createSideChat(
     conversations,
     pushOperationFailure,
     nextOptimisticMsgId: () => `msg_opt_${++optimisticId}`,
-    resolveThinkingForPrompt: () => state.thinking,
     ...overrides,
   });
   function deliver(agentId: string, turns: ConversationTurn[], options: { running?: boolean; sessionId?: string } = {}): void {
@@ -197,40 +196,19 @@ beforeEach(() => {
 });
 
 describe('useSideChat — sendSideChatPromptOn', () => {
-  it('carries model, thinking, permission and plan/swarm modes on the prompt', async () => {
+  it('carries only the main permission mode and leaves model, thinking and modes to the side agent', async () => {
     permissionsStore().pickInSession('sess_1', 'auto');
     const { sideChat, pushOperationFailure } = createSideChat();
 
     await sideChat.openSideChatOn('sess_1', 'what changed?');
 
     expect(apiMock.startBtw).toHaveBeenCalledWith('sess_1');
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        agentId: 'agent_btw_1',
-        model: 'kimi-code',
-        thinking: 'high',
-        permissionMode: 'auto',
-        planMode: true,
-        swarmMode: false,
-      }),
-    );
+    const request = apiMock.submitPrompt.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(request).toMatchObject({ agentId: 'agent_btw_1', permissionMode: 'auto' });
+    for (const setting of ['model', 'thinking', 'planMode', 'swarmMode']) {
+      expect(request).not.toHaveProperty(setting);
+    }
     expect(pushOperationFailure).not.toHaveBeenCalled();
-  });
-
-  it('resolves thinking from the parent model, not the level of the session the user switched to', async () => {
-    const state = createState();
-    state.thinking = 'max';
-    const { sideChat } = createSideChat(state, {
-      resolveThinkingForPrompt: (_sid, id) => (id === 'kimi-code' ? 'low' : undefined),
-    });
-
-    await sideChat.openSideChatOn('sess_1', 'what changed?');
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({ model: 'kimi-code', thinking: 'low' }),
-    );
   });
 
   it('sends a rich initial prompt with its media and keeps the recoverable snapshot on the echo', async () => {
@@ -248,18 +226,14 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     expect(userTexts(sideChat.sideChatTurnsOf('rich-side'))).toEqual(['Inspect image']);
   });
 
-  it('cleans up the optimistic echo and sending flag when the send fails before the submit', async () => {
-    const { sideChat } = createSideChat(createState(), {
-      resolveThinkingForPrompt: () => {
-        throw new TypeError('offline');
-      },
-    });
+  it('cleans up the optimistic echo and sending flag when the submit is rejected', async () => {
+    apiMock.submitPrompt.mockRejectedValueOnce(new Error('rejected'));
+    const { sideChat } = createSideChat();
     await sideChat.openSideChatOn('sess_1');
 
     const sent = await sideChat.sendSideChatPrompt('repeat');
 
     expect(sent).toBe(false);
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(sideChat.sideChatTurnsOf('agent_btw_1')).toEqual([]);
     expect(sideChat.sideChatSendingOf('agent_btw_1')).toBe(false);
     expect(sideChat.sideChatRunningOf('agent_btw_1')).toBe(false);
@@ -1061,20 +1035,20 @@ describe('useSideChat — concurrent first opens (multi-fork)', () => {
     apiMock.startBtw
       .mockResolvedValueOnce({ agentId: 'agent_btw_1' })
       .mockResolvedValueOnce({ agentId: 'agent_btw_2' });
-    const resolveThinkingForPrompt = vi
-      .fn<() => undefined>()
-      .mockImplementationOnce(() => {
-        throw new TypeError('offline');
-      })
-      .mockReturnValue(undefined);
-    const { sideChat } = createSideChat(createState(), { resolveThinkingForPrompt });
+    const submitPrompt = apiMock.submitPrompt.getMockImplementation();
+    apiMock.submitPrompt.mockImplementation(async (sessionId: string, request: { agentId?: string }) => {
+      if (request.agentId === 'agent_btw_1') throw new Error('rejected');
+      return submitPrompt!(sessionId, request);
+    });
+    const { sideChat } = createSideChat();
 
     const first = sideChat.openSideChatOn('sess_1', 'q1');
     const second = sideChat.openSideChatOn('sess_1', 'q2');
 
     await expect(first).resolves.toEqual({ target: { agentId: 'agent_btw_1', seq: 1 }, sent: false });
     await expect(second).resolves.toEqual({ target: { agentId: 'agent_btw_2', seq: 2 }, sent: true });
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(userTexts(sideChat.sideChatTurnsOf('agent_btw_1'))).toEqual([]);
+    expect(userTexts(sideChat.sideChatTurnsOf('agent_btw_2'))).toEqual(['q2']);
     expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ agentId: 'agent_btw_2' }));
   });
 });

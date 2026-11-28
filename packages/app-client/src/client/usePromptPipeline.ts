@@ -192,9 +192,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       if (draftThinkingWrite === undefined) void persistSessionProfile(draftSettings, sid);
       else void persistSessionProfile(draftSettings, sid, true);
     }
-    if (draftThinkingWrite !== undefined && draftPick !== undefined && session.model !== draftPick) {
-      void modelProvider.normalizeDraftSessionModel(sid, draftPick);
-    }
     if (modeStore().draftModes.goalMode) {
       modeStore().goalModeBySession = { ...modeStore().goalModeBySession, [sid]: true };
       modeStore().saveGoalModeToStorage();
@@ -325,15 +322,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     );
   }
 
-  async function settleSessionSettings(sid: string): Promise<boolean> {
-    const current = sessionsStore().sessions.find((s) => s.id === sid)?.model;
-    const sendable = modelsStore().resolveSendModel(current);
-    if (sendable !== null && sendable !== current) {
-      void modelProvider.setSessionModel(sid, sendable);
-    }
-    return deps.whenSessionProfileSettled(sid);
-  }
-
   async function commitArmedPlanMode(sid: string): Promise<boolean> {
     if (!(modeStore().planArmedBySession[sid] ?? false)) return true;
     modeStore().planArmedBySession = { ...modeStore().planArmedBySession, [sid]: false };
@@ -401,7 +389,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
         modeStore().saveGoalModeToStorage();
       }
 
-      if (!(await settleSessionSettings(sid))) return rollBackSubmit(sid, tempId);
+      if (!(await deps.whenSessionProfileSettled(sid))) return rollBackSubmit(sid, tempId);
 
       const request = {
         promptId,
@@ -535,7 +523,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       try {
         const api = getKimiWebApi();
         if (
-          !(await settleSessionSettings(sid)) ||
+          !(await deps.whenSessionProfileSettled(sid)) ||
           permissionsStore().sessionTeardownGenFor(sid) !== sessionGenAtEntry
         ) {
           promptStore().removeOptimisticMessage(sid, tempId);
@@ -859,7 +847,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     sessionRatingStore().endSession(sid);
     let outcome: 'ok' | 'rejected' = 'rejected';
     try {
-      if (!(await commitArmedPlanMode(sid)) || !(await settleSessionSettings(sid))) return 'rejected';
+      if (!(await commitArmedPlanMode(sid)) || !(await deps.whenSessionProfileSettled(sid))) return 'rejected';
       const api = getKimiWebApi();
       const result = await retryWhileOccupied(sid, async () => {
         if (permissionsStore().sessionTeardownGenFor(sid) !== sessionGenAtEntry) return null;
