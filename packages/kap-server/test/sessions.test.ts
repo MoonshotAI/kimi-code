@@ -4295,6 +4295,40 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(relisted.body.data.items.map((s) => s.id)).toEqual([id]);
   });
 
+  it('keeps the first session of a new project listed after the read model rebuilds for that project', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-rm-project-'));
+    try {
+      const status = async () =>
+        (await getJson<{ state: string; generation?: number }>('/api/v1/debug/sessionIndex/status')).body.data;
+      const generation = async (): Promise<number> => (await status()).generation ?? 0;
+      const before = await generation();
+      const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: project } });
+      expect(created.body.code).toBe(0);
+      const { id, workspace_id: workspaceId } = created.body.data;
+      await vi.waitFor(
+        async () => {
+          expect(await generation()).toBeGreaterThan(before);
+        },
+        { timeout: 10_000 },
+      );
+      expect((await status()).state).toBe('ready');
+
+      await vi.waitFor(
+        async () => {
+          const listed = await getJson<PageWire>('/api/v1/sessions');
+          expect(listed.body.data.items.map((s) => s.id)).toContain(id);
+          const workspaces = await getJson<{ items: { id: string; session_count: number }[] }>(
+            '/api/v1/workspaces',
+          );
+          expect(workspaces.body.data.items.find((w) => w.id === workspaceId)?.session_count).toBe(1);
+        },
+        { timeout: 5_000 },
+      );
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   it('serves session routes from the authoritative store when the read model cannot open', async () => {
     await (server as RunningServer).close();
     server = undefined;

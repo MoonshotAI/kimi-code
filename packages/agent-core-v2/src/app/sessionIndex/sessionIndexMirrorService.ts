@@ -1,4 +1,4 @@
-import { Disposable, toDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -9,6 +9,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 
 import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
 import { markSessionDirty } from './sessionIndexDirtyJournal';
@@ -26,6 +27,8 @@ const FLUSH_INTERVAL_MS = 100;
 const FLUSH_BATCH_SIZE = 500;
 const MAX_PENDING = 10_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
+const CONSISTENT_READ_ATTEMPTS = 3;
+const MAX_SUPERSEDED_DRAIN_ROUNDS = 3;
 
 const pendingDrains = new Set<Promise<void>>();
 
@@ -37,9 +40,15 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   declare readonly _serviceBrand: undefined;
 
   private readonly pendingMap = new Map<string, SessionSummary>();
+  private readonly retained = new Map<string, SessionSummary>();
+  private retainers = 0;
+  private retentionReleases = 0;
+  private writes = 0;
+  private supersededChunks = 0;
   private readonly pendingMarks = new Set<Promise<void>>();
   private readonly timer = this._register(new IntervalTimer({ unref: true }));
   private flushing: Promise<void> | undefined;
+  private writeQueue: Promise<void> = Promise.resolve();
   private consecutiveFailures = 0;
   private giveUpTracked = false;
   private disposed = false;
@@ -95,31 +104,96 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   }
 
   pending(): readonly SessionSummary[] {
-    return [...this.pendingMap.values()];
+    if (this.retained.size === 0) return [...this.pendingMap.values()];
+    const merged = new Map(this.retained);
+    for (const [id, summary] of this.pendingMap) merged.set(id, summary);
+    return [...merged.values()];
   }
 
-  async evict(id: string): Promise<void> {
-    this.pendingMap.delete(id);
-    await this.flushing;
-    this.pendingMap.delete(id);
-  }
-
-  async drain(): Promise<void> {
-    this.timer.cancel();
-    while (this.pendingMap.size > 0) {
-      const before = this.pendingMap.size;
-      await this.flush();
-      if (this.pendingMap.size >= before) {
-        this.log.warn('session index mirror drain made no progress; leaving the rest dirty', {
-          pending: this.pendingMap.size,
+  async readConsistently<T>(read: () => Promise<T>): Promise<T> {
+    for (let attempt = 1; ; attempt += 1) {
+      await this.writeQueue;
+      const writes = this.writes;
+      const value = await read();
+      if (writes % 2 === 0 && writes === this.writes) return value;
+      if (attempt === CONSISTENT_READ_ATTEMPTS) {
+        this.log.debug('session index mirror writes overlapped every consistent read attempt', {
+          attempts: attempt,
         });
-        return;
+        return value;
       }
     }
   }
 
+  runExclusive<T>(work: () => Promise<T>): Promise<T> {
+    return this.serialize(async () => {
+      this.writes += 1;
+      try {
+        return await work();
+      } finally {
+        this.writes += 1;
+      }
+    });
+  }
+
+  retainFlushes(): IDisposable {
+    this.retainers += 1;
+    let released = false;
+    return toDisposable(() => {
+      if (released) return;
+      released = true;
+      this.retainers -= 1;
+      if (this.retainers > 0) return;
+      this.retentionReleases += 1;
+      for (const [id, summary] of this.retained) {
+        if (!this.pendingMap.has(id)) this.pendingMap.set(id, summary);
+      }
+      this.retained.clear();
+      if (this.pendingMap.size > 0 && !this.disposed) void this.flush();
+    });
+  }
+
+  async evict(id: string): Promise<void> {
+    this.pendingMap.delete(id);
+    this.retained.delete(id);
+    await this.flushing;
+    this.pendingMap.delete(id);
+    this.retained.delete(id);
+  }
+
+  async drain(): Promise<void> {
+    this.timer.cancel();
+    let supersededRounds = 0;
+    while (this.pendingMap.size > 0) {
+      const before = this.pendingMap.size;
+      const supersededBefore = this.supersededChunks;
+      await this.flush();
+      if (this.pendingMap.size < before) {
+        supersededRounds = 0;
+        continue;
+      }
+      if (this.supersededChunks !== supersededBefore && supersededRounds < MAX_SUPERSEDED_DRAIN_ROUNDS) {
+        supersededRounds += 1;
+        continue;
+      }
+      this.log.warn('session index mirror drain made no progress; leaving the rest dirty', {
+        pending: this.pendingMap.size,
+      });
+      return;
+    }
+  }
+
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.writeQueue.then(work);
+    this.writeQueue = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
   private flush(): Promise<void> {
-    this.flushing ??= this.flushChunk().finally(() => {
+    this.flushing ??= this.serialize(() => this.flushChunk()).finally(() => {
       this.flushing = undefined;
       if (this.pendingMap.size > 0 && this.consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
         this.timer.cancelAndSet(() => void this.flush(), FLUSH_INTERVAL_MS);
@@ -131,6 +205,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   private async flushChunk(): Promise<void> {
     const chunk = [...this.pendingMap.entries()].slice(0, FLUSH_BATCH_SIZE);
     if (chunk.length === 0) return;
+    const releasesAtStart = this.retentionReleases;
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       if (manifest === undefined) {
@@ -169,7 +244,10 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
           kind: 'put' as const,
           collection,
           key: id,
-          value: withRecencyField(manifest.seq, summary),
+          value: withRecencyField(manifest.seq, {
+            ...summary,
+            cwd: sessionWorkDir(summary, manifest.workspacePrimaries?.[summary.workspaceId]),
+          }),
           columns: { [recencyColumn(manifest.seq)]: summary.updatedAt },
         })),
         ...[...deltas.entries()].map(([workspaceId, delta]) => ({
@@ -179,9 +257,21 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
           value: addSessionCounts(current.get(workspaceId), delta),
         })),
       ];
-      await this.queryStore.batch(ops);
-      for (const [id, summary] of chunk) {
-        if (this.pendingMap.get(id) === summary) this.pendingMap.delete(id);
+      this.writes += 1;
+      try {
+        await this.queryStore.batch(ops);
+        const published = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+        if (published?.seq === manifest.seq && this.retentionReleases === releasesAtStart) {
+          for (const [id, summary] of chunk) {
+            if (this.pendingMap.get(id) !== summary) continue;
+            this.pendingMap.delete(id);
+            if (this.retainers > 0) this.retained.set(id, summary);
+          }
+        } else {
+          this.supersededChunks += 1;
+        }
+      } finally {
+        this.writes += 1;
       }
       if (this.consecutiveFailures > 0) {
         this.log.info('session index mirror flush recovered', {

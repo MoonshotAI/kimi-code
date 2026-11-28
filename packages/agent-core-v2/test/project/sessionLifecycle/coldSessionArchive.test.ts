@@ -6,10 +6,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
-import type { ILogService } from '#/_base/log/log';
+import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
+import { IProjectService } from '#/app/project/project';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
 import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
@@ -31,6 +32,8 @@ import type { SessionCreatedEvent } from '#/project/sessionLifecycle/sessionLife
 import type { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
 import type { ProjectInstance } from '#/project/projectInstance/projectInstance';
 import type { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
+
+import { stubLog } from '../../_base/log/stubs';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -57,6 +60,9 @@ const summary: SessionSummary = {
 interface ColdPathOptions {
   readonly storeGet: (scope: string, key: string) => Promise<SessionMeta | undefined>;
   readonly indexSummary?: SessionSummary;
+  readonly projectRoot?: string;
+  readonly projectError?: Error;
+  readonly onWarn?: (message: string) => void;
   readonly onMirrorRecord?: (recorded: SessionSummary) => void;
   readonly onStoreSet?: (scope: string, key: string, value: unknown) => void;
   readonly onStoreDelete?: (scope: string, key: string) => void;
@@ -80,6 +86,15 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
       },
     ],
     [ISessionIndex, { get: async () => options.indexSummary ?? summary }],
+    [
+      IProjectService,
+      {
+        get: async () => {
+          if (options.projectError !== undefined) throw options.projectError;
+          return options.projectRoot === undefined ? undefined : { root: options.projectRoot };
+        },
+      },
+    ],
     [IBootstrapService, { scope: () => 'sessions' }],
     [
       IAtomicDocumentStore,
@@ -99,6 +114,7 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
     ],
     [IEventService, { publish: () => {} }],
     [ISessionLockService, new InMemorySessionLockService()],
+    [ILogService, { ...stubLog(), warn: (message: string) => options.onWarn?.(message) }],
   ]);
 }
 
@@ -155,6 +171,55 @@ describe('setSessionArchivedBatch', () => {
       archived: true,
     });
     expect(typeof recorded[0]?.archivedAt).toBe('number');
+  });
+
+  it.each([
+    { placement: 'follows the project primary', meta: { cwd: '/old' }, cwd: '/new' },
+    {
+      placement: 'is pinned to its own directory',
+      meta: { cwd: '/old', environmentCwd: '/pinned' },
+      cwd: '/pinned',
+    },
+    {
+      placement: 'runs in a remote environment',
+      meta: { cwd: '/remote', environmentId: 'devbox' },
+      cwd: '/remote',
+    },
+  ])('mirrors the working directory of a session that $placement', async ({ meta, cwd }) => {
+    const recorded: SessionSummary[] = [];
+    const outcomes = await setSessionArchivedBatch(
+      coldPathAccessor({
+        indexSummary: { ...summary, cwd: '/old' },
+        projectRoot: '/new',
+        storeGet: async () => ({ id: 's1', createdAt: 1, updatedAt: 2, archived: false, ...meta }),
+        onMirrorRecord: (r) => recorded.push(r),
+      }),
+      ['s1'],
+      true,
+    );
+    expect(outcomes).toEqual([{ id: 's1', ok: true }]);
+    expect(recorded.map((r) => r.cwd)).toEqual([cwd]);
+  });
+
+  it('archives and mirrors the stored working directory with a warning when its project cannot be read', async () => {
+    const recorded: SessionSummary[] = [];
+    const written: unknown[] = [];
+    const warnings: string[] = [];
+    const outcomes = await setSessionArchivedBatch(
+      coldPathAccessor({
+        projectError: new Error('catalog unreadable'),
+        storeGet: async () => ({ id: 's1', cwd: '/old', createdAt: 1, updatedAt: 2, archived: false }),
+        onMirrorRecord: (r) => recorded.push(r),
+        onStoreSet: (_scope, _key, value) => written.push(value),
+        onWarn: (message) => warnings.push(message),
+      }),
+      ['s1'],
+      true,
+    );
+    expect(outcomes).toEqual([{ id: 's1', ok: true }]);
+    expect(written).toHaveLength(1);
+    expect(recorded.map((r) => ({ cwd: r.cwd, archived: r.archived }))).toEqual([{ cwd: '/old', archived: true }]);
+    expect(warnings).toEqual(['cold session archive could not read the project; mirroring the stored cwd']);
   });
 
   it('normalizes legacy v1 metadata before persisting and mirroring', async () => {

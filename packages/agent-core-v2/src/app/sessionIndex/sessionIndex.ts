@@ -1,4 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Page } from '#/persistence/interface/queryStore';
 
 export const PARENT_SESSION_ID_KEY = 'parent_session_id';
@@ -66,6 +67,9 @@ export interface ISessionIndexMirror {
 
   record(summary: SessionSummary): void;
   pending(): readonly SessionSummary[];
+  readConsistently<T>(read: () => Promise<T>): Promise<T>;
+  runExclusive<T>(work: () => Promise<T>): Promise<T>;
+  retainFlushes(): IDisposable;
   evict(id: string): Promise<void>;
   drain(): Promise<void>;
 }

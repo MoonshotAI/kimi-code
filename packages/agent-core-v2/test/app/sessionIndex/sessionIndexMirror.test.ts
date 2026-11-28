@@ -2,7 +2,8 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { deferred } from '@moonshot-ai/testkit/fixtures';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -107,6 +108,111 @@ describe('SessionIndexMirror', () => {
     return mirror;
   }
 
+  it('runs exclusive work only after the flush in flight has written', async () => {
+    build();
+    await publishGeneration();
+    const entered = deferred();
+    const release = deferred();
+    let flushed = false;
+    const batch = queryStore.batch.bind(queryStore);
+    vi.spyOn(queryStore, 'batch').mockImplementation(async (ops) => {
+      entered.resolve();
+      await release.promise;
+      await batch(ops);
+      flushed = true;
+    });
+
+    mirror.record(summary('a'));
+    const draining = mirror.drain();
+    await entered.promise;
+    const sawFlush = mirror.runExclusive(async () => flushed);
+    release.resolve();
+
+    await expect(sawFlush).resolves.toBe(true);
+    await draining;
+  });
+
+  it('rereads a consistent value when exclusive work writes during the read', async () => {
+    build();
+    await publishGeneration();
+    let reads = 0;
+
+    const value = await mirror.readConsistently(async () => {
+      reads += 1;
+      if (reads === 1) await mirror.runExclusive(async () => {});
+      return reads;
+    });
+
+    expect(value).toBe(2);
+  });
+
+  it('reads only after the exclusive work in progress has finished', async () => {
+    build();
+    await publishGeneration();
+    const started = deferred();
+    let working = true;
+    const exclusive = mirror.runExclusive(async () => {
+      started.resolve();
+      await fsp.readdir(homeDir);
+      working = false;
+    });
+    await started.promise;
+
+    const readWhileWorking = await mirror.readConsistently(async () => working);
+
+    expect(readWhileWorking).toBe(false);
+    await exclusive;
+  });
+
+  it.each<{
+    placement: string;
+    primaries?: Record<string, string>;
+    recorded: Record<string, unknown>;
+    cwd: string;
+  }>([
+    {
+      placement: 'that follows the project primary',
+      primaries: { [WORKSPACE]: '/new' },
+      recorded: { cwd: '/old' },
+      cwd: '/new',
+    },
+    {
+      placement: 'pinned to its own directory',
+      primaries: { [WORKSPACE]: '/new' },
+      recorded: { cwd: '/old', environmentCwd: '/pinned' },
+      cwd: '/pinned',
+    },
+    {
+      placement: 'in a remote environment',
+      primaries: { [WORKSPACE]: '/new' },
+      recorded: { cwd: '/remote', environmentId: 'devbox' },
+      cwd: '/remote',
+    },
+    {
+      placement: 'whose project the generation has no primary for',
+      primaries: {},
+      recorded: { cwd: '/fresh' },
+      cwd: '/fresh',
+    },
+    {
+      placement: 'when the generation records no primaries',
+      recorded: { cwd: '/fresh' },
+      cwd: '/fresh',
+    },
+  ])('writes the working directory of a session $placement under the primaries of the generation', async ({ primaries, recorded, cwd }) => {
+    build();
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
+      seq: GENERATION,
+      workspacePrimaries: primaries,
+    });
+
+    mirror.record(summary('a', recorded));
+    await mirror.drain();
+
+    const stored = await queryStore.getMany<{ cwd?: string }>(sessionCollection(GENERATION), ['a']);
+    expect(stored.get('a')?.cwd).toBe(cwd);
+  });
+
   it('coalesces updates per session and drains summaries with counters', async () => {
     build();
     await publishGeneration();
@@ -131,6 +237,157 @@ describe('SessionIndexMirror', () => {
       [WORKSPACE],
     );
     expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 1 });
+  });
+
+  it('keeps a summary flushed while flushes are retained visible and writes it into the generation published afterwards', async () => {
+    build();
+    await publishGeneration();
+
+    const retention = mirror.retainFlushes();
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+    expect(mirror.pending().map((s) => s.id)).toEqual(['a']);
+    expect((await queryStore.getMany(sessionCollection(GENERATION), ['a'])).has('a')).toBe(true);
+
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+    retention.dispose();
+    await mirror.drain();
+
+    expect(mirror.pending()).toEqual([]);
+    const stored = await queryStore.getMany<{ updatedAt: number }>(sessionCollection(GENERATION + 1), ['a']);
+    expect(stored.get('a')).toMatchObject({ updatedAt: 5 });
+    const counters = await queryStore.getMany<SessionProjectCounts>(
+      sessionCountersCollection(GENERATION + 1),
+      [WORKSPACE],
+    );
+    expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 0 });
+  });
+
+  it('does not write back a retained summary that was evicted before the retention ends', async () => {
+    build();
+    await publishGeneration();
+
+    const retention = mirror.retainFlushes();
+    mirror.record(summary('a'));
+    await mirror.drain();
+    await mirror.evict('a');
+    expect(mirror.pending()).toEqual([]);
+
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+    retention.dispose();
+    await mirror.drain();
+
+    expect((await queryStore.getMany(sessionCollection(GENERATION + 1), ['a'])).has('a')).toBe(false);
+  });
+
+  it('keeps a summary pending when a new generation is published while it is being flushed', async () => {
+    build();
+    await publishGeneration();
+    const batch = queryStore.batch.bind(queryStore);
+    let republished = false;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      if (republished) return;
+      republished = true;
+      await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+    };
+
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+
+    expect(mirror.pending()).toEqual([]);
+    const stored = await queryStore.getMany<{ updatedAt: number }>(sessionCollection(GENERATION + 1), ['a']);
+    expect(stored.get('a')).toMatchObject({ updatedAt: 5 });
+    const counters = await queryStore.getMany<SessionProjectCounts>(
+      sessionCountersCollection(GENERATION + 1),
+      [WORKSPACE],
+    );
+    expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 0 });
+  });
+
+  it('keeps a written summary pending when the manifest cannot be read back after the flush', async () => {
+    build();
+    await publishGeneration();
+    const batch = queryStore.batch.bind(queryStore);
+    const getCheckpoint = queryStore.getCheckpoint.bind(queryStore);
+    let failReadBack = true;
+    let batchLanded = false;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      batchLanded = true;
+    };
+    queryStore.getCheckpoint = async (source) => {
+      if (batchLanded && failReadBack) {
+        failReadBack = false;
+        throw new Error('injected checkpoint read failure');
+      }
+      return getCheckpoint(source);
+    };
+
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+    expect(mirror.pending().map((s) => s.id)).toEqual(['a']);
+
+    await mirror.drain();
+    expect(mirror.pending()).toEqual([]);
+    const counters = await queryStore.getMany<SessionProjectCounts>(
+      sessionCountersCollection(GENERATION),
+      [WORKSPACE],
+    );
+    expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 0 });
+  });
+
+  it('stops draining when every flush keeps landing in a generation that was just replaced', async () => {
+    build();
+    await publishGeneration();
+    const batch = queryStore.batch.bind(queryStore);
+    const getCheckpoint = queryStore.getCheckpoint.bind(queryStore);
+    let batches = 0;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      batches += 1;
+    };
+    let reads = 0;
+    queryStore.getCheckpoint = async (source) => {
+      const checkpoint = await getCheckpoint(source);
+      reads += 1;
+      return reads % 2 === 0 && checkpoint !== undefined ? { ...checkpoint, seq: checkpoint.seq + 1 } : checkpoint;
+    };
+
+    mirror.record(summary('a'));
+    await mirror.drain();
+
+    expect(mirror.pending().map((s) => s.id)).toEqual(['a']);
+    expect(batches).toBe(4);
+  });
+
+  it('keeps a summary pending when the retention ends while its flush is finishing', async () => {
+    build();
+    await publishGeneration();
+    const retention = mirror.retainFlushes();
+    const batch = queryStore.batch.bind(queryStore);
+    const getCheckpoint = queryStore.getCheckpoint.bind(queryStore);
+    let batchLanded = false;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      batchLanded = true;
+    };
+    queryStore.getCheckpoint = async (source) => {
+      const value = await getCheckpoint(source);
+      if (batchLanded) {
+        batchLanded = false;
+        await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+        retention.dispose();
+      }
+      return value;
+    };
+
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+
+    expect(mirror.pending()).toEqual([]);
+    const stored = await queryStore.getMany<{ updatedAt: number }>(sessionCollection(GENERATION + 1), ['a']);
+    expect(stored.get('a')).toMatchObject({ updatedAt: 5 });
   });
 
   it('tracks archive transitions against the stored summary', async () => {

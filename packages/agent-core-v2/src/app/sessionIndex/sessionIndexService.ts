@@ -50,7 +50,7 @@ import {
   stripRecencyField,
   type SessionProjectCounts,
 } from './sessionIndexModel';
-import { SessionIndexProjector, type ReconcileResult } from './sessionIndexProjector';
+import { SessionIndexProjector, type ProjectionResult, type ReconcileResult } from './sessionIndexProjector';
 import {
   listSessionIds,
   listProjectIds,
@@ -62,6 +62,7 @@ const RECONCILE_INTERVAL_MS = 60_000;
 const DEGRADED_RETRY_MS = 5_000;
 const SCHEMA_MISMATCH_REASON = 'schema mismatch';
 const TIE_REPAIR_LIMIT = 1_000;
+const MAX_PROJECTION_ROUNDS = 3;
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
 function canonicalOrder(a: SessionSummary, b: SessionSummary): number {
@@ -277,7 +278,31 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async runProjection(): Promise<void> {
+    for (let round = 1; ; round += 1) {
+      const projected = await this.publishNextGeneration();
+      if (projected === undefined) return;
+      try {
+        if (samePrimaryByProject(projected.primaryByWorkspace, await this.primaryByWorkspace())) return;
+      } catch (error) {
+        this.log.warn('session index could not reread the project primaries after a projection; the reconcile loop will retry', {
+          generation: projected.generation,
+          error: String(error),
+        });
+        return;
+      }
+      if (round === MAX_PROJECTION_ROUNDS) {
+        this.log.warn('session index project primaries kept changing during projections; the reconcile loop will retry', {
+          generation: projected.generation,
+          rounds: round,
+        });
+        return;
+      }
+    }
+  }
+
+  private async publishNextGeneration(): Promise<ProjectionResult | undefined> {
     const startedAt = Date.now();
+    const retention = this.mirror.retainFlushes();
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       const next = (manifest?.seq ?? 0) + 1;
@@ -289,6 +314,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
         session_count: result.sessions,
         generation: result.generation,
       });
+      return result;
     } catch (error) {
       const published = await this.queryStore
         .getCheckpoint(SESSION_INDEX_MANIFEST)
@@ -303,6 +329,9 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       } else {
         this.markDegraded('projection failed', error);
       }
+      return undefined;
+    } finally {
+      retention.dispose();
     }
   }
 
@@ -315,7 +344,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async reconcile(generation: number): Promise<void> {
-    const run = () => this.projector.reconcile(generation);
+    const run = () => this.mirror.runExclusive(() => this.projector.reconcile(generation));
     const flight = this.reconcileFlight?.then(run, run) ?? run();
     this.reconcileFlight = flight;
     try {
@@ -431,7 +460,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   async count(query: SessionCountQuery): Promise<number> {
     return this.withReadModel(
-      (generation) => this.countFromReadModel(generation, query),
+      (generation) => this.mirror.readConsistently(() => this.countFromReadModel(generation, query)),
       () => this.countLegacy(query),
     );
   }
@@ -578,9 +607,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async countFromReadModel(
-    generation: number,
+    resolvedGeneration: number,
     query: SessionCountQuery,
   ): Promise<number> {
+    const generation =
+      (await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST))?.seq ?? resolvedGeneration;
     const counters = sessionCountersCollection(generation);
     const restricted = query.workspaceIds;
     const workspaceIds = restricted ?? (await this.queryStore.listKeys(counters));
