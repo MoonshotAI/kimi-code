@@ -6,8 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 interface PlacementReport {
   scaleFactor: number;
-  displayBounds: Electron.Rectangle;
-  after: Electron.Rectangle;
+  contentBounds: Electron.Rectangle;
   monitor: Electron.Rectangle;
   placed: Electron.Rectangle;
   visible: Electron.Rectangle;
@@ -22,10 +21,11 @@ describe.runIf(process.platform === 'win32')('Windows screenshot overlay placeme
       timeout: 45_000, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
     });
     const report = JSON.parse(stdout.trim().split('\n').at(-1)!) as PlacementReport;
+    const dip = (pixels: number) => Math.ceil(pixels / report.scaleFactor);
     expect(report.scaleFactor).toBeCloseTo(Number(scale), 4);
     expect(report.placed).toEqual(report.monitor);
     expect(report.visible).toEqual(report.monitor);
-    expect(report.after).toEqual(report.displayBounds);
+    expect(report.contentBounds).toEqual({ x: 0, y: 0, width: dip(report.monitor.width), height: dip(report.monitor.height) });
     expect(report.thumbnail).toEqual({ width: report.monitor.width, height: report.monitor.height });
   }, 60_000);
 });

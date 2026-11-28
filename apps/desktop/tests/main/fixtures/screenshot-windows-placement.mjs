@@ -47,8 +47,7 @@ void app.whenReady().then(async () => {
     const source = sources.find((item) => item.display_id === String(display.id)) ?? (sources.length === 1 ? sources[0] : undefined);
     console.log(JSON.stringify({
       scaleFactor: display.scaleFactor,
-      displayBounds: display.bounds,
-      after: overlay.getContentBounds(),
+      contentBounds: overlay.getContentBounds(),
       monitor: configured.monitor,
       placed: placed.window,
       visible: visible.window,
