@@ -44,7 +44,7 @@ const DENY_KIMI_EXACT = new Set([
   'KIMI_PLUGIN_ROOT',
   'KIMI_WSL_CLIPBOARD_IMAGE_PATH',
 ]);
-const DENY_KIMI_PATTERN = [/^KIMI_MODEL_/, /_API_KEY$/];
+const DENY_KIMI_PATTERN = [/^KIMI_MODEL_/, /^KIMI_CODE_EXPERIMENTAL_/, /_API_KEY$/];
 
 function isDenied(key: string): boolean {
   if (DENY_EXACT.has(key) || DENY_PREFIX.some((re) => re.test(key))) return true;

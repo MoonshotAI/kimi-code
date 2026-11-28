@@ -103,6 +103,35 @@ export async function registerApiV1Routes(
           await core.accessor.get(IConfigService).ready;
           return core.accessor.get(IFlagService).snapshot();
         },
+        getExperimentalBeta: async () => {
+          await core.accessor.get(IConfigService).ready;
+          const beta = core.accessor.get(IFlagService).betaState();
+          return {
+            profile: beta.profile,
+            enabled: beta.enabled,
+            source: beta.source,
+            env: beta.env,
+            ...(beta.configValue !== undefined ? { config_value: beta.configValue } : {}),
+          };
+        },
+        getExperimentalFeatures: async () => {
+          await core.accessor.get(IConfigService).ready;
+          return core.accessor
+            .get(IFlagService)
+            .explainAll()
+            .map((feature) => ({
+              id: feature.id,
+              title: feature.title,
+              description: feature.description,
+              stage: feature.stage,
+              effect_timing: feature.effectTiming,
+              env: feature.env,
+              enabled: feature.enabled,
+              active: feature.active,
+              source: feature.source,
+              ...(feature.configValue !== undefined ? { config_value: feature.configValue } : {}),
+            }));
+        },
         getFeatures: () =>
           core.accessor
             .get(IFeatureManager)

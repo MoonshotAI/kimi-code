@@ -18,6 +18,7 @@ export interface AgentToolContributionOptions {
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;
   readonly when?: (accessor: ServicesAccessor) => boolean;
+  readonly reconcileOnFlagChange?: boolean;
   readonly requiredEnvironmentCapabilities?: readonly EnvironmentCapability[];
   readonly domain?: string;
 }

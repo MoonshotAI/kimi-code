@@ -2688,11 +2688,26 @@
                       "type": "boolean"
                     },
                     "experimental": {
-                      "additionalProperties": {
-                        "type": "boolean"
-                      },
-                      "propertyNames": {
-                        "type": "string"
+                      "additionalProperties": false,
+                      "properties": {
+                        "cli": {
+                          "additionalProperties": {
+                            "type": "boolean"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "desktop": {
+                          "additionalProperties": {
+                            "type": "boolean"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        }
                       },
                       "type": "object"
                     },

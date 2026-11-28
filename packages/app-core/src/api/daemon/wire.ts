@@ -501,7 +501,10 @@ export interface WireConfig {
   extra_skill_dirs?: string[];
   loop_control?: unknown;
   background?: unknown;
-  experimental?: Record<string, boolean>;
+  experimental?: {
+    cli?: Record<string, boolean>;
+    desktop?: Record<string, boolean>;
+  };
   telemetry?: boolean;
   disable_feedback_survey?: boolean;
   raw?: Record<string, unknown>;

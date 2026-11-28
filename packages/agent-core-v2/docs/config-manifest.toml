@@ -153,7 +153,8 @@ default_plan_mode = false
 # ##########################################################################
 
 [experimental]
-# <name>: boolean
+# cli: record<string, boolean>
+# desktop: record<string, boolean>
 
 # ##########################################################################
 # extraAgentDirs (config.toml: extra_agent_dirs)

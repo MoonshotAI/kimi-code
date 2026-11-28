@@ -338,7 +338,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   baselineTools(): readonly Tool[] {
-    return this.loop?.state.profile.tools ?? this.toolSelect.initialTools();
+    const live = this.loop?.state.profile.tools;
+    if (live !== undefined) return live;
+    const restored = this.journal.snapshot().input.profile?.tools;
+    return restored === undefined ? this.toolSelect.initialTools() : restored;
   }
 
   private get toolSelect(): IAgentToolSelectService {
@@ -571,26 +574,29 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
-      let tools: readonly Tool[];
-      if (initialTools === undefined) {
-        const waitMs =
-          this.config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs ?? DEFAULT_MCP_STARTUP_WAIT_MS;
-        if (waitMs > 0) {
-          const ready = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMcpHandle).ready);
-          const deadline = timeoutOutcome(waitMs, undefined);
-          try {
-            await Promise.race([ready, deadline]);
-          } finally {
-            deadline.clear();
-          }
+      const waitMs =
+        this.config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs ?? DEFAULT_MCP_STARTUP_WAIT_MS;
+      if (waitMs > 0) {
+        const ready = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMcpHandle).ready);
+        const deadline = timeoutOutcome(waitMs, undefined);
+        try {
+          await Promise.race([ready, deadline]);
+        } finally {
+          deadline.clear();
         }
+      }
+      let tools: readonly Tool[];
+      const restoredTools = snapshot.input.profile?.tools;
+      if (initialTools !== undefined) {
+        tools = [...initialTools];
+      } else if (restoredTools !== undefined) {
+        tools = [...restoredTools];
+      } else {
         // Non-negotiable product decision: a new loop freezes its top-level tool baseline once,
         // after waiting at most startup_wait_ms for initial MCP discovery. Tools of servers that
         // are still connecting at the deadline stay out of the baseline (without cancelling the
         // connection); they are only announced later and are never appended to top-level tools.
         tools = this.toolSelect.initialTools();
-      } else {
-        tools = [...initialTools];
       }
       const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
       await taskHistory.reconcile();
@@ -608,6 +614,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       const pendingWork = (snapshot.input.inbox?.normal?.length ?? 0) + (snapshot.input.inbox?.notify?.length ?? 0);
       if (lease === undefined && (completions.length > 0 || pendingWork > 0)) lease = this.runGate.acquire();
       this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
+      if (initialTools !== undefined) this.journal.settleTools(tools);
       await this.taskReconciliation;
     } finally {
       lease?.release();
@@ -1097,7 +1104,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       id: pending.entry.attributes?.promptId,
       origin: pending.entry.attributes?.origin as PromptOrigin | undefined,
     };
-    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], block: false };
+    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], signal, block: false };
     try {
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };

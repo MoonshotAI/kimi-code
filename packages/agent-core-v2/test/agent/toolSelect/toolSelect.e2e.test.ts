@@ -18,6 +18,8 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { IConfigService } from '#/app/config/config';
+import { MCP_SECTION } from '#/app/mcpConfig/configSection';
 import '#/agent/tools/select-tools/selectToolsTool';
 
 import {
@@ -892,4 +894,169 @@ describe('deferred tool argument correction', () => {
       registration.dispose();
     }
   });
+});
+
+const restoreMcpTest = it.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+describe('MCP startup reconciliation on session restore', () => {
+  const ECHO = 'mcp__srv__echo';
+
+  async function seedPersistedSession(
+    model: TestkitAgentFixtures['model'],
+    server: { readonly url: string },
+    deferred: boolean,
+  ): Promise<InMemoryWireRecordPersistence> {
+    const manager = new McpConnectionManager();
+    const ctx = createTestAgent(mcpServices({ manager }), { model });
+    try {
+      ctx.get(IAgentToolSelectService);
+      ctx.get(IAgentToolSelectAnnouncementsService);
+      ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+      await ctx.restorePersisted();
+      await manager.connectAll({ srv: { transport: 'http', url: server.url, deferred } });
+      model.script(say('seed'));
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'seed' }] });
+      await ctx.untilTurnEnd();
+      return new InMemoryWireRecordPersistence(await ctx.persistedWireRecords());
+    } finally {
+      await ctx.dispose();
+      await manager.shutdown();
+    }
+  }
+
+  restoreMcpTest.for([false, true] as const)(
+    'waits for initial MCP within the startup budget before the first resumed request (deferred=%s)',
+    async (deferred, { model }) => {
+      let holdInitialize = false;
+      const initializeStarted = createControlledPromise<void>();
+      const releaseInitialize = createControlledPromise<void>();
+      const server = await startEchoHttpMcpServer({
+        intercept: async (request) => {
+          if (!holdInitialize || !request.rpcMethods.includes('initialize')) return undefined;
+          initializeStarted.resolve();
+          await releaseInitialize;
+          return undefined;
+        },
+      });
+      let manager: McpConnectionManager | undefined;
+      let resumed: TestAgentContext | undefined;
+      try {
+        const persistence = await seedPersistedSession(model, server, deferred);
+        expect(model.requests('main')).toHaveLength(1);
+        holdInitialize = true;
+        const nextManager = new McpConnectionManager();
+        manager = nextManager;
+        resumed = createTestAgent(
+          wireRecordPersistenceServices(persistence),
+          sessionService(ISessionMcpHandle, {
+            _serviceBrand: undefined,
+            get ready() {
+              return nextManager.waitForInitialLoad();
+            },
+            connectionManager: nextManager,
+            isBaselineServer: () => true,
+          }),
+          { model },
+        );
+        resumed.get(IAgentToolSelectService);
+        resumed.get(IAgentToolSelectAnnouncementsService);
+        resumed.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+        const connecting = nextManager.connectAll({ srv: { transport: 'http', url: server.url, deferred } });
+        await initializeStarted;
+        expect(nextManager.get('srv')?.status).toBe('pending');
+
+        model.script(say('resumed'));
+        const prompted = resumed.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+        expect(nextManager.get('srv')?.status).toBe('pending');
+        expect(model.requests('main')).toHaveLength(1);
+
+        releaseInitialize.resolve();
+        await connecting;
+        await prompted;
+        await resumed.untilTurnEnd();
+
+        expect(model.requests('main')).toHaveLength(2);
+        const state = resumed.get(IAgentStateService).get(toolSelectKey);
+        expect(state.current.some((tool) => tool.name === ECHO)).toBe(true);
+        expect(state.changes.flatMap((change) => change.removed.map((tool) => tool.name))).not.toContain(ECHO);
+      } finally {
+        releaseInitialize.resolve();
+        if (resumed !== undefined) await resumed.dispose();
+        if (manager !== undefined) await manager.shutdown();
+        await server.close();
+      }
+    },
+  );
+
+  restoreMcpTest.for(['connects-without-tool', 'fails'] as const)(
+    'keeps restored MCP tools while their server is pending past the startup wait and removes them once settled (%s)',
+    async (outcome, { model }) => {
+      let holdInitialize = false;
+      let failInitialize = false;
+      const initializeStarted = createControlledPromise<void>();
+      const releaseInitialize = createControlledPromise<void>();
+      const server = await startEchoHttpMcpServer({
+        intercept: async (request) => {
+          if (failInitialize) return { status: 403, json: { error: 'startup rejected' } };
+          if (!holdInitialize || !request.rpcMethods.includes('initialize')) return undefined;
+          initializeStarted.resolve();
+          await releaseInitialize;
+          return failInitialize ? { status: 403, json: { error: 'startup rejected' } } : undefined;
+        },
+      });
+      let manager: McpConnectionManager | undefined;
+      let resumed: TestAgentContext | undefined;
+      try {
+        const persistence = await seedPersistedSession(model, server, true);
+        holdInitialize = true;
+        const nextManager = new McpConnectionManager();
+        manager = nextManager;
+        resumed = createTestAgent(
+          wireRecordPersistenceServices(persistence),
+          sessionService(ISessionMcpHandle, {
+            _serviceBrand: undefined,
+            get ready() {
+              return nextManager.waitForInitialLoad();
+            },
+            connectionManager: nextManager,
+            isBaselineServer: () => true,
+          }),
+          { model },
+        );
+        resumed.get(IAgentToolSelectService);
+        resumed.get(IAgentToolSelectAnnouncementsService);
+        resumed.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+        await resumed.get(IConfigService).set(MCP_SECTION, { startupWaitMs: 0 });
+        const connecting = nextManager.connectAll({ srv: { transport: 'http', url: server.url, deferred: true } });
+        await initializeStarted;
+        expect(nextManager.get('srv')?.status).toBe('pending');
+
+        model.script(say('while pending'));
+        await resumed.rpc.prompt({ input: [{ type: 'text', text: 'continue while pending' }] });
+        await resumed.untilTurnEnd();
+        expect(nextManager.get('srv')?.status).toBe('pending');
+        const pendingState = resumed.get(IAgentStateService).get(toolSelectKey);
+        expect(pendingState.current.some((tool) => tool.name === ECHO)).toBe(true);
+        expect(pendingState.changes.flatMap((change) => change.removed.map((tool) => tool.name))).not.toContain(ECHO);
+
+        if (outcome === 'connects-without-tool') server.removeTool('echo');
+        else failInitialize = true;
+        releaseInitialize.resolve();
+        await connecting;
+        expect(nextManager.get('srv')?.status).toBe(outcome === 'fails' ? 'failed' : 'connected');
+
+        model.script(say('after settle'));
+        await resumed.rpc.prompt({ input: [{ type: 'text', text: 'continue after settle' }] });
+        await resumed.untilTurnEnd();
+        const settledState = resumed.get(IAgentStateService).get(toolSelectKey);
+        expect(settledState.current.some((tool) => tool.name === ECHO)).toBe(false);
+        expect(settledState.changes.flatMap((change) => change.removed.map((tool) => tool.name))).toContain(ECHO);
+      } finally {
+        releaseInitialize.resolve();
+        if (resumed !== undefined) await resumed.dispose();
+        if (manager !== undefined) await manager.shutdown();
+        await server.close();
+      }
+    },
+  );
 });

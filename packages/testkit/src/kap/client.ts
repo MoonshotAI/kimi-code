@@ -2,7 +2,7 @@ import { TestkitError, WaitTimeoutError } from '#/errors';
 import { TIMEOUTS } from '#/fixtures/timeouts';
 import { sleep } from '#/fixtures/wait';
 import type { KapFrame, KapTurn } from '#/kap/frames';
-import { KapRest } from '#/kap/rest';
+import { KapRest, type KapExchange } from '#/kap/rest';
 import { KapSocket } from '#/kap/socket';
 import type {
   KapContentPart,
@@ -51,6 +51,7 @@ export class KapClient {
   private readonly sockets = new Set<KapSocket>();
   private readonly connected: KapSocket[] = [];
   private readonly created = new Set<string>();
+  private readonly exchanges: Promise<KapExchange>[] = [];
 
   constructor(endpoint: KapEndpoint, options: KapClientOptions = {}) {
     this.endpoint = endpoint;
@@ -63,6 +64,10 @@ export class KapClient {
 
   get createdSessionIds(): readonly string[] {
     return [...this.created];
+  }
+
+  restExchanges(): Promise<readonly KapExchange[]> {
+    return Promise.all(this.exchanges);
   }
 
   get origin(): string {
@@ -78,7 +83,7 @@ export class KapClient {
   }
 
   get rest(): KapRest {
-    return new KapRest(this.origin, () => this.token);
+    return new KapRest(this.origin, () => this.token, globalThis.fetch, (exchange) => this.exchanges.push(exchange));
   }
 
   async connect(): Promise<KapSocket> {

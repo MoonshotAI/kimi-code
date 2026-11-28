@@ -114,12 +114,12 @@ describe('Session.prompt events', () => {
     });
     try {
       await configureFakeProvider(harness);
-      await harness.setConfig({ experimental: { notify_user: true } });
+      await harness.setConfig({ experimental: { cli: { notify_user: true } } });
       let session = await harness.createSession({ id: 'ses_notify_continue', workDir });
       const events: Event[] = [];
       let unsubscribe = session.onEvent((event) => events.push(event));
       for (let turn = 0; turn < 3; turn++) {
-        if (turn === 1) await harness.setConfig({ experimental: { notify_user: false } });
+        if (turn === 1) await harness.setConfig({ experimental: { cli: { notify_user: false } } });
         if (turn === 2) {
           unsubscribe();
           await harness.close();

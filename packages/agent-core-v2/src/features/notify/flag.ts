@@ -7,10 +7,14 @@ export const notifyUserFlag: FlagDefinitionInput = {
   id: NOTIFY_USER_FLAG_ID,
   title: 'NotifyUser tool',
   description:
-    'Show live progress updates from the main agent and subagents: the Updates panel in the TUI and progress rows in desktop and web.',
+    'Show live progress updates from the main agent and subagents in the Updates panel.',
   env: NOTIFY_USER_FLAG_ENV,
-  default: false,
-  surface: 'core',
+  stages: {
+    tui: 'experimental',
+    desktop: 'experimental',
+    web: 'experimental',
+  },
+  effectTiming: 'next-session',
 };
 
 registerFlagDefinition(notifyUserFlag);

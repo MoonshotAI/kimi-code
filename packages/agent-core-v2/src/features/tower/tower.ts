@@ -21,6 +21,7 @@ export function hasPinnedPermissionMode(profileName: string | undefined): boolea
 }
 
 export const TOWER_FLAG_ID = 'tower';
+export const TOWER_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_TOWER';
 
 export type TowerEnterFailure =
   | {

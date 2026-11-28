@@ -4,7 +4,17 @@ import { expect, scenario } from '../../support/scenario';
 
 scenario(
   'keeps a message sent during a wait for a background command in the queue, and steering it ends the wait while the command keeps running',
-  { except: { acp: 'ACP has no way to send a message while a turn runs: the editor waits for the session/prompt answer before it sends the next one.' } },
+  {
+    config: {
+      extra: {
+        experimental: {
+          cli: { wait_for: true },
+          desktop: { wait_for: true },
+        },
+      },
+    },
+    except: { acp: 'ACP has no way to send a message while a turn runs: the editor waits for the session/prompt answer before it sends the next one.' },
+  },
   async ({ product, model, workspace }) => {
     const command = "printf 'rea%s\\n' dy; while [ ! -f gate.txt ]; do sleep 0.1; done; printf 'don%s\\n' e";
     const description = 'Run the slow build';

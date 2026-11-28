@@ -63,6 +63,10 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { registerLogServices } from '../../_base/log/stubs';
+import { IConfigService } from '#/app/config/config';
+import { stubConfigService } from '../../app/config/stubs';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
@@ -468,6 +472,13 @@ function registerSharedServices(
     IAgentReminderService,
     createReminderHarness(loop, contextMemory, eventBus),
   );
+  reg.defineInstance(IConfigService, stubConfigService());
+  reg.defineInstance(ISessionMcpHandle, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    connectionManager: new McpConnectionManager(),
+    isBaselineServer: () => true,
+  } satisfies ISessionMcpHandle);
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
   reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);

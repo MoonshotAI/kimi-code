@@ -35,6 +35,31 @@ export const metaFeatureSchema = z.object({
 
 export type MetaFeature = z.infer<typeof metaFeatureSchema>;
 
+export const metaExperimentalBetaSchema = z.object({
+  profile: z.enum(['cli', 'desktop']),
+  enabled: z.boolean(),
+  source: z.enum(['env', 'config', 'default']),
+  env: z.string().min(1),
+  config_value: z.boolean().optional(),
+});
+
+export type MetaExperimentalBeta = z.infer<typeof metaExperimentalBetaSchema>;
+
+export const metaExperimentalFeatureSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string(),
+  stage: z.enum(['experimental', 'beta', 'ga']),
+  effect_timing: z.enum(['immediate', 'next-session', 'restart']),
+  env: z.string().min(1),
+  enabled: z.boolean(),
+  active: z.boolean(),
+  source: z.enum(['env', 'master-env', 'beta-config', 'config', 'default']),
+  config_value: z.boolean().optional(),
+});
+
+export type MetaExperimentalFeature = z.infer<typeof metaExperimentalFeatureSchema>;
+
 export const metaResponseSchema = z.object({
   kimi_agent_protocol_version: z.string().min(1),
   server_version: z.string().min(1),
@@ -46,6 +71,8 @@ export const metaResponseSchema = z.object({
   open_in_apps: z.array(fsOpenInAppIdSchema),
   dangerous_bypass_auth: z.boolean(),
   experimental_flags: z.record(z.string(), z.boolean()).optional(),
+  experimental_beta: metaExperimentalBetaSchema.optional(),
+  experimental_features: z.array(metaExperimentalFeatureSchema).optional(),
   web_title: z.string().optional(),
   features: z.array(metaFeatureSchema).optional(),
 });

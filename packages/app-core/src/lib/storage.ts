@@ -66,6 +66,7 @@ export const STORAGE_KEYS = {
   contextInspector: 'kimi-web.context-inspector',
   browserTabTitle: 'kimi-web.browser-tab-title',
   sessionMentions: 'kimi-web.session-mentions',
+  sidebarMultiTab: 'kimi-web.sidebar-multi-tab',
 } as const;
 
 export const NEW_SESSION_SCOPE = '__new__';

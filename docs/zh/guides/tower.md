@@ -26,20 +26,20 @@ Tower 是一种实验性多 Agent 协作模式。它把较大的开发任务拆�
 
 Tower 默认关闭，可以通过以下方式启用实验功能。
 
-如需长期启用，在 `config.toml`（默认位于 `~/.kimi-code/config.toml`，详见 [配置文件](../configuration/config-files.md)）中加入：
+如需长期启用，在 `config.toml`（默认位于 `~/.kimi-code/config.toml`——`kimi` / `kimi web` 使用 `[experimental.cli]`，桌面端使用 `[experimental.desktop]`，详见 [配置文件](../configuration/config-files.md#experimental)）中加入：
 
 ```toml
-[experimental]
+[experimental.cli]
 tower = true
 ```
 
-也可以在 `/experiments` 中启用 **Tower mode** 并应用修改，效果相同。若只想在当前进程中启用，可在启动前设置环境变量：
+也可以在 `/lab` 中启用 **Tower mode** 并应用修改，效果相同。若只想在当前进程中启用，可在启动前设置环境变量：
 
 ```sh
 KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi
 ```
 
-环境变量必须在启动前设置。运行过程中修改 `/experiments` 或 `config.toml` 后，需要重启 Kimi Code，因为 Tower 的工具和 worker profile 只在进程启动时加载。启用实验功能后，`/tower` 才会出现在命令列表中。
+环境变量必须在启动前设置。运行过程中修改 `/lab` 或 `config.toml` 后，需要重启 Kimi Code，因为 Tower 的工具和 worker profile 只在进程启动时加载。启用实验功能后，`/tower` 才会出现在命令列表中。
 
 开始之前，先切换到最终接收改动的本地 branch，并检查工作区状态：
 

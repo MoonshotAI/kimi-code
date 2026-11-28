@@ -24,10 +24,10 @@ import {
   foldSettle,
   type LoopRecordedEvent,
 } from '#/agent/contextMemory/loopEventFold';
-import type { AssistantMessage, Message, UserMessage } from '@moonshot-ai/core/llm/message';
+import type { AssistantMessage, Message, ToolDescription, UserMessage } from '@moonshot-ai/core/llm/message';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
-import { TurnCancel, TurnPrompt } from './turnOps';
+import { ToolsSettled, TurnCancel, TurnPrompt } from './turnOps';
 import type {
   LoopEmitted,
   LoopInput,
@@ -146,6 +146,7 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
   let context: readonly ContextMessage[] = [];
   let profile: ProfileBindingSnapshot | undefined;
   let profileBound = false;
+  let settledTools: readonly ToolDescription[] | undefined;
   let requestingStep: LoopRecordedEvent | undefined;
   for (const record of contextRecords) {
     switch (record.type) {
@@ -162,6 +163,11 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
       case 'tools.reset_active_tools':
         profile = reduceLoopActiveTools(profile ?? EMPTY_LOOP_PROFILE, undefined);
         break;
+      case 'tools.settled': {
+        const parsed = ToolsSettled.schema.safeParse(record);
+        if (parsed.success) settledTools = parsed.data.tools;
+        break;
+      }
       case 'context.append_message':
         context = foldAppendMessage(context, record['message'] as ContextMessage, true);
         break;
@@ -185,11 +191,18 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
     }
   }
   context = freeze(foldSettle(context), true);
+  const tools = settledTools;
+  const systemPrompt = profile?.systemPrompt;
   return {
     profile,
     profileBound,
     input: {
-      profile: profile === undefined ? undefined : { systemPrompt: profile.systemPrompt, tools: [] },
+      profile: systemPrompt === undefined && tools === undefined
+        ? undefined
+        : {
+            ...(systemPrompt === undefined ? {} : { systemPrompt }),
+            ...(tools === undefined ? {} : { tools }),
+          },
       messages: historyFromContext(
         context.map((message) => message.llmTiming === undefined ? message : { ...message, llmTiming: undefined }),
       ),
@@ -313,12 +326,31 @@ export class LoopJournal {
   private readonly toolCallUuids = new Map<string, string>();
   private turn: PendingTurn | undefined;
   private requestingStep: { readonly turnId: number; readonly step: number } | undefined;
+  private settledToolsJson: string | undefined;
 
   constructor(
     private readonly wire: IWireService,
     private readonly agentId: string,
     private readonly dispatcher?: IEventDispatcher,
   ) {}
+
+  settleTools(tools: readonly ToolDescription[]): void {
+    const normalized = tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      ...(tool.deferred === true ? { deferred: true as const } : {}),
+    }));
+    const serialized = JSON.stringify(normalized);
+    if (this.settledToolsJson === serialized) return;
+    this.settledToolsJson = serialized;
+    const payload = { agentId: this.agentId, tools: normalized };
+    if (this.dispatcher === undefined) {
+      this.write({ type: 'tools.settled', ...payload });
+      return;
+    }
+    void this.dispatcher.dispatch(new ToolsSettled(payload));
+  }
 
   recordStreamPart(turnId: number, step: number, block: number): void {
     const journal = this.steps.get(stepKey(turnId, step));
@@ -513,13 +545,19 @@ export class LoopJournal {
       case 'context.settled':
         this.settleContext(event.messages, event.reason);
         return;
+      case 'tools.settled':
+        this.settleTools(event.tools);
+        return;
       default:
         return;
     }
   }
 
   snapshot(): LoopJournalSnapshot {
-    return restoreLoopJournal(this.wire.readLoopChain().map(({ record }) => record));
+    const snapshot = restoreLoopJournal(this.wire.readLoopChain().map(({ record }) => record));
+    const tools = snapshot.input.profile?.tools;
+    this.settledToolsJson = tools === undefined ? undefined : JSON.stringify(tools);
+    return snapshot;
   }
 
   settled(): Promise<void> {

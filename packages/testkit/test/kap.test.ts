@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 
-import { WaitTimeoutError } from '#/errors';
+import { KapSchemaError, WaitTimeoutError } from '#/errors';
 import { createTestHome, type TestHome } from '#/fixtures/home';
 import { FIXED_TIME } from '#/fixtures/normalize';
 import { KapClient } from '#/kap/client';
@@ -15,7 +15,8 @@ import { startKap, type KapRunningServer } from '#/kap/harness';
 import { verifyKapInvariants } from '#/kap/invariants';
 import { KapProcess } from '#/kap/process';
 import { dropFrames, duplicateFrames, insertUnknownFrame, KapRecorder, mutateKapRecording, readKapRecording, replayKapRecording, UNKNOWN_FRAME_TYPE, type KapRecording } from '#/kap/recording';
-import { KapEnvelopeError, KapRest } from '#/kap/rest';
+import { KapEnvelopeError, KapRest, type KapExchange } from '#/kap/rest';
+import { verifyKapSchemas } from '#/kap/schemas';
 import { KapCommandError, KapSocket, WS_BEARER_PROTOCOL_PREFIX } from '#/kap/socket';
 
 describe('turnsFromFrames', () => {
@@ -128,6 +129,22 @@ describe('KapRest', () => {
     await expect(refused.rest.post('/api/v1/sessions/x/prompts')).rejects.toBeInstanceOf(KapEnvelopeError);
     const garbled = restWith(502, '<html>bad gateway</html>');
     await expect(garbled.rest.get('/api/v1/sessions')).rejects.toThrow(/HTTP 502: "<html>bad gateway<\/html>"/);
+  });
+
+  it('records each response with its JSON body, including raw responses the caller reads itself', async () => {
+    const exchanges: Promise<KapExchange>[] = [];
+    const answers = [
+      new Response(JSON.stringify({ code: 0, data: { id: 's1' } }), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }),
+      new Response('# KAP', { status: 200, headers: { 'content-type': 'text/markdown' } }),
+    ];
+    const fetchImpl: typeof fetch = () => Promise.resolve(answers.shift() ?? new Response(null, { status: 500 }));
+    const rest = new KapRest('http://kap.test', () => 'tok', fetchImpl, (exchange) => exchanges.push(exchange));
+    await rest.post('/api/v1/sessions', { cwd: '/w' });
+    await expect((await rest.raw('/api/v1/kap.md', { query: { lang: 'en' } })).text()).resolves.toBe('# KAP');
+    await expect(Promise.all(exchanges)).resolves.toEqual([
+      { method: 'POST', path: '/api/v1/sessions', status: 200, json: true, body: '{"code":0,"data":{"id":"s1"}}' },
+      { method: 'GET', path: '/api/v1/kap.md', status: 200, json: false, body: undefined },
+    ]);
   });
 });
 
@@ -572,6 +589,188 @@ describe('verifyKapInvariants', () => {
   it('skips a session that no longer exists', async () => {
     const client = await stubKap({ session: idle, turns: [], deleted: true }, { subscribe: false });
     await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+});
+
+describe('verifyKapSchemas', () => {
+  interface StubAnswer {
+    readonly status?: number;
+    readonly contentType?: string;
+    readonly body: unknown;
+  }
+
+  const json = (schema: Readonly<Record<string, unknown>>) => ({ content: { 'application/json': { schema } } });
+  const envelope = (code: number, data: Readonly<Record<string, unknown>>) => ({
+    type: 'object',
+    additionalProperties: false,
+    required: ['code', 'msg', 'data', 'request_id'],
+    properties: { code: { type: 'number', enum: [code] }, msg: { type: 'string' }, request_id: { type: 'string' }, data },
+  });
+  const sessionSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id', 'created_at'],
+    properties: {
+      id: { type: 'string' },
+      created_at: { type: 'string' },
+      title: { type: 'string', nullable: true },
+      count: { type: 'integer', minimum: 0, exclusiveMinimum: true },
+      thread: { $ref: '#/components/schemas/Thread' },
+    },
+  };
+  const threadSchema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string' }, reply: { $ref: '#/components/schemas/Thread' } } };
+  const openapi = {
+    openapi: '3.0.3',
+    paths: {
+      '/api/v1/sessions/{session_id}': {
+        get: { responses: { '200': json({ oneOf: [envelope(0, { $ref: '#/components/schemas/Session' }), envelope(40401, { type: 'string', nullable: true, enum: [null] })] }) } },
+        delete: { responses: { '204': { description: 'deleted' } } },
+      },
+      '/api/v1/sessions/{session_id}:cancel': {
+        post: { responses: { '200': json(envelope(0, { type: 'object', additionalProperties: false, required: ['cancelled'], properties: { cancelled: { type: 'boolean' } } })) } },
+      },
+      '/api/v1/kap.md': { get: { responses: { '200': { content: { 'text/markdown': { schema: { type: 'string' } } } } } } },
+    },
+    components: { schemas: { Session: sessionSchema, Thread: threadSchema } },
+  };
+  const asyncapi = {
+    asyncapi: '3.1.0',
+    operations: {
+      receiveClientMessages: { action: 'receive', messages: [{ $ref: '#/components/messages/subscribe' }] },
+      sendServerMessages: { action: 'send', messages: [{ $ref: '#/components/messages/response' }, { $ref: '#/components/messages/item' }] },
+    },
+    components: {
+      messages: {
+        subscribe: { payload: { type: 'object', properties: { type: { type: 'string', const: 'subscribe' } } } },
+        response: {
+          payload: { type: 'object', required: ['type', 'request_id', 'code'], properties: { type: { type: 'string', const: 'response' }, request_id: { type: 'string' }, code: { type: 'integer' } } },
+        },
+        item: {
+          payload: {
+            type: 'object',
+            required: ['type', 'item'],
+            properties: {
+              type: { type: 'string', enum: ['item.started', 'item.ended'] },
+              item: {
+                anyOf: [
+                  { type: 'object', required: ['type', 'created_at'], properties: { type: { type: 'string', const: 'tool_call' }, created_at: { type: 'string' } } },
+                  { type: 'object', required: ['type', 'text'], properties: { type: { type: 'string', const: 'assistant_message' }, text: { type: 'string' } } },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const ok = (data: unknown): StubAnswer => ({ body: { code: 0, msg: 'ok', data, request_id: 'r1' } });
+  const done = { type: 'response', request_id: 'done', code: 0 };
+  const closers: (() => Promise<void>)[] = [];
+
+  afterEach(async () => {
+    await Promise.all(closers.splice(0).map((close) => close()));
+  });
+
+  async function stubKap(answers: Readonly<Record<string, StubAnswer>>, frames: readonly unknown[]): Promise<KapClient> {
+    const routes: Readonly<Record<string, StubAnswer>> = { 'GET /openapi.json': { body: openapi }, 'GET /asyncapi.json': { body: asyncapi }, ...answers };
+    const server = createServer((request, response) => {
+      const answer = routes[`${request.method} ${new URL(request.url ?? '/', 'http://kap.test').pathname}`];
+      if (answer === undefined) return response.writeHead(404).end();
+      response.writeHead(answer.status ?? 200, { 'content-type': answer.contentType ?? 'application/json' });
+      response.end(typeof answer.body === 'string' ? answer.body : JSON.stringify(answer.body));
+    });
+    const sockets = new WebSocketServer({ server });
+    sockets.on('connection', (peer) => {
+      for (const frame of [...frames, done]) peer.send(typeof frame === 'string' ? frame : JSON.stringify(frame));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const client = new KapClient({ origin: () => `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: () => 'tok' });
+    closers.push(async () => {
+      await Promise.all(client.connectedSockets.map((socket) => socket.close()));
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const socket = await client.connect();
+    await socket.waitFor((frame) => frame['request_id'] === 'done');
+    return client;
+  }
+
+  async function problemsOf(client: KapClient): Promise<readonly string[]> {
+    const error = await verifyKapSchemas(client).then(() => undefined, (caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KapSchemaError);
+    return (error as KapSchemaError).problems;
+  }
+
+  it('passes when every REST body and frame matches the published schema', async () => {
+    const client = await stubKap(
+      {
+        'GET /api/v1/sessions/s1': ok({ id: 's1', created_at: FIXED_TIME, title: null, count: 1, thread: { text: 'a', reply: { text: 'b', reply: {} } } }),
+        'GET /api/v1/sessions/gone': { body: { code: 40401, msg: 'not found', data: null, request_id: 'r2' } },
+        'POST /api/v1/sessions/s1:cancel': ok({ cancelled: true }),
+        'GET /api/v1/kap.md': { contentType: 'text/markdown', body: '# KAP' },
+      },
+      [
+        { type: 'item.ended', item: { type: 'tool_call', created_at: FIXED_TIME } },
+        { type: 'item.started', item: { type: 'assistant_message', text: 'hi' } },
+      ],
+    );
+    await client.rest.get('/api/v1/sessions/s1');
+    await client.rest.raw('/api/v1/sessions/gone');
+    await client.rest.post('/api/v1/sessions/s1:cancel');
+    await client.rest.raw('/api/v1/kap.md');
+    await expect(verifyKapSchemas(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a missing required field once per kind, checked against the variant the message claims to be', async () => {
+    const client = await stubKap({ 'GET /api/v1/sessions/s1': ok({ id: 's1' }) }, [
+      { type: 'item.ended', item: { type: 'tool_call' } },
+      { type: 'item.ended', item: { type: 'tool_call' } },
+    ]);
+    await client.rest.get('/api/v1/sessions/s1');
+    await client.rest.get('/api/v1/sessions/s1');
+    expect(await problemsOf(client)).toEqual([
+      `GET /api/v1/sessions/{session_id} → HTTP 200: /data must have required property 'created_at'; first offending value: {"id":"s1"} (2 times)`,
+      `WebSocket item.ended frame: /item must have required property 'created_at'; first offending value: {"type":"tool_call"} (2 times)`,
+    ]);
+  });
+
+  it('reads OpenAPI 3.0 exclusive bounds and closed objects', async () => {
+    const client = await stubKap({ 'GET /api/v1/sessions/s1': ok({ id: 's1', created_at: FIXED_TIME, count: 0, extra: true }) }, []);
+    await client.rest.get('/api/v1/sessions/s1');
+    expect(await problemsOf(client)).toEqual([
+      `GET /api/v1/sessions/{session_id} → HTTP 200: /data must NOT have additional properties ("extra"); first offending value: {"id":"s1","created_at":"${FIXED_TIME}","count":0,"extra":true}`,
+      'GET /api/v1/sessions/{session_id} → HTTP 200: /data/count must be > 0; first offending value: 0',
+    ]);
+  });
+
+  it('accepts an empty body only where the contract declares none', async () => {
+    const empty: StubAnswer = { body: '' };
+    const client = await stubKap({ 'DELETE /api/v1/sessions/s1': { status: 204, body: '' }, 'POST /api/v1/sessions/s1:cancel': empty, 'GET /api/v1/unknown': empty }, []);
+    await client.rest.raw('/api/v1/sessions/s1', { method: 'DELETE' });
+    await client.rest.raw('/api/v1/sessions/s1:cancel', { method: 'POST', body: {} });
+    await client.rest.raw('/api/v1/unknown');
+    expect(await problemsOf(client)).toEqual([
+      'POST /api/v1/sessions/{session_id}:cancel → HTTP 200: the body is empty, but /openapi.json declares a JSON body for this response',
+      'GET /api/v1/unknown answered, but /openapi.json declares no such route',
+    ]);
+  });
+
+  it('reports routes, statuses and frames the contract does not declare', async () => {
+    const client = await stubKap(
+      {
+        'GET /api/v1/unknown': ok({}),
+        'POST /api/v1/sessions/s1:cancel': { status: 500, body: { code: 50001, msg: 'internal error', data: null, request_id: 'r3' } },
+      },
+      [{ type: 'mystery' }, 'not json'],
+    );
+    await client.rest.raw('/api/v1/unknown');
+    await client.rest.raw('/api/v1/sessions/s1:cancel', { method: 'POST', body: {} });
+    expect(await problemsOf(client)).toEqual([
+      'GET /api/v1/unknown answered, but /openapi.json declares no such route',
+      'POST /api/v1/sessions/{session_id}:cancel → HTTP 500: /openapi.json declares only HTTP 200 for this route; first offending value: {"code":50001,"msg":"internal error","data":null,"request_id":"r3"}',
+      'client #1 received a WebSocket frame that is not a JSON object with a string type; first offending value: not json',
+      'WebSocket frame type "mystery" is not a server message in /asyncapi.json; first offending value: {"type":"mystery"}',
+    ]);
   });
 });
 
