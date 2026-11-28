@@ -11,6 +11,7 @@ import { successfulExecutor } from './core/executor';
 import { usableOutputOf } from '@moonshot-ai/core/llm/policy/settle';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import { createAssistantMessage, createUserMessage, type ToolCall, type UserMessage } from '@moonshot-ai/core/llm/message';
+import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
@@ -164,6 +165,74 @@ describe('loop journal restore', () => {
     ]);
     expect(historical[3]).toMatchObject({ event: { turnId: '1', step: 1 } });
     expect(historical.at(-1)).toMatchObject({ turnId: 2 });
+  });
+
+  it('reuses step.started stepId for the first attempt and allocates a fresh wire uuid on retry', () => {
+    const records: WireRecord[] = [];
+    const journal = new LoopJournal(memoryWire(records), 'main');
+    journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal', message: prompt('p1') });
+    journal.append({ type: 'step.started', turnId: 0, step: 1, stepId: 'logical-step-1' });
+    journal.append({ type: 'llm.started', turnId: 0, step: 1, provider: 'test', model: 'm', messageCount: 1 });
+    journal.append({
+      type: 'llm.requested',
+      turnId: 0,
+      step: 1,
+      provider: 'test',
+      model: 'm',
+      systemPromptHash: 'h',
+      toolsHash: 't',
+      messageCount: 1,
+      attempt: '1',
+    });
+    journal.append({
+      type: 'llm.retry',
+      turnId: 0,
+      step: 1,
+      reason: 'backoff',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 3,
+      delayMs: 1,
+      error: {
+        kind: 'rate_limit',
+        message: 'slow down',
+        statusCode: 429,
+        requestId: null,
+        retryAfterMs: 1,
+        headers: null,
+        retryable: true,
+      },
+    });
+    journal.append({
+      type: 'llm.requested',
+      turnId: 0,
+      step: 1,
+      provider: 'test',
+      model: 'm',
+      systemPromptHash: 'h',
+      toolsHash: 't',
+      messageCount: 1,
+      attempt: '2',
+    });
+    journal.append({ type: 'message.appended', turnId: 0, step: 1, source: 'llm', message: assistant('recovered') });
+    journal.append({ type: 'step.ended', turnId: 0, step: 1, outcome: { type: 'done' } });
+
+    const loopEvents = records
+      .filter((record) => record.type === 'context.append_loop_event')
+      .map((record) => record['event'] as LoopRecordedEvent);
+    const begins = loopEvents.filter((event) => event.type === 'step.begin');
+    const ends = loopEvents.filter((event) => event.type === 'step.end');
+    const parts = loopEvents.filter((event) => event.type === 'content.part');
+
+    expect(begins).toHaveLength(2);
+    expect(begins[0]).toMatchObject({ uuid: 'logical-step-1', turnId: '0', step: 1 });
+    expect(begins[1]?.uuid).toEqual(expect.any(String));
+    expect(begins[1]?.uuid).not.toBe('logical-step-1');
+    expect(ends).toMatchObject([
+      { uuid: 'logical-step-1', finishReason: 'error' },
+      { uuid: begins[1]!.uuid, finishReason: 'end_turn' },
+    ]);
+    expect(parts).toMatchObject([{ stepUuid: begins[1]!.uuid }]);
   });
 
   it('round-trips public message media and rich metadata through persistent Wire encoding', () => {
