@@ -22,9 +22,11 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import type { ConfigChangedEvent as WireConfigChangedEvent } from '#/app/config/configEvents';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import {
   BETA_MASTER_CONFIG_KEY,
+  type ExperimentalConfig,
   EXPERIMENTAL_SECTION,
   IFlagService,
   experimentalFromToml,
@@ -979,5 +981,22 @@ describe('migrateLegacyMasterEnvTower', () => {
         profile: 'desktop',
       }),
     ).toBe('already-migrated');
+  });
+
+  it('aligns ConfigChangedEvent experimental payload type with profile buckets', () => {
+    const sampleEvent: WireConfigChangedEvent = {
+      type: 'event.config.changed',
+      changedFields: ['experimental'],
+      config: {
+        providers: {},
+        experimental: {
+          cli: { beta: true, wait_for: true },
+          desktop: { context_inspector: true },
+        },
+      },
+    };
+    const experimental: ExperimentalConfig | undefined = sampleEvent.config.experimental;
+    expect(experimental?.cli?.['wait_for']).toBe(true);
+    expect(experimental?.desktop?.['context_inspector']).toBe(true);
   });
 });
