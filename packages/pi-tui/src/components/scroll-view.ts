@@ -1,4 +1,5 @@
 import { LAYOUT_NODE, type ScrollLayoutNode } from "../layout-node.ts";
+import { RENDER_LINES, renderComponentLines, type TuiRenderLine } from "../render-line.ts";
 import { type Component, Container } from "../tui.ts";
 
 export type ScrollViewScrollbar = "hidden" | "auto" | "always";
@@ -9,6 +10,7 @@ export interface ScrollViewOptions {
 	primary?: boolean;
 	overscroll?: "chain" | "contain";
 	scrollbar?: ScrollViewScrollbar;
+	scrollbarLayout?: "overlay" | "dedicated";
 	scrollbarTrackStyle?: (text: string) => string;
 	scrollbarThumbStyle?: (text: string) => string;
 	scrollbarHideDelayMs?: number;
@@ -25,6 +27,7 @@ export class ScrollView extends Container {
 	readonly followEnd: boolean;
 	readonly primary: boolean;
 	readonly overscroll: "chain" | "contain";
+	readonly scrollbarLayout: "overlay" | "dedicated";
 	readonly scrollbarTrackStyle: (text: string) => string;
 	readonly scrollbarThumbStyle: (text: string) => string;
 	private currentScrollbar: ScrollViewScrollbar;
@@ -52,6 +55,7 @@ export class ScrollView extends Container {
 		this.primary = options.primary ?? false;
 		this.overscroll = options.overscroll ?? "chain";
 		this.currentScrollbar = options.scrollbar ?? "hidden";
+		this.scrollbarLayout = options.scrollbarLayout ?? "overlay";
 		this.scrollbarTrackStyle = options.scrollbarTrackStyle ?? ((text) => `\x1b[90m${text}\x1b[39m`);
 		this.scrollbarThumbStyle = options.scrollbarThumbStyle ?? ((text) => `\x1b[37m${text}\x1b[39m`);
 		this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
@@ -99,7 +103,9 @@ export class ScrollView extends Container {
 	}
 
 	getContentWidth(width: number): number {
-		return this.scrollbar === "always" && width > 1 ? width - 1 : width;
+		const reserved = this.scrollbar === "always" ||
+			(this.scrollbar === "auto" && this.scrollbarLayout === "dedicated");
+		return reserved && width > 1 ? width - 1 : width;
 	}
 
 	private markScrollbarActivity(): void {
@@ -231,10 +237,10 @@ export class ScrollView extends Container {
 		throw new Error("ScrollView child cannot be cleared");
 	}
 
-	override render(width: number): readonly string[] {
+	override [RENDER_LINES](width: number): TuiRenderLine[] {
 		const contentWidth = this.getContentWidth(width);
-		const lines = this.child.render(contentWidth);
-		return contentWidth === width ? lines : lines.map((line) => `${line} `);
+		const lines = renderComponentLines(this.child, contentWidth);
+		return contentWidth === width ? lines : lines.map((line) => ({ ...line, text: `${line.text} ` }));
 	}
 
 	[LAYOUT_NODE](): ScrollLayoutNode {

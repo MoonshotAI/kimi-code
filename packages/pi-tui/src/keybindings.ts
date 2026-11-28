@@ -54,6 +54,7 @@ export interface Keybindings {
 	"tui.altScreen.searchNext": true;
 	"tui.altScreen.searchPrevious": true;
 	"tui.altScreen.searchClose": true;
+	"tui.altScreen.searchSelectAll": true;
 	"tui.altScreen.top": true;
 	"tui.altScreen.bottom": true;
 }
@@ -62,6 +63,7 @@ export type Keybinding = keyof Keybindings;
 
 export interface KeybindingDefinition {
 	defaultKeys: KeyId | KeyId[];
+	fallbackKeys?: KeyId | KeyId[];
 	description?: string;
 }
 
@@ -115,10 +117,12 @@ export const TUI_KEYBINDINGS = {
 	"tui.editor.pageDown": { defaultKeys: ["pageDown", "ctrl+pageDown"], description: "Page down" },
 	"tui.editor.deleteCharBackward": {
 		defaultKeys: "backspace",
+		fallbackKeys: "shift+backspace",
 		description: "Delete character backward",
 	},
 	"tui.editor.deleteCharForward": {
 		defaultKeys: ["delete", "ctrl+d"],
+		fallbackKeys: "shift+delete",
 		description: "Delete character forward",
 	},
 	"tui.editor.deleteWordBackward": {
@@ -205,6 +209,10 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: "escape",
 		description: "Close transcript search",
 	},
+	"tui.altScreen.searchSelectAll": {
+		defaultKeys: "ctrl+shift+a",
+		description: "Select all search input text",
+	},
 	"tui.altScreen.top": { defaultKeys: "ctrl+home", description: "Scroll viewport to top" },
 	"tui.altScreen.bottom": { defaultKeys: "ctrl+end", description: "Scroll viewport to bottom" },
 } as const satisfies KeybindingDefinitions;
@@ -262,7 +270,10 @@ export class KeybindingsManager {
 
 		for (const [id, definition] of Object.entries(this.definitions)) {
 			const userKeys = this.userBindings[id];
-			const keys = userKeys === undefined ? normalizeKeys(definition.defaultKeys) : normalizeKeys(userKeys);
+			const fallbackKeys = normalizeKeys(definition.fallbackKeys).filter((key) => !userClaims.has(key));
+			const keys = userKeys === undefined
+				? normalizeKeys([...normalizeKeys(definition.defaultKeys), ...fallbackKeys])
+				: normalizeKeys(userKeys);
 			this.keysById.set(id as Keybinding, keys);
 		}
 	}

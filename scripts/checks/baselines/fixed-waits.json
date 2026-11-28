@@ -46,7 +46,7 @@
     "apps/kimi-code/test/tui/components/chrome/footer-status-line.test.ts": 10,
     "apps/kimi-code/test/tui/components/chrome/footer.test.ts": 1,
     "apps/kimi-code/test/tui/components/dialogs/session-picker.test.ts": 1,
-    "apps/kimi-code/test/tui/components/editor/custom-editor.test.ts": 15,
+    "apps/kimi-code/test/tui/components/editor/custom-editor.test.ts": 13,
     "apps/kimi-code/test/tui/controllers/cache-hint-controller.test.ts": 1,
     "apps/kimi-code/test/tui/controllers/clipboard-image-hint.test.ts": 1,
     "apps/kimi-code/test/tui/controllers/editor-keyboard.test.ts": 1,

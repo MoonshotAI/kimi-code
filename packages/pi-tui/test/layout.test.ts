@@ -6,11 +6,13 @@ import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { renderLayoutFrame } from "../src/layout.ts";
+import type { TuiRenderLine } from "../src/render-line.ts";
 import { encodeKitty, registerKittyImageMetadata } from "../src/terminal-image.ts";
+import { Container } from "../src/tui.ts";
 import { stripTerminalSequences } from "../src/utils.ts";
 
-function visibleLines(lines: string[]): string[] {
-	return lines.map((line) => stripTerminalSequences(line).trimEnd());
+function visibleLines(lines: readonly TuiRenderLine[]): string[] {
+	return lines.map((line) => stripTerminalSequences(line.text).trimEnd());
 }
 
 describe("viewport layout", () => {
@@ -30,6 +32,19 @@ describe("viewport layout", () => {
 			[1, 3],
 		);
 		assert.deepStrictEqual(visibleLines(frame.lines), ["top", "body", "", ""]);
+	});
+
+	it("honors string render overrides on container subclasses", () => {
+		class CustomContainer extends Container {
+			override render(): string[] {
+				return ["custom"];
+			}
+		}
+		const component = new CustomContainer();
+		component.addChild(new Text("child", 0, 0));
+		const frame = renderLayoutFrame(component, 10, 1, () => {});
+
+		assert.deepStrictEqual(visibleLines(frame.lines), ["custom"]);
 	});
 
 	// #9549: scroll frames reuse earlier output, but only the widths the previous frame used.
@@ -89,6 +104,47 @@ describe("viewport layout", () => {
 
 		const frame = renderLayoutFrame(transcript, 10, 3, () => {});
 		assert.deepStrictEqual(visibleLines(frame.lines), ["visible 1", "visible 2", "visible 3"]);
+	});
+
+	it("applies selection exclusions to large sparse legacy content without scanning holes", () => {
+		const lineCount = 1_000_000_000;
+		const lines: string[] = [];
+		lines.length = lineCount;
+		lines[0] = "first";
+		lines[lineCount - 1] = "last";
+		const arrayMap = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;
+		Object.defineProperty(Array.prototype, "map", {
+			...arrayMap,
+			value(this: unknown[], ...args: unknown[]) {
+				if (this.length === lineCount) throw new Error("large sparse array was eagerly mapped");
+				return Reflect.apply(arrayMap.value, this, args) as unknown;
+			},
+		});
+
+		try {
+			const frame = renderLayoutFrame(
+				{
+					render: () => lines,
+					selectionExclusions: () => [{ start: 0, end: 1 }],
+					invalidate: () => {},
+				},
+				10,
+				1,
+				() => {},
+			);
+
+			const structured = frame.root.lines!;
+			assert.strictEqual(structured.length, lineCount);
+			assert.strictEqual(structured[0]?.text, "first");
+			assert.strictEqual(structured[lineCount - 1]?.text, "last");
+			assert.strictEqual(1 in structured, false);
+			assert.strictEqual(lineCount - 2 in structured, false);
+			assert.deepStrictEqual(structured[0]?.selectionExclusions, [{ start: 0, end: 1 }]);
+			assert.deepStrictEqual(structured[lineCount - 1]?.selectionExclusions, [{ start: 0, end: 1 }]);
+			assert.deepStrictEqual(visibleLines(frame.lines), ["first"]);
+		} finally {
+			Object.defineProperty(Array.prototype, "map", arrayMap);
+		}
 	});
 
 	it("shrinks entries to their minimum sizes", () => {
@@ -165,7 +221,7 @@ describe("viewport layout", () => {
 			() => {},
 		);
 
-		assert.ok(frame.lines[2]?.includes("y=0,h=34,r=1"));
+		assert.ok(frame.lines[2]?.text.includes("y=0,h=34,r=1"));
 	});
 
 	it("composes horizontal children at allocated widths", () => {
@@ -238,7 +294,7 @@ describe("viewport layout", () => {
 			scrollbarHideDelayMs: 10,
 		});
 		const render = () => renderLayoutFrame(scrollView, 6, 4, () => {}).lines;
-		const visible = (lines: string[]) => lines.map(stripTerminalSequences);
+		const visible = (lines: TuiRenderLine[]) => lines.map((line) => stripTerminalSequences(line.text));
 
 		let lines = render();
 		assert.deepStrictEqual(visible(lines), sourceLines.slice(0, 4));
@@ -247,11 +303,11 @@ describe("viewport layout", () => {
 		lines = render();
 		assert.deepStrictEqual(visible(lines), ["abcde│", "abcde┃", "abcde┃", "abcde│"]);
 		assert.deepStrictEqual(
-			lines.map((line) => line.includes(trackColor)),
+			lines.map((line) => line.text.includes(trackColor)),
 			[true, false, false, true],
 		);
 		assert.deepStrictEqual(
-			lines.map((line) => line.includes(thumbColor)),
+			lines.map((line) => line.text.includes(thumbColor)),
 			[false, true, true, false],
 		);
 
@@ -259,10 +315,10 @@ describe("viewport layout", () => {
 		lines = render();
 		assert.deepStrictEqual(visible(lines), ["abcde│", "abcde█", "abcde█", "abcde│"]);
 		assert.deepStrictEqual(
-			lines.map((line) => line.includes(thumbColor)),
+			lines.map((line) => line.text.includes(thumbColor)),
 			[false, true, true, false],
 		);
-		assert.ok(lines[1]!.lastIndexOf(contentBackground) < lines[1]!.lastIndexOf(thumbColor));
+		assert.ok(lines[1]!.text.lastIndexOf(contentBackground) < lines[1]!.text.lastIndexOf(thumbColor));
 
 		scrollView.setScrollbarActive(false);
 		await new Promise((resolve) => setTimeout(resolve, 30));
@@ -289,14 +345,14 @@ describe("viewport layout", () => {
 		followedContent.setText(`${sourceLines.join("\n")}\nabcde9`);
 		const growthFrame = renderLayoutFrame(followed, 6, 4, () => {});
 		assert.strictEqual(followed.scrollTop, 5);
-		assert.ok(growthFrame.lines.every((line) => !/[│┃]/.test(stripTerminalSequences(line))));
+		assert.ok(growthFrame.lines.every((line) => !/[│┃]/.test(stripTerminalSequences(line.text))));
 
 		const fittingContent = new Text("1\n2", 0, 0);
 		const automatic = new ScrollView(fittingContent, { scrollbar: "auto", scrollbarThumbStyle });
 		renderLayoutFrame(automatic, 6, 4, () => {});
 		automatic.scrollBy(1);
 		assert.ok(
-			renderLayoutFrame(automatic, 6, 4, () => {}).lines.every((line) => !/[│┃]/.test(stripTerminalSequences(line))),
+			renderLayoutFrame(automatic, 6, 4, () => {}).lines.every((line) => !/[│┃]/.test(stripTerminalSequences(line.text))),
 		);
 
 		const alwaysFitting = new ScrollView(fittingContent, { scrollbar: "always", scrollbarThumbStyle });
@@ -314,9 +370,9 @@ describe("viewport layout", () => {
 		assert.strictEqual(visible(alwaysOverflowingFrame.lines).filter((line) => line.endsWith("┃")).length, 2);
 		assert.strictEqual(visible(alwaysOverflowingFrame.lines).filter((line) => line.endsWith("│")).length, 2);
 		for (const line of alwaysOverflowingFrame.lines) {
-			const scrollbarStyleIndex = Math.max(line.lastIndexOf(trackColor), line.lastIndexOf(thumbColor));
-			const reservedColumnResetIndex = line.lastIndexOf("\x1b[0m\x1b]8;;\x07", scrollbarStyleIndex);
-			assert.ok(reservedColumnResetIndex > line.lastIndexOf(contentBackground));
+			const scrollbarStyleIndex = Math.max(line.text.lastIndexOf(trackColor), line.text.lastIndexOf(thumbColor));
+			const reservedColumnResetIndex = line.text.lastIndexOf("\x1b[0m\x1b]8;;\x07", scrollbarStyleIndex);
+			assert.ok(reservedColumnResetIndex > line.text.lastIndexOf(contentBackground));
 		}
 
 		const thumbHeightFor = (contentHeight: number) => {
@@ -327,7 +383,7 @@ describe("viewport layout", () => {
 			renderLayoutFrame(sized, 6, 20, () => {});
 			sized.scrollBy(1);
 			return renderLayoutFrame(sized, 6, 20, () => {}).lines.filter((line) =>
-				stripTerminalSequences(line).endsWith("┃"),
+				stripTerminalSequences(line.text).endsWith("┃"),
 			).length;
 		};
 		assert.strictEqual(thumbHeightFor(21), 19);
@@ -356,12 +412,53 @@ describe("viewport layout", () => {
 		scrollView.scrollBy(1);
 		const frame = renderLayoutFrame(scrollView, 6, 4, () => {});
 
-		assert.deepStrictEqual(frame.lines.map(stripTerminalSequences), ["xxxxx│", "xxxxx┃", "xxxxx┃", "xxxxx│"]);
+		assert.deepStrictEqual(frame.lines.map((line) => stripTerminalSequences(line.text)), [
+			"xxxxx│",
+			"xxxxx┃",
+			"xxxxx┃",
+			"xxxxx│",
+		]);
 		for (const line of frame.lines) {
-			assert.ok(line.includes(background));
-			assert.ok(!line.includes(borderForeground));
-			assert.ok(line.includes(`\x1b[0m\x1b]8;;\x07${background}`));
+			assert.ok(line.text.includes(background));
+			assert.ok(!line.text.includes(borderForeground));
+			assert.ok(line.text.includes(`\x1b[0m\x1b]8;;\x07${background}`));
 		}
+	});
+
+	it("reserves dedicated auto and always scrollbar columns while preserving overlay defaults", () => {
+		const source = Array.from({ length: 8 }, () => "123456").join("\n");
+		const overlay = new ScrollView(new Text(source, 0, 0), { scrollbar: "auto" });
+		const dedicated = new ScrollView(new Text(source, 0, 0), {
+			scrollbar: "auto",
+			scrollbarLayout: "dedicated",
+		});
+		const render = (scrollView: ScrollView) => renderLayoutFrame(scrollView, 6, 2, () => {});
+
+		const overlayInitial = render(overlay);
+		assert.strictEqual(overlayInitial.root.children[0]?.rect.width, 6);
+		assert.ok(overlayInitial.lines.every((line) => !/[│┃]/.test(stripTerminalSequences(line.text))));
+		const dedicatedInitial = render(dedicated);
+		assert.strictEqual(dedicatedInitial.root.children[0]?.rect.width, 5);
+		assert.ok(dedicatedInitial.lines.every((line) => stripTerminalSequences(line.text).length === 6));
+		assert.ok(dedicatedInitial.lines.every((line) => !/[│┃]/.test(stripTerminalSequences(line.text))));
+
+		overlay.scrollBy(1);
+		dedicated.scrollBy(1);
+		assert.strictEqual(render(overlay).root.children[0]?.rect.width, 6);
+		const dedicatedVisible = render(dedicated);
+		assert.strictEqual(dedicatedVisible.root.children[0]?.rect.width, 5);
+		assert.ok(dedicatedVisible.lines.every((line) => /[│┃]$/.test(stripTerminalSequences(line.text))));
+
+		const always = new ScrollView(new Text(source, 0, 0), {
+			scrollbar: "always",
+			scrollbarLayout: "dedicated",
+		});
+		assert.strictEqual(render(always).root.children[0]?.rect.width, 5);
+		const hidden = new ScrollView(new Text(source, 0, 0), {
+			scrollbar: "hidden",
+			scrollbarLayout: "dedicated",
+		});
+		assert.strictEqual(render(hidden).root.children[0]?.rect.width, 6);
 	});
 
 	it("updates reserved scrollbar layout at runtime", () => {

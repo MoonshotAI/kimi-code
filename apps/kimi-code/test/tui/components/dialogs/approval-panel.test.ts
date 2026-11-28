@@ -213,7 +213,7 @@ describe('ApprovalPanelComponent', () => {
       isTerminalFocused: () => terminalFocused,
     }));
     const faint = '\u001B[2m';
-    const fadedThroughout = (lines: string[]): boolean =>
+    const fadedThroughout = (lines: readonly string[]): boolean =>
       lines.every(
         (line) =>
           line.length === 0 ||

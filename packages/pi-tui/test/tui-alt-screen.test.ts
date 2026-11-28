@@ -9,12 +9,19 @@ import { Box } from "../src/components/box.ts";
 import { Editor } from "../src/components/editor.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
+import { Markdown } from "../src/components/markdown.ts";
 import { MouseRegion } from "../src/components/mouse-region.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { SelectList } from "../src/components/select-list.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
+import {
+	RENDER_LINES,
+	renderLineTexts,
+	type TuiRenderLine,
+	withRenderLineSelectionRegion,
+} from "../src/render-line.ts";
 import {
 	encodeKitty,
 	hyperlink,
@@ -23,9 +30,10 @@ import {
 	setCapabilities,
 } from "../src/terminal-image.ts";
 import { CURSOR_MARKER, renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
+import type { TuiRightClickPasteRequest } from "../src/index.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
-import { defaultEditorTheme } from "./test-themes.ts";
+import { defaultEditorTheme, defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -62,6 +70,50 @@ class RecordingTerminal extends VirtualTerminal {
 		this.events.push({ type: "stop" });
 		super.stop();
 	}
+}
+
+function createDeferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise;
+		reject = rejectPromise;
+	});
+	return { promise, resolve, reject };
+}
+
+async function selectRows(
+	terminal: RecordingTerminal,
+	startRow: number,
+	endRow: number,
+	startColumn = 0,
+	endColumn = terminal.columns - 1,
+): Promise<void> {
+	terminal.sendInput(`\x1b[<0;${startColumn + 1};${startRow + 1}M`);
+	terminal.sendInput(`\x1b[<32;${endColumn + 1};${endRow + 1}M`);
+	terminal.sendInput(`\x1b[<0;${endColumn + 1};${endRow + 1}m`);
+	await terminal.waitForRender();
+}
+
+function highlightedText(line: string): string[] {
+	return [...line.matchAll(/\x1b\[7m([\s\S]*?)\x1b\[27m/g)].map((match) => stripTerminalSequences(match[1]!));
+}
+
+function structuredComponent(lines: TuiRenderLine[]) {
+	return {
+		render: () => renderLineTexts(lines),
+		[RENDER_LINES]: () => lines,
+		invalidate() {},
+	};
+}
+
+function regionLine(
+	text: string,
+	content: TuiRenderLine,
+	column: number,
+	width = visibleWidth(content.text),
+): TuiRenderLine {
+	return withRenderLineSelectionRegion({ text }, content, column, width);
 }
 
 describe("TuiAltScreen", () => {
@@ -624,6 +676,34 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("allows Alt wheel acceleration to be disabled and changed at runtime", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			wheelScrollLines: 2,
+			altWheelAcceleration: false,
+		});
+		const deltas: Array<number | undefined> = [];
+		tui.addChild(
+			new MouseRegion(new Text("wheel target", 0, 0), (event) => {
+				if (event.type !== "wheel") return undefined;
+				deltas.push(event.wheelDelta);
+				return { handled: true };
+			}),
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<72;1;1M");
+			tui.setAltWheelAcceleration(true);
+			terminal.sendInput("\x1b[<72;1;1M");
+			tui.setAltWheelAcceleration(false);
+			terminal.sendInput("\x1b[<72;1;1M");
+			assert.deepStrictEqual(deltas, [-2, -10, -2]);
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("does not vertically redispatch misses through horizontal layout containers", async () => {
 		const terminal = new VirtualTerminal(20, 2);
 		const tui = new TuiAltScreen(terminal);
@@ -708,7 +788,7 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("invokes the right-click paste handler only on Windows outside terminals that paste on right-click", () => {
+	it("preserves default right-click paste guards unless right-click copy mode is enabled", () => {
 		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 		const termProgram = process.env.TERM_PROGRAM;
 		assert.ok(platformDescriptor);
@@ -730,15 +810,19 @@ describe("TuiAltScreen", () => {
 			process.env.TERM_PROGRAM = "vscode";
 			terminal.sendInput("\x1b[<2;1;1M");
 			assert.strictEqual(pasteCount, 1);
+			tui.setCopyOnRightClick(true);
+			terminal.sendInput("\x1b[<2;1;1M");
+			assert.strictEqual(pasteCount, 2);
+			tui.setCopyOnRightClick(false);
 
 			process.env.TERM_PROGRAM = "Tabby";
 			terminal.sendInput("\x1b[<2;1;1M");
-			assert.strictEqual(pasteCount, 1);
+			assert.strictEqual(pasteCount, 2);
 
 			Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
 			delete process.env.TERM_PROGRAM;
 			terminal.sendInput("\x1b[<2;1;1M");
-			assert.strictEqual(pasteCount, 1);
+			assert.strictEqual(pasteCount, 2);
 		} finally {
 			tui.stop();
 			Object.defineProperty(process, "platform", platformDescriptor);
@@ -796,6 +880,111 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
 		tui.stop();
+	});
+
+	it("drags the scrollbar while transcript search remains focused", async () => {
+		const terminal = new RecordingTerminal(40, 10);
+		const tui = new TuiAltScreen(terminal);
+		const scrollView = new ScrollView(
+			new Text(Array.from({ length: 50 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ primary: true, scrollbar: "always" },
+		);
+		tui.setLayoutRoot(scrollView);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			const searchFocus = tui.getFocusedComponent();
+			assert.strictEqual(scrollView.scrollTop, 0);
+
+			terminal.sendInput("\x1b[<0;40;6M");
+			await terminal.waitForRender();
+			assert.strictEqual(scrollView.scrollTop, 20);
+
+			terminal.sendInput("\x1b[<32;40;10M");
+			await terminal.waitForRender();
+			assert.strictEqual(scrollView.scrollTop, 40);
+			assert.strictEqual(tui.getFocusedComponent(), searchFocus);
+
+			terminal.sendInput("\x1b[<0;40;10m");
+			await terminal.waitForRender();
+			assert.strictEqual(tui.getFocusedComponent(), searchFocus);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("ends a scrollbar drag released inside transcript search before later buttonless motion", async () => {
+		const terminal = new RecordingTerminal(40, 10);
+		const tui = new TuiAltScreen(terminal);
+		const scrollView = new ScrollView(
+			new Text(Array.from({ length: 50 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ primary: true, scrollbar: "always" },
+		);
+		tui.setLayoutRoot(scrollView);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			const searchFocus = tui.getFocusedComponent();
+			terminal.sendInput("\x1b[<0;40;6M");
+			await terminal.waitForRender();
+			assert.strictEqual(scrollView.scrollTop, 20);
+
+			terminal.sendInput("\x1b[<32;20;2M");
+			terminal.sendInput("\x1b[<0;20;2m");
+			await terminal.waitForRender();
+			const scrollTopAfterRelease = scrollView.scrollTop;
+			terminal.sendInput("\x1b[<35;40;10M");
+			await terminal.waitForRender();
+
+			assert.strictEqual(scrollView.scrollTop, scrollTopAfterRelease);
+			assert.strictEqual(tui.getFocusedComponent(), searchFocus);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("blocks the search scrollbar for another visible nonCapturing overlay until it is removed", async () => {
+		const terminal = new RecordingTerminal(40, 10);
+		const tui = new TuiAltScreen(terminal);
+		const scrollView = new ScrollView(
+			new Text(Array.from({ length: 50 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ primary: true, scrollbar: "always" },
+		);
+		tui.setLayoutRoot(scrollView);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			const searchFocus = tui.getFocusedComponent();
+			const otherOverlay = tui.showOverlay(new Text("other", 0, 0), {
+				row: 0,
+				col: 0,
+				width: 5,
+				nonCapturing: true,
+			});
+			await terminal.waitForRender();
+			assert.strictEqual(tui.getFocusedComponent(), searchFocus);
+
+			terminal.sendInput("\x1b[<0;40;6M");
+			terminal.sendInput("\x1b[<0;40;6m");
+			await terminal.waitForRender();
+			assert.strictEqual(scrollView.scrollTop, 0);
+
+			otherOverlay.hide();
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;40;6M");
+			terminal.sendInput("\x1b[<0;40;6m");
+			await terminal.waitForRender();
+			assert.strictEqual(scrollView.scrollTop, 20);
+			assert.strictEqual(tui.getFocusedComponent(), searchFocus);
+		} finally {
+			tui.stop();
+		}
 	});
 
 	// #9758: wheel line counts can change at runtime; Alt keeps its multiplier.
@@ -956,6 +1145,49 @@ describe("TuiAltScreen", () => {
 		assert.ok(populated[1]?.includes("1/2"));
 		assert.ok(populatedRender[1]?.includes("\x1b[2m 1/2 \x1b[22m"));
 		assert.ok(!populated.some((line) => line.includes("Find in transcript")));
+	});
+
+	it("omits the transcript search border from overlay selections", async () => {
+		const terminal = new RecordingTerminal(60, 8);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("needle one\nmiddle\nneedle two", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[102;6u");
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			const rows = terminal.getViewport().map((line) => stripTerminalSequences(line));
+			const top = rows.findIndex((line) => line.includes("┌"));
+			const bottom = rows.findIndex((line) => line.includes("┘"));
+			assert.ok(top >= 0 && bottom > top);
+			const startColumn = rows[top]!.indexOf("┌");
+			const endColumn = rows[bottom]!.lastIndexOf("┘");
+			const eventStart = terminal.events.length;
+
+			await selectRows(terminal, top, bottom, startColumn, endColumn);
+
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			const text = copied.at(-1);
+			assert.ok(text?.includes("needle"));
+			assert.strictEqual(text?.split("\n")[1]?.startsWith("needle"), true);
+			assert.doesNotMatch(text, /[┌┐└┘│─]/);
+			const writes = terminal.events
+				.slice(eventStart)
+				.filter((event) => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			assert.doesNotMatch(writes, /\x1b\[7m[┌└│]/);
+		} finally {
+			tui.stop();
+		}
 	});
 
 	it("formats custom search controls, handles narrow fallback, and suppresses whitespace no-matches", () => {
@@ -2193,6 +2425,899 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("omits component-declared decoration columns from full and partial selection copies", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const lines = ["\x1b[31m● \x1b[0m中文", "  beta"];
+		const component = {
+			selectionExclusions: () => [{ start: 0, end: 2 }],
+			render: () => lines,
+			invalidate() {},
+		};
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(component);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1);
+			assert.deepStrictEqual(copied, ["中文\nbeta"]);
+			const writes = terminal.events
+				.filter((event) => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			assert.doesNotMatch(writes, /\x1b\[7m(?:\x1b\[[0-9;]*m)*●/);
+			await selectRows(terminal, 0, 0, 1, 3);
+			assert.deepStrictEqual(copied, ["中文\nbeta", "中"]);
+			for (let click = 0; click < 2; click++) {
+				terminal.sendInput("\x1b[<0;1;1M");
+				terminal.sendInput("\x1b[<0;1;1m");
+			}
+			await terminal.waitForRender();
+			assert.strictEqual(tui.hasActiveSelection(), false);
+			assert.deepStrictEqual(copied, ["中文\nbeta", "中"]);
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<0;1;1m");
+			await terminal.waitForRender();
+			assert.deepStrictEqual(copied, ["中文\nbeta", "中", "中文"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("places an empty body newline cell after excluded decoration columns", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const component = {
+			selectionExclusions: () => [{ start: 0, end: 2 }],
+			render: () => ["● alpha", "● ", "● omega"],
+			invalidate() {},
+		};
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(component);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 0, 2);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["alpha "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), [" "]);
+			await selectRows(terminal, 0, 2);
+			assert.ok(tui.getScreenLines()[1]!.includes("● \x1b[7m \x1b[27m"));
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["alpha "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), [" "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[2]!), ["omega"]);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alpha\n\nomega"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("starts left-gutter drags at the content boundary and rejects other invalid region presses", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const scroll = new ScrollView(
+			structuredComponent([
+				regionLine("● alpha", { text: "alpha" }, 2),
+				{ text: "unmarked" },
+				regionLine("  omega", { text: "omega" }, 2),
+			]),
+			{ primary: true },
+		);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0, 0, 4);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alp"]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["alp"]);
+
+			for (const [row, column] of [[1, 0], [0, 7]] as const) {
+				tui.resetTextSelection();
+				await selectRows(terminal, row, 2, column, 3);
+				assert.strictEqual(tui.hasActiveSelection(), false);
+			}
+			assert.deepStrictEqual(copied, ["alp"]);
+
+			await selectRows(terminal, 0, 2, 2, 19);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alp", "alpha\n\nomega"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("dispatches left-gutter clicks without multi-click expansion and suppresses clicks after drags", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		let clicks = 0;
+		const target = new MouseRegion(
+			structuredComponent([
+				regionLine("● alpha", { text: "alpha" }, 2),
+				regionLine("  beta", { text: "beta" }, 2),
+			]),
+			(event) => {
+				if (event.type !== "click") return undefined;
+				clicks += 1;
+				return { handled: true };
+			},
+		);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.setLayoutRoot(new ScrollView(target, { primary: true }));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<0;1;1m");
+			await terminal.waitForRender();
+			assert.strictEqual(clicks, 1);
+			assert.strictEqual(tui.hasActiveSelection(), false);
+
+			for (const motionButton of [32, 35]) {
+				terminal.sendInput("\x1b[<0;1;1M");
+				terminal.sendInput(`\x1b[<${motionButton};4;1M`);
+				terminal.sendInput("\x1b[<0;4;1m");
+				await terminal.waitForRender();
+				assert.strictEqual(clicks, 1);
+				assert.strictEqual(tui.hasActiveSelection(), true);
+				tui.resetTextSelection();
+			}
+
+			for (let click = 0; click < 2; click++) {
+				terminal.sendInput("\x1b[<0;1;1M");
+				terminal.sendInput("\x1b[<0;1;1m");
+				await terminal.waitForRender();
+				assert.strictEqual(clicks, click + 2);
+				assert.strictEqual(tui.hasActiveSelection(), false);
+			}
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("projects each region row independently and clamps active drags into decoration", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const scroll = new ScrollView(
+			structuredComponent([
+				regionLine("● alpha", { text: "alpha" }, 2),
+				regionLine("  │ beta", { text: "beta" }, 4),
+				regionLine("  gamma", { text: "gamma" }, 2),
+			]),
+			{ primary: true },
+		);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 2, 2, 19);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alpha\nbeta\ngamma"]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["alpha "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), ["beta "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[2]!), ["gamma"]);
+			assert.ok(tui.getScreenLines()[1]!.startsWith("  │ \x1b[7m"));
+
+			tui.resetTextSelection();
+			await selectRows(terminal, 1, 0, 4, 0);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alpha\nbeta\ngamma", "alpha\nb"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("places an empty region newline at content column zero", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const scroll = new ScrollView(
+			structuredComponent([
+				regionLine("● alpha", { text: "alpha" }, 2),
+				regionLine("│   ", { text: "" }, 2),
+				regionLine("  omega", { text: "omega" }, 2),
+			]),
+			{ primary: true },
+		);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 2, 2, 19);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), [" "]);
+			assert.ok(tui.getScreenLines()[1]!.startsWith("│ \x1b[7m \x1b[27m"));
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alpha\n\nomega"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("uses region content for soft-wrap joining, double-click words, and triple-click lines", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const origin = Symbol("region-wrap");
+		const scroll = new ScrollView(
+			structuredComponent([
+				regionLine("● alpha", {
+					text: "alpha",
+					softWrap: [{ logicalLineId: 1, start: 0, end: 5, origin }],
+				}, 2),
+				regionLine("  │ beta", {
+					text: "beta",
+					softWrap: [{
+						logicalLineId: 1,
+						start: 0,
+						end: 4,
+						origin,
+						continuation: { omittedWhitespace: " ", generatedIndent: 0 },
+					}],
+				}, 4),
+			]),
+			{ primary: true },
+		);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 2, 19);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alpha beta"]);
+
+			tui.resetTextSelection();
+			for (let click = 0; click < 2; click++) {
+				terminal.sendInput("\x1b[<0;4;1M");
+				terminal.sendInput("\x1b[<0;4;1m");
+			}
+			await terminal.waitForRender();
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alpha beta", "alpha"]);
+
+			tui.resetTextSelection();
+			for (let click = 0; click < 3; click++) {
+				terminal.sendInput("\x1b[<0;5;2M");
+				terminal.sendInput("\x1b[<0;5;2m");
+			}
+			await terminal.waitForRender();
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alpha beta", "alpha", "alpha beta"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps a dedicated auto scrollbar column out of selection and retains track gestures", async () => {
+		const terminal = new RecordingTerminal(12, 3);
+		const copied: string[] = [];
+		const scroll = new ScrollView(new Text(Array.from({ length: 8 }, () => "abcdef").join("\n"), 0, 0), {
+			primary: true,
+			scrollbar: "auto",
+			scrollbarLayout: "dedicated",
+		});
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			assert.strictEqual(scroll.isScrollbarVisible, false);
+			await selectRows(terminal, 0, 0, 11, 0);
+			assert.strictEqual(tui.hasActiveSelection(), false);
+
+			await selectRows(terminal, 0, 1, 0, 5);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["abcdef\nabcdef"]);
+			assert.ok(tui.getScreenLines().every((line) => !highlightedText(line).some((text) => /[│┃]/.test(text))));
+
+			terminal.sendInput("\x1b[<35;12;2M");
+			await terminal.waitForRender();
+			assert.strictEqual(scroll.isScrollbarVisible, true);
+			terminal.sendInput("\x1b[<0;12;3M");
+			terminal.sendInput("\x1b[<0;12;3m");
+			await terminal.waitForRender();
+			assert.ok(scroll.scrollTop > 0);
+			assert.strictEqual(tui.hasActiveSelection(), false);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps the only column selectable when dedicated auto cannot reserve one", async () => {
+		const terminal = new RecordingTerminal(1, 2);
+		const copied: string[] = [];
+		const text = new Text("a\n", 0, 0);
+		const scroll = new ScrollView(text, {
+			primary: true,
+			scrollbar: "auto",
+			scrollbarLayout: "dedicated",
+		});
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			assert.strictEqual(scroll.canScroll, false);
+			assert.strictEqual(scroll.isScrollbarVisible, false);
+			assert.strictEqual(scroll.getContentWidth(1), 1);
+
+			await selectRows(terminal, 0, 1, 0, 0);
+			assert.strictEqual(tui.hasActiveSelection(), true);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["a"]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), [" "]);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["a\n"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps one-column visible auto scrollbar gestures when no dedicated column is reserved", async () => {
+		const terminal = new RecordingTerminal(1, 3);
+		const scroll = new ScrollView(new Text("a\nb\nc\nd\ne", 0, 0), {
+			primary: true,
+			scrollbar: "auto",
+			scrollbarLayout: "dedicated",
+		});
+		const tui = new TuiAltScreen(terminal);
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			assert.strictEqual(scroll.canScroll, true);
+			assert.strictEqual(scroll.isScrollbarVisible, false);
+			terminal.sendInput("\x1b[<35;1;1M");
+			await terminal.waitForRender();
+			assert.strictEqual(scroll.isScrollbarVisible, true);
+			terminal.sendInput("\x1b[<0;1;3M");
+			terminal.sendInput("\x1b[<0;1;3m");
+			await terminal.waitForRender();
+			assert.strictEqual(scroll.scrollTop, 2);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("copies Text content without responsive decoration padding", async () => {
+		for (const { width, source } of [
+			{ width: 1, source: "abcd" },
+			{ width: 2, source: "abcd" },
+			{ width: 3, source: "abcd" },
+			{ width: 4, source: "abcd" },
+			{ width: 20, source: "abcd" },
+			{ width: 4, source: "中文" },
+		]) {
+			const component = new Text(source, 2, 0);
+			const height = component.render(width).length;
+			const terminal = new RecordingTerminal(width, height);
+			const copied: string[] = [];
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			tui.addChild(component);
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				await selectRows(terminal, 0, height - 1);
+				assert.deepStrictEqual(copied, [source], `width ${width}`);
+			} finally {
+				tui.stop();
+			}
+		}
+	});
+
+	it("preserves selection exclusions and column alignment in horizontal layouts", async () => {
+		const terminal = new RecordingTerminal(20, 1);
+		const copied: string[] = [];
+		const decorated = (marker: string, text: string) => ({
+			selectionExclusions: () => [{ start: 0, end: 2 }],
+			render: () => [`${marker} ${text}`],
+			invalidate() {},
+		});
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(
+			new HStack([
+				{ component: decorated("●", "left"), basis: 10 },
+				{ component: decorated("❯", "right"), basis: 10 },
+			]),
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0);
+			assert.deepStrictEqual(copied, ["left    right"]);
+			const writes = terminal.events
+				.filter((event) => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			assert.doesNotMatch(writes, /\x1b\[7m(?:\x1b\[[0-9;]*m)*[●❯]/);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("extends triple-click selection from either visual row to the whole logical line", async () => {
+		const terminal = new RecordingTerminal(10, 2);
+		const copied: string[] = [];
+		const source = "1234567890ABCDEFGHIJ";
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text(source, 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			for (const row of [0, 1]) {
+				for (let click = 0; click < 3; click++) {
+					terminal.sendInput(`\x1b[<0;1;${row + 1}M`);
+					terminal.sendInput(`\x1b[<0;1;${row + 1}m`);
+				}
+				await terminal.waitForRender();
+				assert.deepStrictEqual(copied.at(-1), source);
+			}
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps triple-click selection on the clicked visual row in horizontal layouts", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(
+			new HStack([
+				{ component: new Text("alpha beta gamma", 0, 0), basis: 10 },
+				{ component: new Text("one two three", 0, 0), basis: 10 },
+			]),
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			const row = stripTerminalSequences(tui.getScreenLines()[0] ?? "").trimEnd();
+			for (let click = 0; click < 3; click++) {
+				terminal.sendInput("\x1b[<0;1;1M");
+				terminal.sendInput("\x1b[<0;1;1m");
+			}
+			await terminal.waitForRender();
+			assert.deepStrictEqual(copied.at(-1), row);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("does not join equal logical line ids from independent component origins", async () => {
+		const terminal = new RecordingTerminal(10, 2);
+		const copied: string[] = [];
+		const firstOrigin = Symbol("first");
+		const secondOrigin = Symbol("second");
+		const first = {
+			render: () => ["abc"],
+			[RENDER_LINES]: () => [{
+				text: "abc",
+				softWrap: [{ logicalLineId: 0, start: 0, end: 3, origin: firstOrigin }],
+			}],
+			invalidate() {},
+		};
+		const second = {
+			render: () => ["def"],
+			[RENDER_LINES]: () => [{
+				text: "def",
+				softWrap: [{
+					logicalLineId: 0,
+					start: 0,
+					end: 3,
+					origin: secondOrigin,
+					continuation: { omittedWhitespace: "", generatedIndent: 0 },
+				}],
+			}],
+			invalidate() {},
+		};
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(new VStack([first, second]));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1);
+			assert.deepStrictEqual(copied, ["abc\ndef"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("copies soft-wrapped logical lines without visual row breaks and restores wrap spaces", async () => {
+		const terminal = new RecordingTerminal(10, 4);
+		const copied: string[] = [];
+		const source = "1234567890ABCDEFGHIJ\nalpha beta gamma";
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text(source, 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;5;4M");
+			terminal.sendInput("\x1b[<0;5;4m");
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, [source]);
+			assert.ok(
+				terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b[999;")),
+			);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps visual row breaks when copying wrapped Markdown table cells", async () => {
+		const terminal = new RecordingTerminal(30, 6);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(
+			new Markdown(
+				"| Command | Description | Example |\n| --- | --- | --- |",
+				0,
+				0,
+				defaultMarkdownTheme,
+			),
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			const rows = tui.getScreenLines().map((line) => stripTerminalSequences(line).trimEnd());
+			terminal.sendInput("\x1b[<0;1;2M");
+			terminal.sendInput("\x1b[<32;30;3M");
+			terminal.sendInput("\x1b[<0;30;3m");
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, [`${rows[1]}\n${rows[2]}`]);
+			for (let click = 0; click < 3; click++) {
+				terminal.sendInput("\x1b[<0;1;2M");
+				terminal.sendInput("\x1b[<0;1;2m");
+			}
+			await terminal.waitForRender();
+			assert.deepStrictEqual(copied.at(-1), rows[1]);
+			assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b[999;")));
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps visual row breaks when copying wrapped HStack columns together", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(
+			new HStack([
+				{ component: new Text("alpha beta gamma", 0, 0), basis: 10 },
+				{ component: new Text("one two three", 0, 0), basis: 10 },
+			]),
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			const rows = tui.getScreenLines().map((line) => stripTerminalSequences(line).trimEnd());
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;20;2M");
+			terminal.sendInput("\x1b[<0;20;2m");
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, [`${rows[0]}\n${rows[1]}`]);
+			assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b[999;")));
+		} finally {
+			tui.stop();
+		}
+	});
+
+	for (const { name, right } of [
+		{ name: "an empty", right: "" },
+		{ name: "a first-row-only", right: "RIGHT" },
+		{ name: "a whitespace-only", right: "   " },
+		{ name: "a populated", right: "abcdefghijklmnopqrstuvwxyz1234" },
+	]) {
+		for (const mount of ["layout-root", "child"] as const) {
+			for (const action of ["drag", "triple-click"] as const) {
+				it(`preserves visual rows for ${action} selection beside ${name} HStack column via ${mount}`, async () => {
+					const terminal = new RecordingTerminal(20, 3);
+					const copied: string[] = [];
+					const tui = new TuiAltScreen(terminal, undefined, undefined, {
+						copySelection: async (text) => {
+							copied.push(text);
+							return true;
+						},
+					});
+					const stack = new HStack([
+						{ component: new Text("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234", 0, 0), basis: 10 },
+						{ component: new Text(right, 0, 0), basis: 10 },
+					]);
+					if (mount === "layout-root") tui.setLayoutRoot(stack);
+					else tui.addChild(stack);
+					tui.start();
+					try {
+						await terminal.waitForRender();
+						const rows = tui.getScreenLines().map((line) => stripTerminalSequences(line).trimEnd());
+						assert.strictEqual(rows.length, 3);
+						if (action === "drag") {
+							await selectRows(terminal, 1, 2);
+							assert.deepStrictEqual(copied, [rows.slice(1).join("\n")]);
+						} else {
+							for (let click = 0; click < 3; click++) {
+								terminal.sendInput("\x1b[<0;1;2M");
+								terminal.sendInput("\x1b[<0;1;2m");
+							}
+							await terminal.waitForRender();
+							assert.strictEqual(copied.at(-1), rows[1]);
+						}
+					} finally {
+						tui.stop();
+					}
+				});
+			}
+		}
+	}
+
+	it("removes only generated list and quote continuation prefixes when copying", async () => {
+		for (const { source, expected } of [
+			{ source: "- alpha beta gamma", expected: "- alpha beta gamma" },
+			{ source: "> alpha beta gamma", expected: "│ alpha beta gamma" },
+		]) {
+			const terminal = new RecordingTerminal(12, 4);
+			const copied: string[] = [];
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			tui.addChild(new Markdown(source, 0, 0, defaultMarkdownTheme));
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				await selectRows(terminal, 0, 1);
+				assert.deepStrictEqual(copied, [expected]);
+			} finally {
+				tui.stop();
+			}
+		}
+	});
+
+	it("restores exact wrap whitespace and copies styled, linked, and CJK logical lines", async () => {
+		const url = "https://example.com";
+		for (const source of [
+			"alpha  beta   gamma",
+			"\x1b[31malpha beta gamma\x1b[0m",
+			`\x1b]8;;${url}\x1b\\alpha beta gamma\x1b]8;;\x1b\\`,
+			"中文汉字测试段落",
+		]) {
+			const terminal = new RecordingTerminal(10, 5);
+			const copied: string[] = [];
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			tui.addChild(new Text(source, 0, 0));
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				const rowCount = tui
+					.getScreenLines()
+					.filter((line) => stripTerminalSequences(line).trim().length > 0).length;
+				await selectRows(terminal, 0, rowCount - 1);
+				assert.deepStrictEqual(copied, [stripTerminalSequences(source)]);
+			} finally {
+				tui.stop();
+			}
+		}
+	});
+
+	it("joins a partial selection that covers the soft-wrap boundary", async () => {
+		const terminal = new RecordingTerminal(10, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("1234567890ABCDEFGHIJ", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 4, 2);
+			assert.deepStrictEqual(copied, ["567890ABC"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps a visual newline when the selection starts after the wrap boundary", async () => {
+		const terminal = new RecordingTerminal(15, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha beta gamma", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 12, 2);
+			assert.deepStrictEqual(copied, ["\ngam"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("renders a body newline where a partial soft-wrap selection is not joined", async () => {
+		const terminal = new RecordingTerminal(15, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha beta gamma", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 12, 2);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), [" "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), ["gam"]);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["\ngam"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("joins a fully selected zero-width emoji wrap fragment but keeps virtual-only drags empty", async () => {
+		const terminal = new RecordingTerminal(1, 2);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("🙂", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;1;1M");
+			terminal.sendInput("\x1b[<0;1;1m");
+			await terminal.waitForRender();
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), false);
+			assert.deepStrictEqual(copied, []);
+
+			for (let click = 0; click < 3; click++) {
+				terminal.sendInput("\x1b[<0;1;1M");
+				terminal.sendInput("\x1b[<0;1;1m");
+			}
+			await terminal.waitForRender();
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["🙂"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("rebuilds soft-wrap metadata for selection copy after terminal resizing", async () => {
+		const terminal = new RecordingTerminal(10, 4);
+		const copied: string[] = [];
+		const source = "alpha beta gamma";
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text(source, 0, 0));
+		tui.start();
+		try {
+			for (const [index, width] of [10, 7, 20, 6].entries()) {
+				tui.resetTextSelection();
+				terminal.resize(width, 4);
+				await terminal.waitForRender();
+				const rowCount = tui
+					.getScreenLines()
+					.filter((line) => stripTerminalSequences(line).trim().length > 0).length;
+				await selectRows(terminal, 0, rowCount - 1);
+				assert.deepStrictEqual(copied[index], source);
+			}
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("uses an injected copySelection handler instead of OSC 52 and reports success", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const copied: string[] = [];
@@ -2246,6 +3371,388 @@ describe("TuiAltScreen", () => {
 		assert.ok(terminal.getViewport().every((line) => !line.includes("Copied!")));
 
 		tui.stop();
+	});
+
+	it("copies on the first right click, clears the selection, and pastes on the second", async () => {
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		const termProgram = process.env.TERM_PROGRAM;
+		assert.ok(platformDescriptor);
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		let pasteCount = 0;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copyOnRightClick: true,
+			onRightClickPaste: () => {
+				pasteCount += 1;
+			},
+			copySelection: async (text) => {
+				copied.push(text);
+				return { copied: true, message: "Copied via terminal" };
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		try {
+			Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
+			delete process.env.TERM_PROGRAM;
+			tui.start();
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;2M");
+			terminal.sendInput("\x1b[<0;4;2m");
+			await terminal.waitForRender();
+			assert.deepStrictEqual(copied, []);
+
+			terminal.sendInput("\x1b[<2;4;2M");
+			terminal.sendInput("\x1b[<2;4;2m");
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+			assert.strictEqual(pasteCount, 0);
+			assert.strictEqual(tui.hasActiveSelection(), false);
+
+			terminal.sendInput("\x1b[<2;4;2M");
+			terminal.sendInput("\x1b[<2;4;2m");
+			await terminal.waitForRender();
+			assert.strictEqual(pasteCount, 1);
+			assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+			assert.ok(terminal.getViewport().some((line) => line.includes("Copied via terminal")));
+			assert.strictEqual(tui.getCopyOnRightClick(), true);
+			tui.setCopyOnRightClick(false);
+			assert.strictEqual(tui.getCopyOnRightClick(), false);
+		} finally {
+			tui.stop();
+			Object.defineProperty(process, "platform", platformDescriptor);
+			if (termProgram === undefined) delete process.env.TERM_PROGRAM;
+			else process.env.TERM_PROGRAM = termProgram;
+		}
+	});
+
+	it("pastes once after a pending right-click copy without copying the selection twice", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copy = createDeferred<boolean>();
+		const pasted = createDeferred<void>();
+		const copyRequests: string[] = [];
+		let pasteCount = 0;
+		let pasteRequest: TuiRightClickPasteRequest | undefined;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copyOnRightClick: true,
+			copySelection: (text) => {
+				copyRequests.push(text);
+				return copy.promise;
+			},
+			onRightClickPaste: (request) => {
+				pasteCount += 1;
+				pasteRequest = request;
+				pasted.resolve();
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 0, 3);
+			terminal.sendInput("\x1b[<2;4;2M");
+			terminal.sendInput("\x1b[<2;4;2m");
+			terminal.sendInput("\x1b[<2;4;2M");
+			terminal.sendInput("\x1b[<2;4;2m");
+			terminal.sendInput("\x1b[<2;4;2M");
+			terminal.sendInput("\x1b[<2;4;2m");
+
+			assert.deepStrictEqual(copyRequests, ["alpha\nbeta"]);
+			assert.strictEqual(pasteCount, 0);
+			assert.strictEqual(tui.hasActiveSelection(), true);
+
+			copy.resolve(true);
+			await pasted.promise;
+			assert.strictEqual(pasteCount, 1);
+			assert.ok(pasteRequest);
+			assert.strictEqual(pasteRequest.isCurrent(), true);
+			assert.deepStrictEqual(copyRequests, ["alpha\nbeta"]);
+			assert.strictEqual(tui.hasActiveSelection(), false);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	for (const copied of [true, false]) {
+		it(`waits for a pending right-click copy after selection clears and pastes only on success: ${copied}`, async () => {
+			const terminal = new RecordingTerminal(20, 4);
+			const copy = createDeferred<boolean>();
+			const copyRequests: string[] = [];
+			let pasteCount = 0;
+			let pasteRequest: TuiRightClickPasteRequest | undefined;
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copyOnSelect: false,
+				copyOnRightClick: true,
+				copySelection: (text) => {
+					copyRequests.push(text);
+					return copy.promise;
+				},
+				onRightClickPaste: (request) => {
+					pasteCount += 1;
+					pasteRequest = request;
+				},
+			});
+			tui.addChild(new Text("alpha\nbeta", 0, 0));
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				await selectRows(terminal, 0, 0, 0, 4);
+				terminal.sendInput("\x1b[<2;5;1M");
+				terminal.sendInput("\x1b[<2;5;1m");
+				tui.resetTextSelection();
+				assert.strictEqual(tui.hasActiveSelection(), false);
+
+				terminal.sendInput("\x1b[<2;5;1M");
+				terminal.sendInput("\x1b[<2;5;1m");
+				terminal.sendInput("\x1b[<2;5;1M");
+				terminal.sendInput("\x1b[<2;5;1m");
+				assert.deepStrictEqual(copyRequests, ["alpha"]);
+				assert.strictEqual(pasteCount, 0);
+
+				copy.resolve(copied);
+				await terminal.waitForRender();
+				assert.deepStrictEqual(copyRequests, ["alpha"]);
+				assert.strictEqual(pasteCount, copied ? 1 : 0);
+				assert.strictEqual(pasteRequest?.isCurrent(), copied ? true : undefined);
+				assert.strictEqual(tui.hasActiveSelection(), false);
+			} finally {
+				tui.stop();
+			}
+		});
+	}
+
+	it("does not paste an earlier copy into a replacement selection", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copy = createDeferred<boolean>();
+		const copyRequests: string[] = [];
+		let pasteCount = 0;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copyOnRightClick: true,
+			copySelection: (text) => {
+				copyRequests.push(text);
+				return copy.promise;
+			},
+			onRightClickPaste: () => {
+				pasteCount += 1;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0, 0, 4);
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			await selectRows(terminal, 1, 1, 0, 3);
+
+			copy.resolve(true);
+			await terminal.waitForRender();
+			assert.deepStrictEqual(copyRequests, ["alpha"]);
+			assert.strictEqual(pasteCount, 0);
+			assert.strictEqual(tui.hasActiveSelection(), true);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("invalidates paste requests by selection generation and request identity", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const requests: TuiRightClickPasteRequest[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copyOnRightClick: true,
+			onRightClickPaste: (request) => requests.push(request),
+		});
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			assert.strictEqual(requests.length, 1);
+			assert.strictEqual(requests[0]!.isCurrent(), true);
+
+			await selectRows(terminal, 0, 0, 0, 4);
+			assert.strictEqual(requests[0]!.isCurrent(), false);
+			tui.resetTextSelection();
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			assert.strictEqual(requests.length, 2);
+			assert.strictEqual(requests[1]!.isCurrent(), true);
+
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			assert.strictEqual(requests.length, 3);
+			assert.strictEqual(requests[1]!.isCurrent(), false);
+			assert.strictEqual(requests[2]!.isCurrent(), true);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("does not clear a replacement selection when an earlier right-click copy completes", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const firstCopy = createDeferred<boolean>();
+		const copyRequests: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copyOnRightClick: true,
+			copySelection: (text) => {
+				copyRequests.push(text);
+				return copyRequests.length === 1 ? firstCopy.promise : Promise.resolve(true);
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0, 0, 4);
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			await selectRows(terminal, 1, 1, 0, 3);
+			assert.strictEqual(tui.hasActiveSelection(), true);
+
+			firstCopy.resolve(true);
+			await terminal.waitForRender();
+			assert.strictEqual(tui.hasActiveSelection(), true);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copyRequests, ["alpha", "beta"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("does not paste after a pending right-click copy fails", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copy = createDeferred<boolean>();
+		const copyRequests: string[] = [];
+		let pasteCount = 0;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copyOnRightClick: true,
+			copySelection: (text) => {
+				copyRequests.push(text);
+				return copy.promise;
+			},
+			onRightClickPaste: () => {
+				pasteCount += 1;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0, 0, 4);
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			terminal.sendInput("\x1b[<2;5;1M");
+			terminal.sendInput("\x1b[<2;5;1m");
+			copy.resolve(false);
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copyRequests, ["alpha"]);
+			assert.strictEqual(pasteCount, 0);
+			assert.strictEqual(tui.hasActiveSelection(), true);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("serializes clipboard writes when newer selection copies finish first", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copyGates = [createDeferred<void>(), createDeferred<void>()];
+		const allWrites = createDeferred<void>();
+		const writes: string[] = [];
+		let copyCount = 0;
+		let clipboard = "";
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				const gate = copyGates[copyCount]!;
+				copyCount += 1;
+				await gate.promise;
+				clipboard = text;
+				writes.push(text);
+				if (writes.length === 2) allWrites.resolve();
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0, 0, 4);
+			await selectRows(terminal, 1, 1, 0, 3);
+			copyGates[1]!.resolve();
+			copyGates[0]!.resolve();
+			await allWrites.promise;
+
+			assert.deepStrictEqual(writes, ["alpha", "beta"]);
+			assert.strictEqual(clipboard, "beta");
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("continues queued clipboard writes after a copy rejects", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const firstCopy = createDeferred<boolean>();
+		const copyRequests: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: (text) => {
+				copyRequests.push(text);
+				return copyRequests.length === 1 ? firstCopy.promise : Promise.resolve(true);
+			},
+		});
+		tui.addChild(new Text("alpha", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0, 0, 4);
+			const first = tui.copyActiveSelectionToClipboard();
+			const second = tui.copyActiveSelectionToClipboard();
+			assert.deepStrictEqual(copyRequests, ["alpha"]);
+
+			const rejected = assert.rejects(first, /clipboard failed/);
+			firstCopy.reject(new Error("clipboard failed"));
+			await rejected;
+			assert.strictEqual(await second, true);
+			assert.deepStrictEqual(copyRequests, ["alpha", "alpha"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("retains the selection when right-click copying fails", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copyOnRightClick: true,
+			copySelection: async () => false,
+		});
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;1M");
+			terminal.sendInput("\x1b[<0;4;1m");
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<2;4;1M");
+			terminal.sendInput("\x1b[<2;4;1m");
+			await terminal.waitForRender();
+
+			assert.strictEqual(tui.hasActiveSelection(), true);
+			assert.ok(terminal.getViewport().some((line) => line.includes("Copy failed")));
+		} finally {
+			tui.stop();
+		}
 	});
 
 	it("copies an active selection programmatically", async () => {
@@ -2335,6 +3842,316 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("clamps drags from virtual line-end space to the rendered content", async () => {
+		const terminal = new RecordingTerminal(20, 1);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("abcdef", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;15;1M");
+			terminal.sendInput("\x1b[<32;3;1M");
+			terminal.sendInput("\x1b[<0;3;1m");
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, ["cdef"]);
+			assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7mcdef\x1b[27m")));
+
+			terminal.sendInput("\x1b[<0;15;1M");
+			terminal.sendInput("\x1b[<32;18;1M");
+			terminal.sendInput("\x1b[<0;18;1m");
+			await terminal.waitForRender();
+			assert.strictEqual(tui.hasActiveSelection(), false);
+			assert.deepStrictEqual(copied, ["cdef"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	for (const reverse of [false, true]) {
+		it(`renders selected body newlines in a ${reverse ? "reverse" : "forward"} layout drag without moving focus`, async () => {
+			const terminal = new RecordingTerminal(20, 6);
+			const copied: string[] = [];
+			const tui = new TuiAltScreen(terminal, true, undefined, {
+				copyOnSelect: false,
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			const source = "alpha\n\n中beta";
+			const footer = {
+				focused: false,
+				render: () => [`${CURSOR_MARKER}editor`],
+				invalidate() {},
+			};
+			tui.setLayoutRoot(new VStack([
+				{ component: new Text(source, 0, 0), shrink: 0 },
+				{ component: footer, shrink: 0 },
+			]));
+			tui.setFocus(footer);
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				const cursor = terminal.getCursorPosition();
+				if (reverse) await selectRows(terminal, 2, 0, 5, 0);
+				else await selectRows(terminal, 0, 2, 0, 5);
+
+				assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["alpha "]);
+				assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), [" "]);
+				assert.deepStrictEqual(highlightedText(tui.getScreenLines()[2]!), ["中beta"]);
+				assert.strictEqual(tui.getFocusedComponent(), footer);
+				assert.deepStrictEqual(terminal.getCursorPosition(), cursor);
+				assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+				assert.deepStrictEqual(copied, [source]);
+
+				await selectRows(terminal, 2, 2, 0, 5);
+				assert.deepStrictEqual(highlightedText(tui.getScreenLines()[2]!), ["中beta"]);
+				assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+				assert.deepStrictEqual(copied, [source, "中beta"]);
+			} finally {
+				tui.stop();
+			}
+		});
+	}
+
+	it("renders a selected body newline and its empty active endpoint", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(new Text("ddd\n", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 0, 0);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["ddd "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), [" "]);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["ddd\n"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("renders body newline cells only where soft-wrap copying inserts a newline", async () => {
+		const terminal = new RecordingTerminal(11, 3);
+		const copied: string[] = [];
+		const source = "alpha beta gamma\ndone";
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.setLayoutRoot(new Text(source, 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 2, 0, 3);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["alpha beta"]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), ["gamma "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[2]!), ["done"]);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, [source]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("renders selected newlines at scrolled ScrollView content offsets", async () => {
+		const terminal = new RecordingTerminal(20, 5);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		const scroll = new ScrollView(new Text("zero\none\ntwo\nthree\nfour\nfive\nsix", 0, 0), { primary: true });
+		tui.setLayoutRoot(new VStack([
+			{ component: new Text("header", 0, 0), shrink: 0 },
+			{ component: scroll, basis: 0, grow: 1 },
+		]));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			scroll.scrollTo(2);
+			await terminal.waitForRender();
+			await selectRows(terminal, 1, 3, 0, 3);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), ["two "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[2]!), ["three "]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[3]!), ["four"]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[4]!), []);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["two\nthree\nfour"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	for (const { name, source, startRow, endRow } of [
+		{ name: "content", source: "abc\ndef", startRow: 0, endRow: 1 },
+		{ name: "an empty line", source: "abc\n\ndef", startRow: 1, endRow: 2 },
+	]) {
+		it(`clamps a virtual drag start to the body newline cell after ${name}`, async () => {
+			const terminal = new RecordingTerminal(20, 3);
+			const copied: string[] = [];
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copyOnSelect: false,
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			tui.setLayoutRoot(new Text(source, 0, 0));
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				await selectRows(terminal, startRow, endRow, 5, 2);
+				assert.deepStrictEqual(highlightedText(tui.getScreenLines()[startRow]!), [" "]);
+				assert.deepStrictEqual(highlightedText(tui.getScreenLines()[endRow]!), ["def"]);
+				assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+				assert.deepStrictEqual(copied, ["\ndef"]);
+			} finally {
+				tui.stop();
+			}
+		});
+	}
+
+	for (const scrollbar of ["always", "auto"] as const) {
+		it(`keeps body newline cells off a ${scrollbar} scrollbar without suppressing hidden auto tracks`, async () => {
+			const terminal = new RecordingTerminal(10, 2);
+			const copied: string[] = [];
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copyOnSelect: false,
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			const scroll = new ScrollView(new Text("123456789\ndef\nghi", 0, 0), { primary: true, scrollbar });
+			tui.setLayoutRoot(scroll);
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				assert.strictEqual(scroll.isScrollbarVisible, scrollbar === "always");
+				await selectRows(terminal, 0, 1, 0, 2);
+				assert.deepStrictEqual(
+					highlightedText(tui.getScreenLines()[0]!),
+					[scrollbar === "always" ? "123456789" : "123456789 "],
+				);
+				assert.deepStrictEqual(highlightedText(tui.getScreenLines()[1]!), ["def"]);
+				assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+				assert.deepStrictEqual(copied, ["123456789\ndef"]);
+			} finally {
+				tui.stop();
+			}
+		});
+	}
+
+	it("keeps a body newline cell off the scroll-to-end indicator", async () => {
+		const terminal = new RecordingTerminal(10, 3);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			scrollToEndIndicator: () => "BOTTOM",
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		const scroll = new ScrollView(new Text("zero\none\ncc\ndddd\nfour\nfive", 0, 0), {
+			follow: "end",
+			primary: true,
+		});
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			scroll.scrollTo(2);
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 0, 3);
+			scroll.scrollTo(0);
+			await terminal.waitForRender();
+			assert.ok(stripTerminalSequences(tui.getScreenLines()[2]!).includes("BOTTOM"));
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[2]!), ["cc"]);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["cc\ndddd"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("selects only visible Markdown content across blank, list, and table rows", async () => {
+		const terminal = new RecordingTerminal(40, 10);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.addChild(new Markdown(
+			"alpha\n\n- 苹果\n- 香蕉\n\n| 1 | 苹果 |\n| --- | --- |\n| 2 | 咖啡 |",
+			0,
+			0,
+			defaultMarkdownTheme,
+		));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.events.length = 0;
+			terminal.sendInput("\x1b[<0;40;1M");
+			terminal.sendInput("\x1b[<32;40;10M");
+			await terminal.waitForRender();
+
+			const highlighted = terminal.events.flatMap((event) => event.type === "write"
+				? [...event.data.matchAll(/\x1b\[7m([\s\S]*?)\x1b\[27m/g)].map((match) => stripTerminalSequences(match[1]!))
+				: []);
+			assert.deepStrictEqual(highlighted, [
+				" ",
+				" ",
+				"- 苹果 ",
+				"- 香蕉 ",
+				" ",
+				"┌───┬──────┐ ",
+				"│ 1 │ 苹果 │ ",
+				"├───┼──────┤ ",
+				"│ 2 │ 咖啡 │ ",
+				"└───┴──────┘",
+			]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("omits virtual padding from every row of a multi-line drag", async () => {
+		const terminal = new RecordingTerminal(20, 5);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.addChild(new Text("apple\nbanana\norange\ngrape\nwatermelon", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;15;2M");
+			terminal.sendInput("\x1b[<32;11;5M");
+			await terminal.waitForRender();
+
+			const highlighted = tui.getScreenLines().flatMap(highlightedText);
+			assert.deepStrictEqual(highlighted, [" ", "orange ", "grape ", "watermelon"]);
+			assert.ok(highlighted.every((text) => !/^ {2,}$/.test(text)));
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("does not append whitespace to double-click word highlighting", async () => {
 		const terminal = new RecordingTerminal(20, 1);
 		const tui = new TuiAltScreen(terminal);
@@ -2398,6 +4215,284 @@ describe("TuiAltScreen", () => {
 
 		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("foo  \x1b[27m")));
 		tui.stop();
+	});
+
+	it("confines selections that start in an overlay to its visible lines and invalidates them on close", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("hidden-one\nhidden-two", 0, 0));
+		const overlay = tui.showOverlay(new Text("PUBLIC\nSECOND", 0, 0), { row: 0, col: 2, width: 6 });
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1, 3, 19);
+			assert.deepStrictEqual(copied, ["UBLIC\nSECOND"]);
+			overlay.hide();
+			await terminal.waitForRender();
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), false);
+			assert.strictEqual(tui.hasActiveSelection(), false);
+			assert.deepStrictEqual(copied, ["UBLIC\nSECOND"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("copies an overlay selection again without including the first copy flash", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		let renderCount = 0;
+		const overlay = {
+			render: () => {
+				renderCount += 1;
+				return ["PUBLIC", "SECOND"];
+			},
+			invalidate() {},
+		};
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.showOverlay(overlay, { row: 0, col: 0, width: 20 });
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1);
+			const firstCopyRenderCount = renderCount;
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+			assert.strictEqual(renderCount, firstCopyRenderCount + 1);
+			const secondCopyRenderCount = renderCount;
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.strictEqual(renderCount, secondCopyRenderCount);
+			await terminal.waitForRender();
+			assert.strictEqual(renderCount, secondCopyRenderCount + 1);
+			assert.deepStrictEqual(copied, ["PUBLIC\nSECOND", "PUBLIC\nSECOND"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("does not copy a second legacy overlay render that differs from the displayed frame", async () => {
+		const terminal = new RecordingTerminal(20, 2);
+		const copied: string[] = [];
+		let diverge = false;
+		let snapshotRender = true;
+		let renderCount = 0;
+		const overlay = {
+			render: () => {
+				renderCount += 1;
+				if (!diverge) return ["PUBLIC"];
+				snapshotRender = !snapshotRender;
+				return [snapshotRender ? "PUBLIC" : "SCREEN"];
+			},
+			invalidate() {},
+		};
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.showOverlay(overlay, { row: 0, col: 0, width: 20 });
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0);
+			diverge = true;
+			const renderCountBeforeChange = renderCount;
+			tui.renderNow();
+			assert.ok(tui.getScreenLines()[0]?.includes("SCREEN"));
+			assert.strictEqual(renderCount, renderCountBeforeChange + 1);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), false);
+			assert.deepStrictEqual(copied, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("reselects overlay content without copying a visible copy flash", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.showOverlay(new Text("PUBLIC\nSECOND", 0, 0), { row: 0, col: 0, width: 20 });
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 1);
+			assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+			await selectRows(terminal, 0, 1);
+			assert.deepStrictEqual(copied, ["PUBLIC\nSECOND", "PUBLIC\nSECOND"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("invalidates overlay selections when the target moves, resizes, or is covered", async () => {
+		for (const scenario of ["move", "resize", "cover"] as const) {
+			const terminal = new RecordingTerminal(20, 3);
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copySelection: async () => true,
+			});
+			tui.addChild(new Text("hidden", 0, 0));
+			const options = { row: 0, col: 2, width: 6 };
+			tui.showOverlay(new Text("PUBLIC", 0, 0), options);
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				await selectRows(terminal, 0, 0, 3, 4);
+				assert.strictEqual(tui.hasActiveSelection(), true);
+				if (scenario === "move") options.row = 1;
+				if (scenario === "resize") options.width = 7;
+				if (scenario === "cover") tui.showOverlay(new Text("TOP", 0, 0), { row: 0, col: 2, width: 6 });
+				tui.requestRender();
+				await terminal.waitForRender();
+				assert.strictEqual(await tui.copyActiveSelectionToClipboard(), false);
+				assert.strictEqual(tui.hasActiveSelection(), false);
+			} finally {
+				tui.stop();
+			}
+		}
+	});
+
+	it("uses overlay-local words and visual rows for double and triple clicks", async () => {
+		const terminal = new RecordingTerminal(30, 2);
+		const copied: string[] = [];
+		const base = {
+			selectionExclusions: () => [{ start: 0, end: 2 }],
+			render: () => ["● hidden"],
+			invalidate() {},
+		};
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(base);
+		tui.showOverlay(new Text("● PUBLIC", 0, 0), { row: 0, col: 0, width: 9 });
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			for (let click = 0; click < 2; click++) {
+				terminal.sendInput("\x1b[<0;3;1M");
+				terminal.sendInput("\x1b[<0;3;1m");
+			}
+			await terminal.waitForRender();
+			assert.deepStrictEqual(copied, ["PUBLIC"]);
+			terminal.sendInput("\x1b[<0;3;1M");
+			terminal.sendInput("\x1b[<0;3;1m");
+			await terminal.waitForRender();
+			assert.deepStrictEqual(copied, ["PUBLIC", "● PUBLIC"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("continues copying body text through an overlay without highlighting the overlay", async () => {
+		const terminal = new RecordingTerminal(20, 1);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("abcdefghijklmno", 0, 0));
+		tui.showOverlay(new Text("XXXX", 0, 0), { row: 0, col: 5, width: 4 });
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.events.length = 0;
+			await selectRows(terminal, 0, 0, 0, 14);
+			assert.deepStrictEqual(copied, ["abcdefghijklmno"]);
+			const writes = terminal.events
+				.filter((event) => event.type === "write")
+				.map((event) => event.data)
+				.filter((data) => data.includes("XXXX"));
+			assert.ok(writes.length > 0);
+			for (const write of writes) {
+				const overlayIndex = write.indexOf("XXXX");
+				const prefix = write.slice(Math.max(0, overlayIndex - 20), overlayIndex);
+				const resetIndex = prefix.lastIndexOf("\x1b[0m");
+				assert.doesNotMatch(prefix.slice(resetIndex < 0 ? 0 : resetIndex), /\x1b\[7m/);
+			}
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps body selection ownership while dragging through a mouse-aware overlay", async () => {
+		const terminal = new RecordingTerminal(20, 1);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("abcdefghijklmno", 0, 0));
+		tui.showOverlay(
+			new MouseRegion(new Text("XXXX", 0, 0), (event) =>
+				event.type === "drag" || event.type === "release" ? { handled: true } : undefined,
+			),
+			{ row: 0, col: 5, width: 4 },
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			await selectRows(terminal, 0, 0, 0, 6);
+			assert.deepStrictEqual(copied, ["abcdefg"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("keeps scroll-view selection auto-scroll active with an overlay elsewhere", async (context) => {
+		context.mock.timers.enable({ apis: ["setInterval"] });
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.showOverlay(new Text("OVER", 0, 0), { row: 0, col: 10, width: 4 });
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			assert.strictEqual(tui.viewportTop, 6);
+			terminal.sendInput("\x1b[<0;1;3M");
+			terminal.sendInput("\x1b[<32;1;1M");
+			context.mock.timers.tick(100);
+			await terminal.waitForRender();
+			const selectionTop = tui.viewportTop;
+			assert.ok(selectionTop < 6);
+			terminal.sendInput("\x1b[<0;1;1m");
+			await terminal.waitForRender();
+			const selectedLines = Array.from({ length: 8 - selectionTop }, (_, index) => `line ${selectionTop + index + 1}`);
+			selectedLines.push("l");
+			assert.deepStrictEqual(copied, [selectedLines.join("\n")]);
+		} finally {
+			tui.stop();
+		}
 	});
 
 	it("selects whole words on double click, extends word drags, and selects lines on triple click", async () => {

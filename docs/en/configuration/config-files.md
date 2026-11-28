@@ -667,8 +667,8 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback; `fullscreen` (experimental) makes parts of the UI mouse-interactive for a smoother experience |
-| `copy_on_select` | `boolean` | `true` | Fullscreen mode only: copy text as soon as you select it; you can also press `Ctrl-C` to copy |
-| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | Fullscreen mode only: lines scrolled per mouse-wheel event (`"auto"` or a positive integer); `"auto"` speeds up automatically when scrolling fast |
+| `cursor_copy_mode` | `string` | `"immediate"` | Fullscreen mode only: `"off"` copies only with `Ctrl-C`, `"immediate"` copies selected text immediately, and `"right-click"` copies and clears the selection on the first right-click, then pastes into the input on the second when clipboard reading is available; also configurable under `/settings` → Selection copying |
+| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | Fullscreen wheel scrolling: `"auto"` starts at one line per event and accelerates fast scrolling up to six lines; a positive integer sets a fixed line count. Local macOS terminals leave acceleration to the operating system |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
@@ -683,6 +683,14 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
+The deprecated `copy_on_select` field is still read when `cursor_copy_mode` is unset: `true` maps to `"immediate"` and `false` to `"off"`. Existing configurations can migrate using that mapping; saved configurations use `cursor_copy_mode`. Holding `Alt` while scrolling multiplies the current wheel distance by five.
+
+Fullscreen selection copy rejoins rows created only by width wrapping and preserves original newlines. Spaces collapsed at wrap points are restored, so a long logical line pastes as one line. Triple-clicking selects the entire logical line across automatic wraps. Message decoration columns, such as status bullets and their continuation indentation, are excluded from both the selection and copied text.
+
+Right-click paste requires a readable system clipboard. macOS can fall back to `pbpaste`, Wayland to `wl-paste`, and X11 to `xclip` or `xsel`. OSC 52 can deliver copied text through the terminal on headless Linux hosts (without a graphical display) or in SSH sessions, but a successful OSC 52 copy does not give Kimi Code a way to read it back. If no readable backend is available, right-click paste shows an error; use the terminal's paste shortcut instead.
+
+Selection behavior with overlays depends on where the drag starts. A selection that starts inside an overlay stays within that overlay and copies only its visible text. A selection that starts in body text can continue through an overlay: the overlay is not highlighted, and copying includes the underlying body text, including content hidden by the overlay.
+
 <details>
 <summary>Fields in the stdin JSON snapshot</summary>
 
@@ -694,7 +702,7 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
 # tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
-copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
+cursor_copy_mode = "immediate" # "off" (Ctrl-C only), "immediate", or "right-click" (copy then paste when readable)
 # wheel_scroll_lines = "auto" # fullscreen only: "auto" or lines per wheel event (e.g. 1, 2, 3, 5, 10)
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback

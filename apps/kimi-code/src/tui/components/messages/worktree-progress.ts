@@ -1,4 +1,17 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@moonshot-ai/pi-tui';
+import {
+  decorateRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  Text,
+  textRenderLine,
+  truncateRenderLine,
+  visibleWidth,
+  withRenderLineSelectionExclusions,
+  withRenderLineText,
+  type Component,
+  type TuiRenderLine,
+} from '@moonshot-ai/pi-tui';
 
 import { WORKTREE_LISTED_FILES, WORKTREE_SHORT_SHA_LENGTH } from '#/constant/worktree';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
@@ -66,13 +79,17 @@ export class WorktreeProgressComponent implements Component {
   }
 
   render(width: number): string[] {
-    const safeWidth = Math.max(0, width);
-    if (safeWidth === 0) return [''];
-    const lines = ['', ...this.renderProgress(safeWidth)];
-    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
+    return renderLineTexts(this[RENDER_LINES](width));
   }
 
-  private renderProgress(width: number): string[] {
+  [RENDER_LINES](width: number): TuiRenderLine[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth === 0) return [textRenderLine('')];
+    const lines = [textRenderLine(''), ...this.renderProgress(safeWidth)];
+    return lines.map((line) => truncateRenderLine(line, safeWidth, '…'));
+  }
+
+  private renderProgress(width: number): TuiRenderLine[] {
     const progress = this.progress;
     switch (progress.phase) {
       case 'entered':
@@ -121,7 +138,7 @@ export class WorktreeProgressComponent implements Component {
     }
   }
 
-  private renderRow(row: WorktreeProgressRow, width: number): string[] {
+  private renderRow(row: WorktreeProgressRow, width: number): TuiRenderLine[] {
     if (row.step === 'include' && row.status === 'done' && row.copiedFiles.length === 0) return [];
     const mark =
       row.status === 'running'
@@ -133,7 +150,16 @@ export class WorktreeProgressComponent implements Component {
     const output = row.status === 'failed' ? (row.output ?? []).slice(-WORKTREE_ERROR_OUTPUT_LINES) : [];
     return [
       ...rowLines,
-      ...output.map((line) => truncateToWidth(currentTheme.fg('textMuted', `${MESSAGE_INDENT}  ${line}`), width, '…')),
+      ...output.map((line) =>
+        truncateRenderLine(
+          withRenderLineSelectionExclusions(
+            textRenderLine(currentTheme.fg('textMuted', `${MESSAGE_INDENT}  ${line}`)),
+            [{ start: 0, end: MESSAGE_INDENT.length }],
+          ),
+          width,
+          '…',
+        ),
+      ),
     ];
   }
 }
@@ -177,9 +203,11 @@ function arrivalNotes(progress: Extract<WorktreeProgress, { phase: 'entered' | '
   return notes;
 }
 
-function wrapped(prefix: string, text: string, width: number): string[] {
+function wrapped(prefix: string, text: string, width: number): TuiRenderLine[] {
   const indent = ' '.repeat(visibleWidth(prefix));
-  return wrapTextWithAnsi(text, Math.max(1, width - indent.length)).map((line, index) =>
-    index === 0 ? `${prefix}${line}` : `${indent}${line}`,
+  const lines = renderComponentLines(new Text(text, 0, 0), Math.max(1, width - indent.length));
+  if (lines.length === 0) return [decorateRenderLine(textRenderLine(''), prefix)];
+  return lines.map((line, index) =>
+    decorateRenderLine(withRenderLineText(line, line.text.trimEnd()), index === 0 ? prefix : indent),
   );
 }

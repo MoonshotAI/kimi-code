@@ -5,6 +5,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import { formatGoalElapsed } from '../goal-format';
 import { renderTruncated } from './truncated';
+import { ToolTranscriptText } from './transcript-row';
 import type { ResultRenderer } from './types';
 
 const DESCRIPTION_MAX = 72;
@@ -30,7 +31,7 @@ export const waitForSummary: ResultRenderer = (toolCall, result, ctx) => {
 
   const out: Component[] = [];
   for (const line of glanceLines(view)) {
-    out.push(new Text(`  ${currentTheme.dim(line)}`, 0, 0));
+    out.push(new ToolTranscriptText(`  ${currentTheme.dim(line)}`, 2, 0, 0));
   }
   if (ctx.expanded && result.output.length > 0) {
     out.push(new Text(currentTheme.dim(result.output), 4, 0));

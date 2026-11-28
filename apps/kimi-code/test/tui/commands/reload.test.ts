@@ -217,6 +217,31 @@ auto_install = false
     expect(host.state.appState.followUpBehavior).toBeUndefined();
   });
 
+  it('applies top-level wheel scrolling and selection copy modes to the live fullscreen renderer', async () => {
+    await writeTuiConfig(`
+cursor_copy_mode = "right-click"
+wheel_scroll_lines = 3
+`);
+    const host = makeHost();
+    const ui = new TuiAltScreen(new VirtualTerminal(40, 10));
+    Object.assign(host.state, { ui });
+
+    await handleReloadTuiCommand(host);
+
+    expect(ui.getCopyOnSelect()).toBe(false);
+    expect(ui.getCopyOnRightClick()).toBe(true);
+    const internals = ui as unknown as {
+      wheelScroll: { lines: 'auto' | number };
+      altWheelAcceleration: boolean;
+    };
+    expect(internals.wheelScroll.lines).toBe(3);
+    expect(internals.altWheelAcceleration).toBe(true);
+    expect(host.state.appState).toMatchObject({
+      selectionCopyMode: 'right-click',
+      wheelScrollLines: 3,
+    });
+  });
+
   it('notices a required restart when tui_mode differs from the running UI mode', async () => {
     await writeTuiConfig('tui_mode = "fullscreen"\n');
     const host = makeHost();

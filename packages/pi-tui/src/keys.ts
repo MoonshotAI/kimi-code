@@ -1513,3 +1513,13 @@ function decodeModifyOtherKeysPrintable(data: string): string | undefined {
 export function decodePrintableKey(data: string): string | undefined {
 	return decodeKittyPrintable(data) ?? decodeModifyOtherKeysPrintable(data);
 }
+
+export function decodeTextInput(data: string): string | undefined {
+	const text = decodePrintableKey(data) ?? data;
+	if (text.length === 0) return undefined;
+	for (const char of text) {
+		const code = char.codePointAt(0)!;
+		if (code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) return undefined;
+	}
+	return text;
+}

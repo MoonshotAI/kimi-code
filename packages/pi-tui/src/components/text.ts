@@ -1,5 +1,14 @@
+import {
+	decorateRenderLine,
+	RENDER_LINES,
+	renderLineTexts,
+	renderWrappedLines,
+	textRenderLine,
+	type TuiRenderLine,
+	withRenderLineText,
+} from "../render-line.ts";
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsiDetailed } from "../utils.ts";
 
 /**
  * Text component - displays multi-line text with word wrapping
@@ -13,7 +22,7 @@ export class Text implements Component {
 	// Cache for rendered output
 	private cachedText?: string;
 	private cachedWidth?: number;
-	private cachedLines?: string[];
+	private cachedLines?: TuiRenderLine[];
 
 	constructor(text: string = "", paddingX: number = 1, paddingY: number = 1, customBgFn?: (text: string) => string) {
 		this.text = text;
@@ -49,67 +58,55 @@ export class Text implements Component {
 		this.cachedLines = undefined;
 	}
 
-	render(width: number): readonly string[] {
-		// Check cache
+	render(width: number): string[] {
+		return renderLineTexts(this[RENDER_LINES](width));
+	}
+
+	[RENDER_LINES](width: number): TuiRenderLine[] {
 		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
 			return this.cachedLines;
 		}
 
-		// Don't render anything if there's no actual text
 		if (!this.text || this.text.trim() === "") {
-			const result: string[] = [];
+			const result: TuiRenderLine[] = [];
 			this.cachedText = this.text;
 			this.cachedWidth = width;
 			this.cachedLines = result;
 			return result;
 		}
 
-		// Replace tabs with 3 spaces
 		const normalizedText = this.text.replace(/\t/g, "   ");
-
-		// Reduce margins when necessary so content and padding fit within the available width.
 		const paddingX = Math.min(this.paddingX, Math.max(0, Math.floor((width - 1) / 2)));
 		const contentWidth = Math.max(1, width - paddingX * 2);
-
-		// Wrap text (this preserves ANSI codes but does NOT pad)
-		const wrappedLines = wrapTextWithAnsi(normalizedText, contentWidth);
-
-		// Add margins and background to each line
+		const wrappedLines = renderWrappedLines(wrapTextWithAnsiDetailed(normalizedText, contentWidth));
 		const leftMargin = " ".repeat(paddingX);
 		const rightMargin = " ".repeat(paddingX);
-		const contentLines: string[] = [];
+		const contentLines: TuiRenderLine[] = [];
 
 		for (const line of wrappedLines) {
-			// Add margins
-			const lineWithMargins = leftMargin + line + rightMargin;
-
-			// Apply background if specified (this also pads to full width)
+			const lineWithMargins = leftMargin + line.text + rightMargin;
+			const marginedLine = decorateRenderLine(withRenderLineText(line, lineWithMargins), leftMargin);
 			if (this.customBgFn) {
-				contentLines.push(applyBackgroundToLine(lineWithMargins, width, this.customBgFn));
+				contentLines.push(withRenderLineText(marginedLine, applyBackgroundToLine(lineWithMargins, width, this.customBgFn)));
 			} else {
-				// No background - just pad to width with spaces
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
+				const paddingNeeded = Math.max(0, width - visibleWidth(lineWithMargins));
+				contentLines.push(withRenderLineText(marginedLine, lineWithMargins + " ".repeat(paddingNeeded)));
 			}
 		}
 
-		// Add top/bottom padding (empty lines)
 		const emptyLine = " ".repeat(Math.max(0, width));
-		const emptyLines: string[] = [];
+		const emptyLines: TuiRenderLine[] = [];
 		for (let i = 0; i < this.paddingY; i++) {
 			const line = this.customBgFn ? applyBackgroundToLine(emptyLine, width, this.customBgFn) : emptyLine;
-			emptyLines.push(line);
+			emptyLines.push(textRenderLine(line));
 		}
 
 		const result = [...emptyLines, ...contentLines, ...emptyLines];
-		flattenLines(result);
-
-		// Update cache
+		flattenLines(result.map((line) => line.text));
 		this.cachedText = this.text;
 		this.cachedWidth = width;
 		this.cachedLines = result;
 
-		return result.length > 0 ? result : [""];
+		return result.length > 0 ? result : [textRenderLine("")];
 	}
 }

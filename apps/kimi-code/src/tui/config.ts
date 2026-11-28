@@ -198,6 +198,9 @@ export function transcriptGroupingActive(options: TranscriptPresentationOptions)
 export const TuiModeSchema = z.enum(['regular', 'fullscreen']);
 export type TuiMode = z.infer<typeof TuiModeSchema>;
 
+export const SelectionCopyModeSchema = z.enum(['off', 'immediate', 'right-click']);
+export type SelectionCopyMode = z.infer<typeof SelectionCopyModeSchema>;
+
 export const FollowUpBehaviorSchema = z.enum(['queue', 'steer']);
 export type FollowUpBehavior = z.infer<typeof FollowUpBehaviorSchema>;
 export const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
@@ -233,7 +236,8 @@ export function resolveWheelScrollLines(value: WheelScrollLines | undefined): Wh
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   tui_mode: z.string().optional(),
-  copy_on_select: z.boolean().optional(),
+  cursor_copy_mode: z.string().optional(),
+  copy_on_select: z.union([z.boolean(), z.literal('right-click')]).optional(),
   wheel_scroll_lines: z.unknown().optional(),
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
@@ -274,7 +278,7 @@ export const TuiConfigFileSchema = z.object({
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   tuiMode: TuiModeSchema.optional(),
-  copyOnSelect: z.boolean().optional(),
+  selectionCopyMode: SelectionCopyModeSchema.optional(),
   wheelScrollLines: WheelScrollLinesSchema.optional(),
   renderLatex: z.boolean().optional(),
   disablePasteBurst: z.boolean(),
@@ -306,7 +310,7 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
-  copyOnSelect: true,
+  selectionCopyMode: 'immediate',
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
@@ -472,11 +476,25 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown tui_mode value: ${tuiModeValue}`);
     }
   }
+  let selectionCopyMode: SelectionCopyMode =
+    config.copy_on_select === 'right-click'
+      ? 'right-click'
+      : config.copy_on_select === false
+        ? 'off'
+        : 'immediate';
+  const cursorCopyModeValue = config.cursor_copy_mode;
+  if (cursorCopyModeValue !== undefined) {
+    const parsed = SelectionCopyModeSchema.safeParse(cursorCopyModeValue);
+    if (parsed.success) {
+      selectionCopyMode = parsed.data;
+    } else {
+      warn(`[tui.toml] ignoring unknown cursor_copy_mode value: ${cursorCopyModeValue}`);
+    }
+  }
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     tuiMode,
-    copyOnSelect:
-      config.copy_on_select ?? DEFAULT_TUI_CONFIG.copyOnSelect,
+    selectionCopyMode,
     wheelScrollLines,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
@@ -521,6 +539,7 @@ export function normalizeTuiConfig(
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
+  const selectionCopyMode = config.selectionCopyMode ?? DEFAULT_TUI_CONFIG.selectionCopyMode ?? 'immediate';
   const statusItems = config.statusLine?.items;
   const statusCommand = config.statusLine?.command;
   const statusLines: string[] = [];
@@ -576,7 +595,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 ${tuiModeLine}
-copy_on_select = ${String(config.copyOnSelect !== false)} # fullscreen only: false copies only when you press Ctrl-C
+cursor_copy_mode = "${selectionCopyMode}" # fullscreen: "off" (Ctrl-C), "immediate", or "right-click" (copy then paste when readable)
 ${wheelScrollLinesLine}
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback

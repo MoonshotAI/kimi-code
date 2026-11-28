@@ -1,8 +1,9 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { renderLineTexts, visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -47,6 +48,45 @@ describe('ReadGroupComponent', () => {
 
     group.setExpanded(false);
     expect(rows(group, 100)).toHaveLength(1);
+  });
+
+  it('separates the header marker and per-file tree guides from transcript content', () => {
+    const group = makeGroup();
+    const collapsed = group.renderTranscriptRow(100);
+    expect(group.renderTranscriptRow(100)).toBe(collapsed);
+    expect(collapsed.gutterWidths).toEqual([0, 2]);
+    expect(strip(collapsed.contentLines[1]?.text ?? '')).toBe('Read 2 files · 200 lines');
+    expect(renderLineTexts(flattenTranscriptRow(collapsed, 100)).map((line) => strip(line).trimEnd())).toEqual(
+      group.render(100).map((line) => strip(line).trimEnd()),
+    );
+
+    group.setExpanded(true);
+    const expanded = group.renderTranscriptRow(100);
+    expect(expanded).not.toBe(collapsed);
+    expect(expanded.gutterWidths).toEqual([0, 2, 5, 5]);
+    expect(expanded.gutterLines.map((line) => strip(line.text))).toEqual([
+      '',
+      '● ',
+      '  ├─ ',
+      '  └─ ',
+    ]);
+    expect(expanded.contentLines.map((line) => strip(line.text).trimEnd())).toEqual([
+      '',
+      'Read 2 files · 200 lines',
+      'src/very/deeply/nested/directory/alpha-component.ts · 120 lines',
+      'src/very/deeply/nested/directory/beta-component.ts · 80 lines',
+    ]);
+    expect(renderLineTexts(flattenTranscriptRow(expanded, 100)).map((line) => strip(line).trimEnd())).toEqual(
+      group.render(100).map((line) => strip(line).trimEnd()),
+    );
+    expect(renderLineTexts(flattenTranscriptRow(group.renderTranscriptRow(30), 30)).map((line) => strip(line).trimEnd())).toEqual(
+      group.render(30).map((line) => strip(line).trimEnd()),
+    );
+
+    group.invalidate();
+    expect(group.renderTranscriptRow(100).contentLines.map((line) => line.text)).toEqual(
+      expanded.contentLines.map((line) => line.text),
+    );
   });
 
   it('truncates the header to the terminal width instead of wrapping', () => {

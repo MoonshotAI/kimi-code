@@ -1,5 +1,6 @@
 import {
   getKeybindings,
+  renderComponentLines,
   ScrollView,
   Text,
   TuiAltScreen,
@@ -13,11 +14,31 @@ import { describe, it, expect, onTestFinished, vi } from 'vitest';
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { StickyUserMessageComponent } from '#/tui/components/messages/sticky-user-message';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
-import type { WheelScrollLines } from '#/tui/config';
+import type { SelectionCopyMode, WheelScrollLines } from '#/tui/config';
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
 import { mountFooter } from '#/tui/tui-state';
 import type { AppState } from '#/tui/types';
 import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
+
+const clipboardText = vi.hoisted(() => ({
+  copyTextToClipboard: vi.fn<(text: string) => Promise<'native' | 'osc52'>>(async () => 'native'),
+  readClipboardText: vi.fn<() => Promise<string>>(async () => ''),
+}));
+vi.mock('#/utils/clipboard/clipboard-text', () => clipboardText);
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function fakeInitialAppState(): AppState {
   return {
@@ -132,17 +153,49 @@ describe('createTUIState', () => {
     expect(state.appState.tuiMode).toBeUndefined();
   });
 
-  it('starts the fullscreen renderer with the saved copy-on-select choice', () => {
-    const startWith = (copyOnSelect: boolean | undefined): boolean => {
+  it('starts the fullscreen renderer with the saved selection copy mode', () => {
+    const startWith = (selectionCopyMode: SelectionCopyMode | undefined) => {
       const state = createTUIState({
-        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', copyOnSelect },
+        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', selectionCopyMode },
         startup: { continueLast: false, yolo: false, auto: false, plan: false },
       });
-      return (state.ui as TuiAltScreen).getCopyOnSelect();
+      const ui = state.ui as TuiAltScreen;
+      return { immediate: ui.getCopyOnSelect(), rightClick: ui.getCopyOnRightClick() };
     };
 
-    expect(startWith(undefined)).toBe(true);
-    expect(startWith(false)).toBe(false);
+    expect(startWith(undefined)).toEqual({ immediate: true, rightClick: false });
+    expect(startWith('off')).toEqual({ immediate: false, rightClick: false });
+    expect(startWith('immediate')).toEqual({ immediate: true, rightClick: false });
+    expect(startWith('right-click')).toEqual({ immediate: false, rightClick: true });
+  });
+
+  it('enables select-all in the fullscreen search input', () => {
+    const state = createTUIState({
+      initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
+      startup: { continueLast: false, yolo: false, auto: false, plan: false },
+    });
+
+    expect((state.ui as unknown as { searchSelectAll: boolean }).searchSelectAll).toBe(true);
+    expect((state.ui as unknown as { editorSelection: boolean }).editorSelection).toBe(true);
+  });
+
+  it('defaults wheel scrolling to auto and keeps official Alt acceleration enabled', () => {
+    const startWith = (wheelScrollLines?: WheelScrollLines) => {
+      const state = createTUIState({
+        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', wheelScrollLines },
+        startup: { continueLast: false, yolo: false, auto: false, plan: false },
+      });
+      return state.ui as unknown as {
+        wheelScroll: { lines: 'auto' | number };
+        altWheelAcceleration: boolean;
+      };
+    };
+
+    expect(startWith().wheelScroll.lines).toBe('auto');
+    expect(startWith().altWheelAcceleration).toBe(true);
+    const configured = startWith(4);
+    expect(configured.wheelScroll.lines).toBe(4);
+    expect(configured.altWheelAcceleration).toBe(true);
   });
 
   async function mountFullscreenWheelProbe(wheelScrollLines?: WheelScrollLines): Promise<{
@@ -150,7 +203,11 @@ describe('createTUIState', () => {
     vt: VirtualTerminal;
   }> {
     const state = createTUIState({
-      initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', wheelScrollLines },
+      initialAppState: {
+        ...fakeInitialAppState(),
+        tuiMode: 'fullscreen',
+        wheelScrollLines,
+      },
       startup: { continueLast: false, yolo: false, auto: false, plan: false },
     });
     const ui = state.ui as TuiAltScreen;
@@ -243,12 +300,110 @@ describe('createTUIState', () => {
     expect(transcriptChildren[1]).toBeInstanceOf(ScrollView);
     expect(rootChildren[1]).toBe(state.dockContainer);
 
+    const scrollView = transcriptChildren[1] as ScrollView;
+    expect(scrollView.scrollbarLayout).toBe('dedicated');
+    const padding = renderComponentLines(scrollView, 20)[0];
+    expect(padding?.text).toBe(' ');
+    expect(padding?.selectionRegion?.content.text).toBe('');
+    expect(padding?.selectionRegion?.column).toBe(0);
+    expect(padding?.selectionRegion?.width).toBe(19);
+
     const internals = state.ui as unknown as {
       openUrl?: (url: string) => void;
       onRightClickPaste?: () => void;
     };
     expect(typeof internals.openUrl).toBe('function');
     expect(typeof internals.onRightClickPaste).toBe('function');
+  });
+
+  describe('right-click paste', () => {
+    function setup(read: () => Promise<string>) {
+      clipboardText.readClipboardText.mockReset();
+      clipboardText.readClipboardText.mockImplementation(read);
+      const state = createTUIState({
+        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
+        startup: { continueLast: false, yolo: false, auto: false, plan: false },
+      });
+      const ui = state.ui as TuiAltScreen;
+      ui.setFocus(state.editor);
+      const dispatchInput = vi.spyOn(ui, 'dispatchInput').mockImplementation(() => {});
+      const onRightClickPaste = (
+        ui as unknown as {
+          onRightClickPaste: (request: { isCurrent(): boolean }) => void;
+        }
+      ).onRightClickPaste;
+      return { state, ui, dispatchInput, onRightClickPaste };
+    }
+
+    it('does not read the clipboard when the request is already stale', () => {
+      const read = deferred<string>();
+      const { dispatchInput, onRightClickPaste } = setup(() => read.promise);
+      const isCurrent = vi.fn(() => false);
+
+      onRightClickPaste({ isCurrent });
+
+      expect(isCurrent).toHaveBeenCalledOnce();
+      expect(clipboardText.readClipboardText).not.toHaveBeenCalled();
+      expect(dispatchInput).not.toHaveBeenCalled();
+    });
+
+    it('does not dispatch clipboard text when the request becomes stale during the read', async () => {
+      const read = deferred<string>();
+      const { dispatchInput, onRightClickPaste } = setup(() => read.promise);
+      let current = true;
+      const isCurrent = vi.fn(() => current);
+
+      onRightClickPaste({ isCurrent });
+      expect(clipboardText.readClipboardText).toHaveBeenCalledOnce();
+      current = false;
+      read.resolve('stale clipboard text');
+      await read.promise;
+
+      expect(dispatchInput).not.toHaveBeenCalled();
+      expect(isCurrent).toHaveBeenCalledTimes(2);
+    });
+
+    it('dispatches one bracketed paste when the request and focused target remain current', async () => {
+      const read = deferred<string>();
+      const { dispatchInput, onRightClickPaste } = setup(() => read.promise);
+      const isCurrent = vi.fn(() => true);
+
+      onRightClickPaste({ isCurrent });
+      read.resolve('clipboard text');
+      await read.promise;
+
+      expect(dispatchInput).toHaveBeenCalledOnce();
+      expect(dispatchInput).toHaveBeenCalledWith('\u001B[200~clipboard text\u001B[201~');
+      expect(isCurrent).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not dispatch clipboard text when focus changes during the read', async () => {
+      const read = deferred<string>();
+      const { ui, dispatchInput, onRightClickPaste } = setup(() => read.promise);
+      const isCurrent = vi.fn(() => true);
+
+      onRightClickPaste({ isCurrent });
+      ui.setFocus(null);
+      read.resolve('clipboard text');
+      await read.promise;
+
+      expect(dispatchInput).not.toHaveBeenCalled();
+      expect(isCurrent).toHaveBeenCalledTimes(2);
+    });
+
+    it('flashes clipboard read errors', async () => {
+      const read = deferred<string>();
+      const { ui, dispatchInput, onRightClickPaste } = setup(() => read.promise);
+      const flash = vi.spyOn(ui, 'flash').mockImplementation(() => {});
+      const isCurrent = vi.fn(() => true);
+
+      onRightClickPaste({ isCurrent });
+      read.reject(new Error('Clipboard unavailable'));
+      await read.promise.catch(() => {});
+
+      expect(flash).toHaveBeenCalledWith('Clipboard unavailable', 5000);
+      expect(dispatchInput).not.toHaveBeenCalled();
+    });
   });
 
   it('supports Ctrl+F, Ctrl+Shift+F, and Up/Down search navigation in fullscreen mode', async () => {

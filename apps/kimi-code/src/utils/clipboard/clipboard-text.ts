@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
-import { isWaylandSession, isWSL } from './clipboard-common';
+import { isWaylandSession, isWSL, runCommandAsync } from './clipboard-common';
 import { clipboard } from './clipboard-native';
 import { writeClipboardOSC52 } from './clipboard-osc52';
 
@@ -22,22 +22,48 @@ export interface ClipboardWritePlan {
   readonly unavailableMessage: string;
 }
 
-interface UnixClipboardBackend {
-  readonly present: (env: NodeJS.ProcessEnv) => boolean;
+export interface ClipboardReadPlan {
+  readonly nativeModule: boolean;
   readonly commands: readonly ClipboardCommand[];
   readonly unavailableMessage: string;
 }
+
+interface UnixClipboardBackend {
+  readonly present: (env: NodeJS.ProcessEnv) => boolean;
+  readonly commands: readonly ClipboardCommand[];
+  readonly readCommands: readonly ClipboardCommand[];
+  readonly unavailableMessage: string;
+  readonly readUnavailableMessage: string;
+}
+
+const CLIPBOARD_READ_UNAVAILABLE = "Clipboard paste unavailable: use your terminal's paste shortcut";
+
+const POWERSHELL_CLIPBOARD_READ: ClipboardCommand = {
+  command: 'powershell.exe',
+  args: [
+    '-NoProfile',
+    '-NonInteractive',
+    '-STA',
+    '-Command',
+    'Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::Out.Write([System.Windows.Forms.Clipboard]::GetText())',
+  ],
+};
 
 const UNIX_CLIPBOARD_BACKENDS: readonly UnixClipboardBackend[] = [
   {
     present: (env) => Boolean(env['TERMUX_VERSION']),
     commands: [{ command: 'termux-clipboard-set', args: [] }],
+    readCommands: [{ command: 'termux-clipboard-get', args: [] }],
     unavailableMessage: 'Clipboard unavailable: install the Termux:API app and `termux-api` package',
+    readUnavailableMessage: 'Clipboard paste unavailable: install the Termux:API app and `termux-api` package',
   },
   {
     present: isWaylandSession,
     commands: [{ command: 'wl-copy', args: [] }],
+    readCommands: [{ command: 'wl-paste', args: ['--no-newline'] }],
     unavailableMessage: 'Clipboard unavailable: install `wl-clipboard` (`wl-copy`) or check Wayland access',
+    readUnavailableMessage:
+      'Clipboard paste unavailable: install `wl-clipboard` (`wl-paste`) or check Wayland access',
   },
   {
     present: (env) => Boolean(env['DISPLAY']),
@@ -45,7 +71,12 @@ const UNIX_CLIPBOARD_BACKENDS: readonly UnixClipboardBackend[] = [
       { command: 'xclip', args: ['-selection', 'clipboard'] },
       { command: 'xsel', args: ['--clipboard', '--input'] },
     ],
+    readCommands: [
+      { command: 'xclip', args: ['-selection', 'clipboard', '-o'] },
+      { command: 'xsel', args: ['--clipboard', '--output'] },
+    ],
     unavailableMessage: 'Clipboard unavailable: install `xclip` or `xsel`, or check X11 access',
+    readUnavailableMessage: 'Clipboard paste unavailable: install `xclip` or `xsel`, or check X11 access',
   },
 ];
 
@@ -73,6 +104,25 @@ export function planClipboardWrite(platform: NodeJS.Platform, env: NodeJS.Proces
     commands: backends.flatMap((backend) => backend.commands),
     osc52: forceOSC52 ? 'always' : osc52Fallback ? 'fallback' : 'never',
     unavailableMessage: backends[0]?.unavailableMessage ?? 'Clipboard unavailable',
+  };
+}
+
+export function planClipboardRead(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): ClipboardReadPlan {
+  if (platform === 'darwin' || platform === 'win32') {
+    return {
+      nativeModule: true,
+      commands: platform === 'darwin' ? [{ command: 'pbpaste', args: [] }] : [POWERSHELL_CLIPBOARD_READ],
+      unavailableMessage: CLIPBOARD_READ_UNAVAILABLE,
+    };
+  }
+  const backends = UNIX_CLIPBOARD_BACKENDS.filter((backend) => backend.present(env));
+  return {
+    nativeModule: platform !== 'linux',
+    commands: [
+      ...backends.flatMap((backend) => backend.readCommands),
+      ...(platform === 'linux' && isWSL(env) ? [POWERSHELL_CLIPBOARD_READ] : []),
+    ],
+    unavailableMessage: backends[0]?.readUnavailableMessage ?? CLIPBOARD_READ_UNAVAILABLE,
   };
 }
 
@@ -107,6 +157,27 @@ function runClipboardCommand(command: string, args: readonly string[], input: st
     child.stdin?.on('error', () => {});
     child.stdin?.end(input);
   });
+}
+
+async function runClipboardReadCommand(command: string, args: readonly string[]): Promise<string | undefined> {
+  const executable = resolveCommandPath(command);
+  if (executable === undefined) return undefined;
+  const result = await runCommandAsync(executable, [...args], { timeoutMs: CLIPBOARD_COMMAND_TIMEOUT_MS });
+  return result.ok ? result.stdout.toString('utf8') : undefined;
+}
+
+export async function readClipboardText(): Promise<string> {
+  const plan = planClipboardRead(process.platform, process.env);
+  if (plan.nativeModule && clipboard?.getText !== undefined) {
+    try {
+      return await clipboard.getText();
+    } catch {}
+  }
+  for (const { command, args } of plan.commands) {
+    const text = await runClipboardReadCommand(command, args);
+    if (text !== undefined) return text;
+  }
+  throw new Error(plan.unavailableMessage);
 }
 
 export async function copyTextToClipboard(text: string): Promise<ClipboardCopyMethod> {

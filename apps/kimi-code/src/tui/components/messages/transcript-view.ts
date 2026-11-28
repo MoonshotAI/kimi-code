@@ -1,4 +1,15 @@
-import { ScrollView, VStack, type Component, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import {
+  RENDER_LINES,
+  renderComponentLines,
+  renderComponentText,
+  ScrollView,
+  textRenderLine,
+  VStack,
+  withRenderLineSelectionRegion,
+  type Component,
+  type TuiRenderLine,
+  type TuiMouseEvent,
+} from '@moonshot-ai/pi-tui';
 
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { StickyUserMessageComponent } from '#/tui/components/messages/sticky-user-message';
@@ -14,18 +25,29 @@ export class TranscriptView extends VStack {
 
   constructor(private readonly transcript: TranscriptContainer) {
     super();
-    let cachedBody: string[] | undefined;
-    let paddedBody: string[] | undefined;
+    let cachedBody: TuiRenderLine[] | undefined;
+    let paddedBody: TuiRenderLine[] | undefined;
+    let paddedWidth: number | undefined;
     const content = {
       children: [transcript],
-      render: (width: number) => {
-        const lines = transcript.render(width);
-        if (cachedBody !== lines) {
+      render: renderComponentText,
+      [RENDER_LINES]: (width: number) => {
+        const lines = renderComponentLines(transcript, width);
+        if (cachedBody !== lines || paddedWidth !== width) {
           cachedBody = lines;
           paddedBody = undefined;
+          paddedWidth = width;
         }
         if (this.paddingTop === 0) return lines;
-        return (paddedBody ??= ['', ...lines]);
+        return (paddedBody ??= [
+          withRenderLineSelectionRegion(
+            textRenderLine(''),
+            textRenderLine(''),
+            lines[0]?.selectionRegion?.column ?? 0,
+            lines[0]?.selectionRegion?.width ?? width,
+          ),
+          ...lines,
+        ]);
       },
       invalidate: () => {
         transcript.invalidate();
@@ -44,6 +66,7 @@ export class TranscriptView extends VStack {
       primary: true,
       overscroll: 'chain',
       scrollbar: 'auto',
+      scrollbarLayout: 'dedicated',
     });
     this.pill = new StickyUserMessageComponent((y) => {
       this.scrollView.scrollTo(y);

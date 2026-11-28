@@ -40,8 +40,11 @@ Type `!` in an empty input box to enter shell mode and run terminal commands dir
 | `Ctrl-G` | Edit the current input in an external editor |
 | `Ctrl-V` | Paste an image or video from the clipboard (Unix / macOS) |
 | `Alt-V` | Paste an image or video from the clipboard (Windows) |
+| `Ctrl-Shift-A` | Select all text in fullscreen transcript search or the bottom editor |
 | `Ctrl--` | Undo |
 | `Esc` `Esc` | Open the undo selector (double-press while idle) |
+
+Triple-clicking selects the current logical line in the bottom editor or the complete query in fullscreen transcript search. You can also drag to select text. Typing or pasting replaces the active selection; `Backspace` and `Delete` remove it in fullscreen transcript search or the bottom editor. Multiline transcript selections use highlighted blocks to mark selected newlines and blank lines, without moving focus or the cursor away from the bottom editor.
 
 Pressing `Ctrl-G` opens an external editor, selected according to the following priority:
 

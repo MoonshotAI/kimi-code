@@ -1,8 +1,9 @@
-import type { TUI } from '@moonshot-ai/pi-tui';
+import { renderLineTexts, type TUI } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -89,6 +90,54 @@ describe('AgentGroupComponent', () => {
     group.dispose();
     running.dispose();
     waiting.dispose();
+  });
+
+  it('separates header markers, tree guides, and detail indentation from transcript content', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const ui = stubTui();
+    const group = new AgentGroupComponent(ui);
+    const first = createAgent('call_agent_1', 'inspect project', 'explore', ui);
+    const second = createAgent('call_agent_2', 'write tests', 'coder', ui);
+    group.attach('call_agent_1', first);
+    group.attach('call_agent_2', second);
+
+    const parts = group.renderTranscriptRow(120);
+    expect(group.renderTranscriptRow(120)).toBe(parts);
+    expect(parts.gutterWidths).toEqual([0, 2, 5, 9, 5, 9, 2]);
+    expect(parts.gutterLines.map((line) => strip(line.text))).toEqual([
+      '',
+      '● ',
+      '  ├─ ',
+      '  │      ',
+      '  └─ ',
+      '         ',
+      '  ',
+    ]);
+    expect(parts.contentLines.map((line) => strip(line.text).trimEnd())).toEqual([
+      '',
+      'Running 2 agents (2 waiting) · 0s',
+      'explore · inspect project · 0 tools · 0s · Waiting',
+      'Waiting to start…',
+      'coder · write tests · 0 tools · 0s · Waiting',
+      'Waiting to start…',
+      'Press Ctrl+B to run in background',
+    ]);
+    expect(renderLineTexts(flattenTranscriptRow(parts, 120)).map((line) => strip(line).trimEnd())).toEqual(
+      group.render(120).map((line) => strip(line).trimEnd()),
+    );
+    expect(renderLineTexts(flattenTranscriptRow(group.renderTranscriptRow(40), 40)).map((line) => strip(line).trimEnd())).toEqual(
+      group.render(40).map((line) => strip(line).trimEnd()),
+    );
+
+    startAgent(first, 'call_agent_1', 'explore');
+    const updated = group.renderTranscriptRow(120);
+    expect(updated).not.toBe(parts);
+    expect(updated.contentLines.map((line) => line.text).join('\n')).toContain('1 running, 1 waiting');
+
+    group.dispose();
+    first.dispose();
+    second.dispose();
   });
 
   it('shows the bound model in the row stats once reported', () => {

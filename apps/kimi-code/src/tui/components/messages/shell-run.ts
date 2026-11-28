@@ -1,11 +1,14 @@
-import { Container, Text } from '@moonshot-ai/pi-tui';
+import { Container, renderComponentLines } from '@moonshot-ai/pi-tui';
 
-import { SHELL_OUTPUT_PREVIEW_LINES } from '#/tui/constant/rendering';
+import { MESSAGE_INDENT, SHELL_OUTPUT_PREVIEW_LINES } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
 import { formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
 
+import { IndentedText } from './indented-text';
+import { splitToolTranscriptRow } from './tool-renderers/transcript-row';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
+import type { TranscriptRowParts } from './transcript-row-layout';
 
 const RUNNING_TAIL_LINES = 5;
 const TIMER_INTERVAL_MS = 1000;
@@ -15,7 +18,7 @@ const KEEP_COMBINED_CHARS = 64 * 1024;
 const TRUNCATED_RUNNING_NOTICE = '… (output truncated)';
 
 export class ShellRunComponent extends Container {
-  private readonly textComponent: Text;
+  private readonly textComponent: IndentedText;
   private finalOutput = '';
   private combined = '';
   private combinedTruncated = false;
@@ -29,7 +32,7 @@ export class ShellRunComponent extends Container {
 
   constructor(private readonly requestRender: () => void) {
     super();
-    this.textComponent = new Text(this.renderText(), 0, 0);
+    this.textComponent = new IndentedText(this.renderText());
     this.addChild(this.textComponent);
     this.timer = setInterval(() => this.tick(), TIMER_INTERVAL_MS);
   }
@@ -92,12 +95,19 @@ export class ShellRunComponent extends Container {
     this.flush();
   }
 
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const safeWidth = Math.max(0, width);
+    const gutterWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, safeWidth - 1));
+    return splitToolTranscriptRow(this, renderComponentLines(this, safeWidth), safeWidth, gutterWidth);
+  }
+
   private rebuildResult(): void {
     try {
       const next = new TruncatedOutputComponent(this.finalOutput, {
         expanded: this.expanded,
         isError: false,
         maxLines: SHELL_OUTPUT_PREVIEW_LINES,
+        indentLayout: 'fixed-left',
         expandHint: true,
       });
       this.clear();
@@ -130,7 +140,7 @@ export class ShellRunComponent extends Container {
   private renderText(): string {
     try {
       if (this.backgrounded) {
-        return `  ${currentTheme.fg('textDim', 'Moved to background.')}`;
+        return currentTheme.fg('textDim', 'Moved to background.');
       }
       const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
       const dim = (s: string): string => currentTheme.fg('textDim', s);
@@ -140,26 +150,21 @@ export class ShellRunComponent extends Container {
       let body: string;
       let extra = 0;
       if (trimmed.length === 0) {
-        body = `  ${dim('Running…')}`;
+        body = dim('Running…');
       } else if (this.expanded) {
-        const notice = this.combinedTruncated ? `  ${dim(TRUNCATED_RUNNING_NOTICE)}\n` : '';
-        body =
-          notice +
-          trimmed
-            .split('\n')
-            .map((line) => `  ${dim(line)}`)
-            .join('\n');
+        const notice = this.combinedTruncated ? `${dim(TRUNCATED_RUNNING_NOTICE)}\n` : '';
+        body = notice + trimmed.split('\n').map((line) => dim(line)).join('\n');
       } else {
         const lines = trimmed.split('\n');
         const tail = lines.slice(-RUNNING_TAIL_LINES);
         extra = Math.max(0, lines.length - RUNNING_TAIL_LINES);
-        body = tail.map((line) => `  ${dim(line)}`).join('\n');
+        body = tail.map((line) => dim(line)).join('\n');
       }
-      const timing = `  ${dim(`${extra > 0 ? `+${extra} lines ` : ''}(${elapsed}s)`)}`;
-      const hint = `  ${dim('(ctrl+b to run in background)')}`;
+      const timing = dim(`${extra > 0 ? `+${extra} lines ` : ''}(${elapsed}s)`);
+      const hint = dim('(ctrl+b to run in background)');
       return `${body}\n${timing}\n${hint}`;
     } catch {
-      return '  (output unavailable)';
+      return '(output unavailable)';
     }
   }
 }

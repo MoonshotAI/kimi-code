@@ -74,7 +74,7 @@ export async function applyReloadedTuiConfig(
     editorCommand: config.editorCommand,
     tuiMode: config.tuiMode,
     disablePasteBurst: config.disablePasteBurst,
-    copyOnSelect: config.copyOnSelect,
+    selectionCopyMode: config.selectionCopyMode,
     wheelScrollLines: config.wheelScrollLines,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
@@ -89,7 +89,9 @@ export async function applyReloadedTuiConfig(
   applyTranscriptPresentation(host);
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
   if (host.state.ui instanceof TuiAltScreen) {
-    host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
+    const selectionCopyMode = config.selectionCopyMode ?? 'immediate';
+    host.state.ui.setCopyOnSelect(selectionCopyMode === 'immediate');
+    host.state.ui.setCopyOnRightClick(selectionCopyMode === 'right-click');
     host.state.ui.setWheelScrollLines(resolveWheelScrollLines(config.wheelScrollLines));
   }
   if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {

@@ -1,6 +1,20 @@
+import type {
+	EditorSelectionPoint,
+	EditorSelectionRange,
+	SelectionEditComponent,
+	SelectionInputContext,
+	SelectionInputResult,
+} from "../editor-component.ts";
 import { getKeybindings } from "../keybindings.ts";
-import { decodeKittyPrintable } from "../keys.ts";
+import { decodeTextInput } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
+import { SelectionInputTransaction } from "../selection-input.ts";
+import {
+	getSelectionColumnAtOffset,
+	getSelectionOffsetsAtColumn,
+	getSelectionTextSpans,
+	type SelectionAffinity,
+} from "../selection-text.ts";
 import {
 	type Component,
 	CURSOR_MARKER,
@@ -10,7 +24,13 @@ import {
 	type TuiMouseEventResult,
 } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
-import { getGraphemeSegmenter, isWhitespaceChar, sliceByColumn, truncateToWidth, visibleWidth } from "../utils.ts";
+import {
+	getGraphemeSegmenter,
+	isWhitespaceChar,
+	sliceByColumn,
+	truncateToWidth,
+	visibleWidth,
+} from "../utils.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
 
 const segmenter = getGraphemeSegmenter();
@@ -29,13 +49,16 @@ export interface InputOptions {
 /**
  * Input component - single-line text input with horizontal scrolling
  */
-export class Input implements Component, Focusable {
+export class Input implements Component, Focusable, SelectionEditComponent {
 	private value: string = "";
 	private cursor: number = 0; // Cursor position in the value
 	private readonly prompt: string;
 	private readonly placeholder: string;
 	private readonly placeholderStyle: (text: string) => string;
 	private renderedStartColumn = 0;
+	private renderedStartOffset = 0;
+	private renderedContentStart = 0;
+	private renderedValue = "";
 	public onSubmit?: (value: string) => void;
 	public onEscape?: () => void;
 
@@ -45,6 +68,7 @@ export class Input implements Component, Focusable {
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
 	private isInPaste: boolean = false;
+	private readonly selectionInput: SelectionInputTransaction;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -55,12 +79,131 @@ export class Input implements Component, Focusable {
 
 	constructor(options: InputOptions = {}) {
 		this.prompt = options.prompt ?? "> ";
+		this.renderedContentStart = visibleWidth(this.prompt);
 		this.placeholder = options.placeholder ?? "";
 		this.placeholderStyle = options.placeholderStyle ?? ((text) => text);
+		this.selectionInput = new SelectionInputTransaction(
+			(data) => this.handleInput(data),
+			() => this.isInPaste,
+			(start, end) => this.deleteSelection(start, end),
+		);
 	}
 
 	getValue(): string {
 		return this.value;
+	}
+
+	getText(): string {
+		return this.value;
+	}
+
+	getRenderedValueRange(): { start: number; end: number } {
+		return { start: this.renderedContentStart, end: this.renderedContentStart + visibleWidth(this.renderedValue) };
+	}
+
+	getSelectionContentStart(row: number): number | undefined {
+		return row === 0 ? this.renderedContentStart : undefined;
+	}
+
+	getSelectionContentEnd(row: number): number | undefined {
+		return row === 0 ? this.getRenderedValueRange().end : undefined;
+	}
+
+	getSelectionOffsets(row: number, column: number): { start: number; end: number } | undefined {
+		if (row !== 0) return undefined;
+		const range = this.getRenderedValueRange();
+		const targetColumn = Math.max(range.start, Math.min(column, range.end)) - range.start;
+		const spans = getSelectionTextSpans(this.renderedValue, segmenter.segment(this.renderedValue));
+		const offsets = getSelectionOffsetsAtColumn(spans, targetColumn);
+		return {
+			start: this.renderedStartOffset + offsets.start,
+			end: this.renderedStartOffset + offsets.end,
+		};
+	}
+
+	getClosestSelectionPoint(row: number, column: number): EditorSelectionPoint & { endOffset: number } {
+		const contentStart = this.renderedContentStart;
+		const contentEnd = this.getRenderedValueRange().end;
+		const before = row < 0;
+		const after = row > 0;
+		const col = before ? contentStart : after ? contentEnd : Math.max(contentStart, Math.min(column, contentEnd));
+		const offsets = this.getSelectionOffsets(0, col) ?? {
+			start: this.renderedStartOffset,
+			end: this.renderedStartOffset,
+		};
+		return {
+			row: 0,
+			col,
+			offset: offsets.start,
+			endOffset: offsets.end,
+			...(after || (!before && column > contentEnd) ? { boundary: true } : {}),
+		};
+	}
+
+	getSelectionPointForOffset(offset: number, affinity: SelectionAffinity): EditorSelectionPoint | undefined {
+		const selectedOffset = Math.max(0, Math.min(offset, this.value.length));
+		const start = this.renderedStartOffset;
+		const end = start + this.renderedValue.length;
+		let col = this.renderedContentStart;
+		if (selectedOffset >= end) {
+			col = this.getRenderedValueRange().end;
+		} else if (selectedOffset > start) {
+			const spans = getSelectionTextSpans(this.renderedValue, segmenter.segment(this.renderedValue));
+			col += getSelectionColumnAtOffset(spans, selectedOffset - start, affinity);
+		}
+		return { row: 0, col, offset: selectedOffset };
+	}
+
+	getSelectionColumnForOffset(offset: number): number | undefined {
+		const selectedOffset = Math.max(0, Math.min(offset, this.value.length));
+		const start = this.renderedStartOffset;
+		const end = start + this.renderedValue.length;
+		if (selectedOffset < start || selectedOffset > end) return undefined;
+		return this.getSelectionPointForOffset(selectedOffset, "backward")?.col;
+	}
+
+	getLineSelection(row: number): EditorSelectionRange | undefined {
+		if (row !== 0) return undefined;
+		return this.getSelectAllSelection();
+	}
+
+	getSelectAllSelection(): EditorSelectionRange {
+		return {
+			start: { row: 0, col: this.renderedContentStart, offset: 0 },
+			end: {
+				row: 0,
+				col: this.getRenderedValueRange().end,
+				offset: this.value.length,
+				boundary: true,
+			},
+		};
+	}
+
+	getSelectionText(start: number, end: number): string {
+		return this.value.slice(start, end);
+	}
+
+	moveCursorToOffset(offset: number): void {
+		this.cursor = Math.max(0, Math.min(offset, this.value.length));
+		this.lastAction = null;
+	}
+
+	deleteSelection(start: number, end: number): boolean {
+		const selectedStart = Math.max(0, Math.min(start, this.value.length));
+		const selectedEnd = Math.max(0, Math.min(end, this.value.length));
+		if (selectedStart >= selectedEnd) return false;
+		this.pushUndo();
+		this.replaceRange(selectedStart, selectedEnd, "");
+		this.lastAction = null;
+		return true;
+	}
+
+	handleSelectionInput(data: string, selection: SelectionInputContext): SelectionInputResult {
+		return this.selectionInput.handle(data, selection);
+	}
+
+	invalidateSelectionInput(): void {
+		this.selectionInput.invalidate();
 	}
 
 	setValue(value: string): void {
@@ -236,46 +379,31 @@ export class Input implements Component, Focusable {
 			return;
 		}
 
-		// Kitty CSI-u printable character (e.g. \x1b[97u for 'a').
-		// Terminals with Kitty protocol flag 1 (disambiguate) send CSI-u for all keys,
-		// including plain printable characters. Decode before the control-char check
-		// since CSI-u sequences contain \x1b which would be rejected.
-		const kittyPrintable = decodeKittyPrintable(data);
-		if (kittyPrintable !== undefined) {
-			this.insertCharacter(kittyPrintable);
-			return;
-		}
-
-		// Regular character input - accept printable characters including Unicode,
-		// but reject control characters (C0: 0x00-0x1F, DEL: 0x7F, C1: 0x80-0x9F)
-		const hasControlChars = [...data].some((ch) => {
-			const code = ch.charCodeAt(0);
-			return code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f);
-		});
-		if (!hasControlChars) {
-			this.insertCharacter(data);
+		const printable = decodeTextInput(data);
+		if (printable !== undefined) {
+			this.insertCharacter(printable);
 		}
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.type !== "press" || event.button !== "left" || event.y !== 0) return undefined;
-		const visibleColumn = Math.max(0, event.x - visibleWidth(this.prompt));
-		const targetColumn = this.renderedStartColumn + visibleColumn;
-		let currentColumn = 0;
-		this.cursor = this.value.length;
-		for (const grapheme of segmenter.segment(this.value)) {
-			const nextColumn = currentColumn + visibleWidth(grapheme.segment);
-			if (targetColumn < nextColumn) {
-				this.cursor = grapheme.index;
-				break;
-			}
-			currentColumn = nextColumn;
+		if (event.type !== "click" || (event.clickCount ?? 1) > 1 || event.button !== "left" || event.y !== 0) {
+			return undefined;
 		}
-		this.lastAction = null;
+		this.render(event.width);
+		const point = this.getClosestSelectionPoint(event.y, event.x);
+		this.moveCursorToOffset(point.offset);
 		return { handled: true, focus: true };
 	}
 
 	private insertCharacter(char: string): void {
+		const selection = this.selectionInput.takeSelection();
+		if (selection) {
+			this.pushUndo();
+			this.replaceRange(selection.start, selection.end, char);
+			this.lastAction = "type-word";
+			return;
+		}
+
 		// Undo coalescing: consecutive word chars coalesce into one undo unit
 		if (isWhitespaceChar(char) || this.lastAction !== "type-word") {
 			this.pushUndo();
@@ -284,6 +412,13 @@ export class Input implements Component, Focusable {
 
 		this.value = this.value.slice(0, this.cursor) + char + this.value.slice(this.cursor);
 		this.cursor += char.length;
+	}
+
+	private replaceRange(start: number, end: number, text: string): void {
+		const from = Math.max(0, Math.min(start, this.value.length));
+		const to = Math.max(from, Math.min(end, this.value.length));
+		this.value = this.value.slice(0, from) + text + this.value.slice(to);
+		this.cursor = from + text.length;
 	}
 
 	private handleBackspace(): void {
@@ -425,15 +560,13 @@ export class Input implements Component, Focusable {
 	}
 
 	private handlePaste(pastedText: string): void {
+		const selection = this.selectionInput.takeSelection();
 		this.lastAction = null;
 		this.pushUndo();
 
 		// Clean the pasted text - remove newlines and carriage returns
 		const cleanText = pastedText.replace(/\r\n/g, "").replace(/\r/g, "").replace(/\n/g, "").replace(/\t/g, "    ");
-
-		// Insert at cursor position
-		this.value = this.value.slice(0, this.cursor) + cleanText + this.value.slice(this.cursor);
-		this.cursor += cleanText.length;
+		this.replaceRange(selection?.start ?? this.cursor, selection?.end ?? this.cursor, cleanText);
 	}
 
 	invalidate(): void {
@@ -441,12 +574,19 @@ export class Input implements Component, Focusable {
 	}
 
 	render(width: number): string[] {
+		this.renderedValue = "";
+		this.renderedStartColumn = 0;
+		this.renderedStartOffset = 0;
 		// Calculate visible window
-		const availableWidth = width - visibleWidth(this.prompt);
+		const promptWidth = visibleWidth(this.prompt);
+		const availableWidth = width - promptWidth;
 
 		if (availableWidth <= 0) {
-			return [truncateToWidth(this.prompt, width, "")];
+			const prompt = truncateToWidth(this.prompt, width, "");
+			this.renderedContentStart = visibleWidth(prompt);
+			return [prompt];
 		}
+		this.renderedContentStart = promptWidth;
 
 		if (this.value.length === 0 && this.placeholder) {
 			const placeholder = truncateToWidth(this.placeholder, availableWidth, "");
@@ -491,12 +631,10 @@ export class Input implements Component, Focusable {
 
 				// Strict slicing drops a grapheme straddling startCol, so the
 				// displayed slice actually begins at the next grapheme boundary.
-				let alignedStart = 0;
-				for (const grapheme of segmenter.segment(this.value)) {
-					if (alignedStart >= startCol) break;
-					alignedStart += visibleWidth(grapheme.segment);
-				}
-				this.renderedStartColumn = alignedStart;
+				const spans = getSelectionTextSpans(this.value, segmenter.segment(this.value));
+				const alignedSpan = spans.find((span) => span.cellStart >= startCol);
+				this.renderedStartColumn = alignedSpan?.cellStart ?? visibleWidth(this.value);
+				this.renderedStartOffset = alignedSpan?.start ?? this.value.length;
 				visibleText = sliceByColumn(this.value, startCol, scrollWidth, true);
 				const beforeCursor = sliceByColumn(this.value, startCol, Math.max(0, cursorCol - startCol), true);
 				cursorDisplay = beforeCursor.length;
@@ -505,6 +643,8 @@ export class Input implements Component, Focusable {
 				cursorDisplay = 0;
 			}
 		}
+
+		this.renderedValue = visibleText;
 
 		// Build line with fake cursor
 		// Insert cursor character at cursor position

@@ -7,6 +7,11 @@ import {
   type DefaultTextStyle,
   type MarkdownOptions,
   type MarkdownTheme,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  textRenderLine,
+  type TuiRenderLine,
   type TuiMouseDispatchResult,
   type TuiMouseEvent,
 } from '@moonshot-ai/pi-tui';
@@ -78,7 +83,9 @@ export class Markdown extends Container {
   private readonly defaultTextStyle?: DefaultTextStyle;
   private readonly options: KimiMarkdownOptions;
   private structure: MarkdownStructure | undefined;
-  private childCache: { width: number; refs: Component[]; childLines: (readonly string[])[]; lines: string[] } | undefined;
+  private childCache:
+    | { width: number; refs: Component[]; childLines: TuiRenderLine[][]; lines: TuiRenderLine[] }
+    | undefined;
 
   constructor(
     text: string,
@@ -108,10 +115,10 @@ export class Markdown extends Container {
     super.invalidate();
   }
 
-  private renderChildren(width: number): string[] {
+  private renderChildren(width: number): TuiRenderLine[] {
     const cache = this.childCache;
     const refs = this.children;
-    const childLines = refs.map((child) => child.render(width));
+    const childLines = refs.map((child) => renderComponentLines(child, width));
     if (
       isRenderCacheEnabled() &&
       cache?.width === width &&
@@ -126,13 +133,17 @@ export class Markdown extends Container {
   }
 
   override render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  override [RENDER_LINES](width: number): TuiRenderLine[] {
     if (this.sourceText.trim() === '') return [];
     this.ensureStructure();
     const lines = this.renderChildren(width);
     if (this.paddingY === 0) return lines;
     const bgFn = this.defaultTextStyle?.bgColor;
     const empty = ' '.repeat(Math.max(0, width));
-    const margins = Array.from({ length: this.paddingY }, () => (bgFn ? bgFn(empty) : empty));
+    const margins = Array.from({ length: this.paddingY }, () => textRenderLine(bgFn ? bgFn(empty) : empty));
     return [...margins, ...lines, ...margins];
   }
 

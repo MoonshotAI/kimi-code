@@ -1,4 +1,5 @@
 import { eastAsianWidth } from "get-east-asian-width";
+import type { WrappedTextLine } from "./render-line.ts";
 
 // segmenters (shared instance)
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -1060,96 +1061,79 @@ export function flattenLines(lines: readonly string[]): void {
 	for (const line of lines) Number(line);
 }
 
-export function wrapTextWithAnsi(text: string, width: number): string[] {
-	if (!text) {
-		return [""];
-	}
+let nextSoftWrapLogicalLineId = 1;
 
-	// Handle newlines by processing each line separately
-	// Track ANSI state across lines so styles carry over after literal newlines
+export function wrapTextWithAnsi(text: string, width: number): string[] {
+	return wrapTextWithAnsiDetailed(text, width).map((line) => line.text);
+}
+
+export function wrapTextWithAnsiDetailed(text: string, width: number): WrappedTextLine[] {
+	if (!text) return [{ text: "", logicalLineId: nextSoftWrapLogicalLineId++ }];
+
 	const inputLines = text.split(/\r\n|\r|\n/);
-	const result: string[] = [];
+	const result: WrappedTextLine[] = [];
 	const tracker = new AnsiCodeTracker();
 
 	for (const inputLine of inputLines) {
-		// Prepend active ANSI codes from previous lines (except for first line)
 		const prefix = result.length > 0 ? tracker.getActiveCodes() : "";
-		const wrappedLines = wrapSingleLine(prefix + inputLine, width);
-		for (const wrappedLine of wrappedLines) {
-			result.push(wrappedLine);
-		}
-		// Update tracker with codes from this line for next iteration
+		result.push(...wrapSingleLine(prefix + inputLine, width, nextSoftWrapLogicalLineId++));
 		updateTrackerFromText(inputLine, tracker);
 	}
 
-	return result.length > 0 ? result : [""];
+	return result;
 }
 
-function wrapSingleLine(line: string, width: number): string[] {
-	if (!line) {
-		return [""];
-	}
+function wrapSingleLine(line: string, width: number, logicalLineId: number): WrappedTextLine[] {
+	if (!line) return [{ text: "", logicalLineId }];
 
-	const visibleLength = visibleWidth(line);
-	if (visibleLength <= width) {
-		return [line];
-	}
+	if (visibleWidth(line) <= width) return [{ text: line, logicalLineId }];
 
-	const wrapped: string[] = [];
+	const wrapped: WrappedTextLine[] = [];
 	const tracker = new AnsiCodeTracker();
 	const tokens = splitIntoTokensWithAnsi(line);
-
+	let pendingWhitespace: string | undefined;
 	let currentLine = "";
 	let currentVisibleLength = 0;
+	const pushLine = (text: string, lineEndReset = "", ansiSuffix = ""): void => {
+		const trimmed = text.trimEnd();
+		wrapped.push({
+			text: trimmed + ansiSuffix + lineEndReset,
+			logicalLineId,
+			...(pendingWhitespace === undefined
+				? {}
+				: { continuation: { omittedWhitespace: pendingWhitespace, generatedIndent: 0 } }),
+		});
+		pendingWhitespace = text.slice(trimmed.length);
+	};
 
 	for (const token of tokens) {
 		const tokenVisibleLength = visibleWidth(token);
 		const isWhitespace = isWhitespaceToken(token);
 
-		// Token itself is too long - break it character by character
 		if (tokenVisibleLength > width && !isWhitespace) {
 			if (currentLine) {
-				// Trim before adding the reset, which would otherwise block the final trimEnd()
-				currentLine = currentLine.trimEnd();
-				// Add specific reset for underline only (preserves background)
-				const lineEndReset = tracker.getLineEndReset();
-				if (lineEndReset) {
-					currentLine += lineEndReset;
-				}
-				wrapped.push(currentLine);
+				pushLine(currentLine, tracker.getLineEndReset());
 				currentLine = "";
 				currentVisibleLength = 0;
 			}
 
-			// Break long token - breakLongWord handles its own resets
 			const broken = breakLongWord(token, width, tracker);
 			for (let i = 0; i < broken.length - 1; i++) {
-				wrapped.push(broken[i]!);
+				pushLine(broken[i]!);
 			}
 			currentLine = broken[broken.length - 1]!;
 			currentVisibleLength = visibleWidth(currentLine);
 			continue;
 		}
 
-		// Check if adding this token would exceed width
 		const totalNeeded = currentVisibleLength + tokenVisibleLength;
 
 		if (totalNeeded > width && currentVisibleLength > 0) {
-			// Trim trailing whitespace, then add underline reset (not full reset, to preserve background)
-			let lineToWrap = currentLine.trimEnd();
+			const ansiSuffix = isWhitespace ? extractAnsiCodes(token) : "";
+			if (isWhitespace) updateTrackerFromText(token, tracker);
+			pushLine(currentLine, tracker.getLineEndReset(), ansiSuffix);
 			if (isWhitespace) {
-				// The dropped space may carry codes (e.g. closing a styled word). Keep them on the wrapped line so
-				// the style ends there and is not re-opened on the next line.
-				lineToWrap += extractAnsiCodes(token);
-				updateTrackerFromText(token, tracker);
-			}
-			const lineEndReset = tracker.getLineEndReset();
-			if (lineEndReset) {
-				lineToWrap += lineEndReset;
-			}
-			wrapped.push(lineToWrap);
-			if (isWhitespace) {
-				// Don't start new line with whitespace
+				pendingWhitespace = (pendingWhitespace ?? "") + stripTerminalSequences(token);
 				currentLine = tracker.getActiveCodes();
 				currentVisibleLength = 0;
 				continue;
@@ -1161,7 +1145,6 @@ function wrapSingleLine(line: string, width: number): string[] {
 			// them (e.g. a trailing reset) would block that and leave the line wider than width. Keep only the codes.
 			currentLine += extractAnsiCodes(token);
 		} else {
-			// Add to current line
 			currentLine += token;
 			currentVisibleLength += tokenVisibleLength;
 		}
@@ -1169,13 +1152,9 @@ function wrapSingleLine(line: string, width: number): string[] {
 		updateTrackerFromText(token, tracker);
 	}
 
-	if (currentLine) {
-		// No reset at end of final line - let caller handle it
-		wrapped.push(currentLine);
-	}
+	if (currentLine) pushLine(currentLine);
 
-	// Trailing whitespace can cause lines to exceed the requested width
-	return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
+	return wrapped.length > 0 ? wrapped : [{ text: "", logicalLineId }];
 }
 
 export const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;

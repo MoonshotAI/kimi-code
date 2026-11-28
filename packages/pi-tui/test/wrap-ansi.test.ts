@@ -1,6 +1,13 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { visibleWidth, wrapTextWithAnsi } from "../src/utils.ts";
+import {
+	decorateRenderLine,
+	offsetRenderLine,
+	prefixRenderLine,
+	truncateRenderLine,
+	wrapRenderLine,
+} from "../src/render-line.ts";
+import { visibleWidth, wrapTextWithAnsi, wrapTextWithAnsiDetailed } from "../src/utils.ts";
 
 describe("wrapTextWithAnsi", () => {
 	describe("underline styling", () => {
@@ -182,6 +189,24 @@ describe("wrapTextWithAnsi", () => {
 			}
 		});
 
+		it("does not embed selection metadata in public wrapped lines", () => {
+			const wrapped = wrapTextWithAnsi("alpha beta gamma\nnext", 10);
+
+			assert.deepStrictEqual(wrapped, ["alpha beta", "gamma", "next"]);
+			assert.ok(wrapped.every((line) => !line.includes("\x1b[999;")));
+		});
+
+		it("records structured continuations without marking literal newlines", () => {
+			const wrapped = wrapTextWithAnsiDetailed("alpha beta gamma\nnext", 10);
+
+			assert.deepStrictEqual(wrapped.map((line) => line.text), ["alpha beta", "gamma", "next"]);
+			assert.strictEqual(wrapped[0]!.continuation, undefined);
+			assert.deepStrictEqual(wrapped[1]!.continuation, { omittedWhitespace: " ", generatedIndent: 0 });
+			assert.strictEqual(wrapped[2]!.continuation, undefined);
+			assert.strictEqual(wrapped[0]!.logicalLineId, wrapped[1]!.logicalLineId);
+			assert.notStrictEqual(wrapped[1]!.logicalLineId, wrapped[2]!.logicalLineId);
+		});
+
 		it("should break CJK runs at grapheme boundaries after Latin text", () => {
 			const text = "This is an example 中文汉字测试段落内容中文汉字测试段落内容.";
 			const wrapped = wrapTextWithAnsi(text, 40);
@@ -313,5 +338,56 @@ describe("wrapTextWithAnsi with OSC 8 hyperlinks", () => {
 		const closeCount = (lines[0].match(/\x1b\]8;;\x1b\\/g) ?? []).length;
 		assert.strictEqual(openCount, 1);
 		assert.strictEqual(closeCount, 1);
+	});
+});
+
+describe("render line decoration", () => {
+	it("matches body prefixing while excluding the decoration columns", () => {
+		const origin = Symbol("producer");
+		const line = {
+			text: "body",
+			softWrap: [
+				{
+					logicalLineId: 1,
+					start: 0,
+					end: 4,
+					origin,
+					continuation: { omittedWhitespace: " ", generatedIndent: 0 },
+				},
+			],
+			selectionExclusions: [{ start: 1, end: 2 }],
+		};
+
+		const decorated = decorateRenderLine(line, "> ");
+		const prefixed = prefixRenderLine(line, "> ");
+
+		assert.strictEqual(decorated.text, prefixed.text);
+		assert.deepStrictEqual(decorated.softWrap, prefixed.softWrap);
+		assert.deepStrictEqual(decorated.selectionExclusions, [
+			{ start: 0, end: 2 },
+			{ start: 3, end: 4 },
+		]);
+		assert.strictEqual(decorateRenderLine(line, ""), line);
+		assert.deepStrictEqual(prefixed.selectionExclusions, [{ start: 3, end: 4 }]);
+	});
+
+	it("propagates soft-wrap origins through line transforms", () => {
+		const origin = Symbol("producer");
+		const line = {
+			text: "alpha beta gamma",
+			softWrap: [{ logicalLineId: 1, start: 0, end: 16, origin }],
+		};
+
+		const wrapped = wrapRenderLine(line, 10);
+		assert.ok(wrapped.length > 1);
+		for (const wrappedLine of wrapped) {
+			assert.ok(wrappedLine.softWrap?.every((fragment) => fragment.origin === origin));
+			assert.ok(wrappedLine.softWrap?.every((fragment) => fragment.origin === offsetRenderLine(wrappedLine, 2).softWrap?.[0]?.origin));
+			assert.ok(
+				wrappedLine.softWrap?.every(
+					(fragment) => fragment.origin === truncateRenderLine(wrappedLine, 10).softWrap?.[0]?.origin,
+				),
+			);
+		}
 	});
 });

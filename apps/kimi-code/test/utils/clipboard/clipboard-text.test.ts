@@ -7,7 +7,12 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import { clipboard } from '#/utils/clipboard/clipboard-native';
 import { buildClipboardOSC52 } from '#/utils/clipboard/clipboard-osc52';
-import { copyTextToClipboard, planClipboardWrite } from '#/utils/clipboard/clipboard-text';
+import {
+  copyTextToClipboard,
+  planClipboardRead,
+  planClipboardWrite,
+  readClipboardText,
+} from '#/utils/clipboard/clipboard-text';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
@@ -20,13 +25,33 @@ vi.mock('node:fs', async (importOriginal) => ({
   }),
 }));
 
+vi.mock('#/utils/process/resolve-command', async () => {
+  const { existsSync } = await import('node:fs');
+  const { isAbsolute, join, relative, resolve } = await import('node:path');
+  return {
+    resolveCommandPath: (command: string, cwd = process.cwd()) => {
+      const directory = process.env['PATH'];
+      if (!directory) return undefined;
+      const candidate = resolve(join(directory, command));
+      if (!existsSync(candidate)) return undefined;
+      const fromCwd = relative(cwd, candidate);
+      if (fromCwd !== '' && !fromCwd.startsWith('..') && !isAbsolute(fromCwd)) return undefined;
+      return candidate;
+    },
+  };
+});
+
 vi.mock('#/utils/clipboard/clipboard-native', () => ({
   clipboard: {
+    getText: vi.fn(),
     setText: vi.fn(),
   },
 }));
 
-const clipboardMock = clipboard as unknown as { setText: ReturnType<typeof vi.fn> | undefined };
+const clipboardMock = clipboard as unknown as {
+  getText: ReturnType<typeof vi.fn> | undefined;
+  setText: ReturnType<typeof vi.fn> | undefined;
+};
 const spawnMock = vi.mocked(spawn);
 
 const originalIsTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
@@ -58,7 +83,18 @@ function stubEnv(env: Record<string, string>): void {
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 }
 
-const CLIPBOARD_TOOLS = ['pbcopy', 'clip.exe', 'termux-clipboard-set', 'wl-copy', 'xclip', 'xsel'];
+const CLIPBOARD_TOOLS = [
+  'pbcopy',
+  'pbpaste',
+  'clip.exe',
+  'termux-clipboard-set',
+  'termux-clipboard-get',
+  'wl-copy',
+  'wl-paste',
+  'xclip',
+  'xsel',
+  'powershell.exe',
+];
 
 function makeToolDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'kimi-clipboard-tools-'));
@@ -94,6 +130,28 @@ function stubInstalledClipboardCommands(exitCodeByCommand: Record<string, number
   return calls;
 }
 
+function stubInstalledClipboardReaders(outputByCommand: Record<string, string | null>) {
+  const calls: { command: string; args: string[] }[] = [];
+  spawnMock.mockImplementation(((executable: string, args: string[]) => {
+    const command = basename(executable);
+    const child = new EventEmitter() as ChildProcess;
+    const stdout = new EventEmitter();
+    calls.push({ command, args });
+    Object.assign(child, { kill: vi.fn(), stdout });
+    setImmediate(() => {
+      const output = outputByCommand[command];
+      if (output === undefined) {
+        child.emit('error', new Error(`spawn ${command} ENOENT`));
+      } else {
+        if (output !== null) stdout.emit('data', Buffer.from(output));
+        child.emit('close', output === null ? 1 : 0);
+      }
+    });
+    return child;
+  }) as unknown as typeof spawn);
+  return calls;
+}
+
 function captureStdout(): () => string {
   const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   return () => writeSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
@@ -103,6 +161,17 @@ function base64(text: string): string {
   return Buffer.from(text, 'utf8').toString('base64');
 }
 
+const powershell = {
+  command: 'powershell.exe',
+  args: [
+    '-NoProfile',
+    '-NonInteractive',
+    '-STA',
+    '-Command',
+    'Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::Out.Write([System.Windows.Forms.Clipboard]::GetText())',
+  ],
+};
+
 beforeAll(() => {
   toolDir = makeToolDir();
 });
@@ -111,6 +180,7 @@ beforeEach(() => {
   vi.stubEnv('PATH', toolDir);
   stubEnv({});
   stubStdoutTTY(true);
+  clipboardMock.getText = vi.fn().mockResolvedValue('native text');
   clipboardMock.setText = vi.fn().mockResolvedValue(undefined);
   stubInstalledClipboardCommands({});
 });
@@ -218,6 +288,213 @@ describe('planClipboardWrite', () => {
     ],
   ])('%s', (_name, platform, env, expected) => {
     expect(planClipboardWrite(platform, env)).toEqual(expected);
+  });
+});
+
+describe('planClipboardRead', () => {
+  const unavailable = "Clipboard paste unavailable: use your terminal's paste shortcut";
+  const missingX11 = 'Clipboard paste unavailable: install `xclip` or `xsel`, or check X11 access';
+  const missingWayland =
+    'Clipboard paste unavailable: install `wl-clipboard` (`wl-paste`) or check Wayland access';
+  const pbpaste = { command: 'pbpaste', args: [] };
+  const wlPaste = { command: 'wl-paste', args: ['--no-newline'] };
+  const xclip = { command: 'xclip', args: ['-selection', 'clipboard', '-o'] };
+  const xsel = { command: 'xsel', args: ['--clipboard', '--output'] };
+
+  it.each<[string, NodeJS.Platform, NodeJS.ProcessEnv, ReturnType<typeof planClipboardRead>]>([
+    ['macOS', 'darwin', {}, { nativeModule: true, commands: [pbpaste], unavailableMessage: unavailable }],
+    ['Windows', 'win32', {}, { nativeModule: true, commands: [powershell], unavailableMessage: unavailable }],
+    [
+      'Linux without a display',
+      'linux',
+      {},
+      { nativeModule: false, commands: [], unavailableMessage: unavailable },
+    ],
+    [
+      'SSH without a display',
+      'linux',
+      { SSH_CONNECTION: '10.0.0.1 5000 10.0.0.2 22' },
+      { nativeModule: false, commands: [], unavailableMessage: unavailable },
+    ],
+    [
+      'Linux X11',
+      'linux',
+      { DISPLAY: ':0' },
+      { nativeModule: false, commands: [xclip, xsel], unavailableMessage: missingX11 },
+    ],
+    [
+      'Linux Wayland with XWayland',
+      'linux',
+      { WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' },
+      { nativeModule: false, commands: [wlPaste, xclip, xsel], unavailableMessage: missingWayland },
+    ],
+    [
+      'WSL without a display',
+      'linux',
+      { WSL_DISTRO_NAME: 'Ubuntu' },
+      { nativeModule: false, commands: [powershell], unavailableMessage: unavailable },
+    ],
+    [
+      'WSLg',
+      'linux',
+      { WSL_DISTRO_NAME: 'Ubuntu', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' },
+      {
+        nativeModule: false,
+        commands: [wlPaste, xclip, xsel, powershell],
+        unavailableMessage: missingWayland,
+      },
+    ],
+    [
+      'Termux',
+      'android',
+      { TERMUX_VERSION: '0.118' },
+      {
+        nativeModule: true,
+        commands: [{ command: 'termux-clipboard-get', args: [] }],
+        unavailableMessage: 'Clipboard paste unavailable: install the Termux:API app and `termux-api` package',
+      },
+    ],
+  ])('%s', (_name, platform, env, expected) => {
+    expect(planClipboardRead(platform, env)).toEqual(expected);
+  });
+});
+
+describe('readClipboardText', () => {
+  it('reads text through the native clipboard when available', async () => {
+    stubPlatform('darwin');
+
+    await expect(readClipboardText()).resolves.toBe('native text');
+    expect(clipboardMock.getText).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to pbpaste when native reading rejects', async () => {
+    stubPlatform('darwin');
+    clipboardMock.getText = vi.fn().mockRejectedValue(new Error('native failed'));
+    const calls = stubInstalledClipboardReaders({ pbpaste: 'pasted text' });
+
+    await expect(readClipboardText()).resolves.toBe('pasted text');
+    expect(calls).toEqual([{ command: 'pbpaste', args: [] }]);
+  });
+
+  it('falls back to pbpaste when native reading is unavailable', async () => {
+    stubPlatform('darwin');
+    clipboardMock.getText = undefined;
+    stubInstalledClipboardReaders({ pbpaste: 'pasted text' });
+
+    await expect(readClipboardText()).resolves.toBe('pasted text');
+  });
+
+  it('falls back to PowerShell when native reading is unavailable on Windows', async () => {
+    stubPlatform('win32');
+    clipboardMock.getText = undefined;
+    const calls = stubInstalledClipboardReaders({ 'powershell.exe': 'pasted text' });
+
+    await expect(readClipboardText()).resolves.toBe('pasted text');
+    expect(calls).toEqual([{ command: powershell.command, args: powershell.args }]);
+    expect(spawnMock).toHaveBeenCalledWith(
+      join(toolDir, 'powershell.exe'),
+      powershell.args,
+      expect.objectContaining({ stdio: ['ignore', 'pipe', 'ignore'] }),
+    );
+  });
+
+  it('falls back to PowerShell when native reading rejects on Windows', async () => {
+    stubPlatform('win32');
+    clipboardMock.getText = vi.fn().mockRejectedValue(new Error('native failed'));
+    const calls = stubInstalledClipboardReaders({ 'powershell.exe': 'pasted text' });
+
+    await expect(readClipboardText()).resolves.toBe('pasted text');
+    expect(calls).toEqual([{ command: powershell.command, args: powershell.args }]);
+  });
+
+  it('reads through PowerShell on WSL without a display', async () => {
+    stubPlatform('linux');
+    stubEnv({ WSL_DISTRO_NAME: 'Ubuntu' });
+    const calls = stubInstalledClipboardReaders({ 'powershell.exe': 'pasted text' });
+
+    await expect(readClipboardText()).resolves.toBe('pasted text');
+    expect(clipboardMock.getText).not.toHaveBeenCalled();
+    expect(calls).toEqual([{ command: powershell.command, args: powershell.args }]);
+  });
+
+  it('falls back to PowerShell after WSLg clipboard tools fail', async () => {
+    stubPlatform('linux');
+    stubEnv({ WSL_DISTRO_NAME: 'Ubuntu', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' });
+    const calls = stubInstalledClipboardReaders({
+      'wl-paste': null,
+      xclip: null,
+      xsel: null,
+      'powershell.exe': 'pasted text',
+    });
+
+    await expect(readClipboardText()).resolves.toBe('pasted text');
+    expect(calls).toEqual([
+      { command: 'wl-paste', args: ['--no-newline'] },
+      { command: 'xclip', args: ['-selection', 'clipboard', '-o'] },
+      { command: 'xsel', args: ['--clipboard', '--output'] },
+      { command: powershell.command, args: powershell.args },
+    ]);
+  });
+
+  it('preserves Unicode, CRLF, and trailing newlines returned by PowerShell', async () => {
+    stubPlatform('linux');
+    stubEnv({ WSL_DISTRO_NAME: 'Ubuntu' });
+    const text = '中文 🚀\r\nsecond line\r\n';
+    stubInstalledClipboardReaders({ 'powershell.exe': text });
+
+    await expect(readClipboardText()).resolves.toBe(text);
+  });
+
+  it('returns an empty string when PowerShell reports no clipboard text', async () => {
+    stubPlatform('win32');
+    clipboardMock.getText = undefined;
+    stubInstalledClipboardReaders({ 'powershell.exe': '' });
+
+    await expect(readClipboardText()).resolves.toBe('');
+  });
+
+  it('does not invoke PowerShell on headless Linux outside WSL', async () => {
+    stubPlatform('linux');
+    const calls = stubInstalledClipboardReaders({ 'powershell.exe': 'pasted text' });
+
+    await expect(readClipboardText()).rejects.toThrow(
+      "Clipboard paste unavailable: use your terminal's paste shortcut",
+    );
+    expect(clipboardMock.getText).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it('reads Linux X11 through CLI tools without trusting the native module', async () => {
+    stubPlatform('linux');
+    stubEnv({ DISPLAY: ':0' });
+    const calls = stubInstalledClipboardReaders({ xclip: null, xsel: 'pasted text' });
+
+    await expect(readClipboardText()).resolves.toBe('pasted text');
+    expect(clipboardMock.getText).not.toHaveBeenCalled();
+    expect(calls).toEqual([
+      { command: 'xclip', args: ['-selection', 'clipboard', '-o'] },
+      { command: 'xsel', args: ['--clipboard', '--output'] },
+    ]);
+  });
+
+  it('preserves Unicode and newlines returned by wl-paste', async () => {
+    stubPlatform('linux');
+    stubEnv({ WAYLAND_DISPLAY: 'wayland-0' });
+    stubInstalledClipboardReaders({ 'wl-paste': '中文\nsecond line\n' });
+
+    await expect(readClipboardText()).resolves.toBe('中文\nsecond line\n');
+  });
+
+  it('reports an unreadable clipboard without spawning tools on headless SSH', async () => {
+    stubPlatform('linux');
+    stubEnv({ SSH_CONNECTION: '10.0.0.1 5000 10.0.0.2 22' });
+
+    await expect(readClipboardText()).rejects.toThrow(
+      "Clipboard paste unavailable: use your terminal's paste shortcut",
+    );
+    expect(clipboardMock.getText).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });
 

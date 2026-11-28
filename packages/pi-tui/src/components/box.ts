@@ -5,12 +5,23 @@ import {
 	getLayoutNode,
 	LAYOUT_NODE,
 } from "../layout-node.ts";
+import {
+	appendLines,
+	decorateRenderLine,
+	RENDER_LINES,
+	renderComponentLines,
+	textRenderLine,
+	truncateRenderLine,
+	type TuiRenderLine,
+	withRenderLineSelectionExclusions,
+	withRenderLineText,
+} from "../render-line.ts";
 import { isImageLine } from "../terminal-image.ts";
 import {
 	type ChildLines,
 	type Component,
 	Container,
-	compositeTuiLine,
+	compositeTuiRenderLine,
 	dispatchMouseToChildLines,
 	renderChildLines,
 	type TuiMouseDispatchResult,
@@ -137,8 +148,17 @@ function normalizeSides(border: boolean | BorderSides | undefined): NormalizedSi
 
 const identityStyle = (text: string): string => text;
 
+function sameStructuredLines(a: TuiRenderLine[], b: TuiRenderLine[]): boolean {
+	if (a.length !== b.length) return false;
+	const aKeys = Object.keys(a);
+	const bKeys = Object.keys(b);
+	return aKeys.length === bKeys.length && aKeys.every(
+		(key, index) => key === bKeys[index] && a[Number(key)] === b[Number(key)],
+	);
+}
+
 function paintClippedSegment(
-	screen: string[],
+	screen: TuiRenderLine[],
 	row: number,
 	x: number,
 	width: number,
@@ -152,11 +172,20 @@ function paintClippedSegment(
 	if (right <= left) return;
 	const visibleSegment =
 		left === x && right === x + width ? segment : sliceByColumn(segment, left - x, right - left, true);
-	if (left === 0 && right >= totalWidth && !screen[row]) {
-		screen[row] = visibleSegment;
+	const line = withRenderLineSelectionExclusions(textRenderLine(visibleSegment), [
+		{ start: 0, end: right - left },
+	]);
+	if (left === 0 && right >= totalWidth && !screen[row]?.text) {
+		screen[row] = line;
 		return;
 	}
-	screen[row] = compositeTuiLine(screen[row] ?? "", visibleSegment, left, right - left, totalWidth);
+	screen[row] = compositeTuiRenderLine(
+		screen[row] ?? textRenderLine(""),
+		line,
+		left,
+		right - left,
+		totalWidth,
+	);
 }
 
 export class Box extends Container {
@@ -173,6 +202,13 @@ export class Box extends Container {
 		readonly borderSample: string;
 		readonly lines: readonly string[];
 	};
+	private structuredOutputCache?: {
+		readonly childLines: TuiRenderLine[];
+		readonly width: number;
+		readonly title: string | undefined;
+		readonly borderSample: string;
+		readonly lines: TuiRenderLine[];
+	};
 
 	constructor(options: BoxOptions = {}) {
 		super();
@@ -187,29 +223,34 @@ export class Box extends Container {
 		if (this.title === title) return;
 		this.title = title;
 		this.renderOutputCache = undefined;
+		this.structuredOutputCache = undefined;
 	}
 
 	override addChild(component: Component): void {
 		super.addChild(component);
 		this.renderChildCache = undefined;
 		this.renderOutputCache = undefined;
+		this.structuredOutputCache = undefined;
 	}
 
 	override removeChild(component: Component): void {
 		super.removeChild(component);
 		this.renderChildCache = undefined;
 		this.renderOutputCache = undefined;
+		this.structuredOutputCache = undefined;
 	}
 
 	override clear(): void {
 		super.clear();
 		this.renderChildCache = undefined;
 		this.renderOutputCache = undefined;
+		this.structuredOutputCache = undefined;
 	}
 
 	override invalidate(): void {
 		this.renderChildCache = undefined;
 		this.renderOutputCache = undefined;
+		this.structuredOutputCache = undefined;
 		super.invalidate();
 	}
 
@@ -265,6 +306,29 @@ export class Box extends Container {
 		}
 		const fill = Math.max(0, innerWidth - visibleWidth(clipped)) + this.padding.right;
 		return truncateToWidth(leftPrefix + clipped + " ".repeat(fill) + paint(this.glyphs.right), width, "");
+	}
+
+	private renderBodyLine(contentLine: TuiRenderLine, width: number, innerWidth: number): TuiRenderLine {
+		const paint = this.borderColor;
+		const hasLeft = this.sides.left;
+		const hasRight = this.sides.right && (!hasLeft || width >= 2);
+		const leftPrefix = (hasLeft ? paint(this.glyphs.left) : "") + " ".repeat(this.padding.left);
+		if (isImageLine(contentLine.text)) {
+			return withRenderLineText(decorateRenderLine(contentLine, leftPrefix), leftPrefix + contentLine.text);
+		}
+		const clipped = innerWidth <= 0
+			? textRenderLine("")
+			: visibleWidth(contentLine.text) > innerWidth
+				? truncateRenderLine(contentLine, innerWidth, "")
+				: contentLine;
+		const prefixed = decorateRenderLine(clipped, leftPrefix);
+		if (!hasRight) return truncateRenderLine(prefixed, width, "");
+		const contentEnd = visibleWidth(prefixed.text);
+		const fill = Math.max(0, innerWidth - visibleWidth(clipped.text)) + this.padding.right;
+		const text = truncateToWidth(prefixed.text + " ".repeat(fill) + paint(this.glyphs.right), width, "");
+		return withRenderLineSelectionExclusions(withRenderLineText(prefixed, text), [
+			{ start: Math.min(contentEnd, visibleWidth(text)), end: visibleWidth(text) },
+		]);
 	}
 
 	override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
@@ -353,7 +417,63 @@ export class Box extends Container {
 		return lines;
 	}
 
-	private paintFrame(rect: BoxLayoutRect, clip: BoxLayoutRect, screen: string[], totalWidth: number): void {
+	override [RENDER_LINES](width: number): TuiRenderLine[] {
+		const safeWidth = Math.max(1, Math.floor(width));
+		const insets = this.getInsets();
+		const innerWidth = Math.max(0, safeWidth - insets.left - insets.right);
+		const childRenderWidth = Math.max(1, innerWidth);
+		const childLines: TuiRenderLine[] = [];
+		for (const child of this.children) appendLines(childLines, renderComponentLines(child, childRenderWidth));
+
+		if (
+			childLines.length === 0 &&
+			!this.sides.top &&
+			!this.sides.right &&
+			!this.sides.bottom &&
+			!this.sides.left &&
+			this.padding.top === 0 &&
+			this.padding.bottom === 0
+		) {
+			return [];
+		}
+
+		const borderSample =
+			this.sides.top || this.sides.right || this.sides.bottom || this.sides.left ? this.borderColor("─") : "";
+		const cached = this.structuredOutputCache;
+		if (
+			cached?.width === safeWidth &&
+			cached.title === this.title &&
+			cached.borderSample === borderSample &&
+			sameStructuredLines(cached.childLines, childLines)
+		) {
+			return cached.lines;
+		}
+
+		const frameLine = (text: string): TuiRenderLine => withRenderLineSelectionExclusions(textRenderLine(text), [
+			{ start: 0, end: visibleWidth(text) },
+		]);
+		const lines: TuiRenderLine[] = [];
+		if (this.sides.top) lines.push(frameLine(this.renderTopBorder(safeWidth)));
+		for (let i = 0; i < this.padding.top; i++) {
+			lines.push(this.renderBodyLine(textRenderLine(""), safeWidth, innerWidth));
+		}
+		for (const line of childLines) lines.push(this.renderBodyLine(line, safeWidth, innerWidth));
+		for (let i = 0; i < this.padding.bottom; i++) {
+			lines.push(this.renderBodyLine(textRenderLine(""), safeWidth, innerWidth));
+		}
+		if (this.sides.bottom) lines.push(frameLine(this.renderBottomBorder(safeWidth)));
+		flattenLines(lines.map((line) => line.text));
+		this.structuredOutputCache = {
+			childLines,
+			width: safeWidth,
+			title: this.title,
+			borderSample,
+			lines,
+		};
+		return lines;
+	}
+
+	private paintFrame(rect: BoxLayoutRect, clip: BoxLayoutRect, screen: TuiRenderLine[], totalWidth: number): void {
 		if (rect.width <= 0 || rect.height <= 0 || clip.width <= 0 || clip.height <= 0) return;
 		const hasTop = this.sides.top;
 		const hasBottom = this.sides.bottom && (!hasTop || rect.height > 1);

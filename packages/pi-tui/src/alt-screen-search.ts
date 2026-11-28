@@ -1,6 +1,19 @@
 import { Input } from "./components/input.ts";
+import type {
+	EditorSelectionPoint,
+	EditorSelectionRange,
+	SelectionEditComponent,
+	SelectionInputContext,
+	SelectionInputResult,
+} from "./editor-component.ts";
 import { getKeybindings } from "./keybindings.ts";
 import type { KeyId } from "./keys.ts";
+import {
+	RENDER_LINES,
+	textRenderLine,
+	type TuiRenderLine,
+	withRenderLineSelectionExclusions,
+} from "./render-line.ts";
 import type { Component, Focusable, TuiMouseEvent, TuiMouseEventResult } from "./tui.ts";
 import { getGraphemeSegmenter, stripTerminalSequences, truncateToWidth, visibleWidth } from "./utils.ts";
 
@@ -213,7 +226,7 @@ function formatSearchNavigationLabel(direction: -1 | 1, key: KeyId | undefined):
 	return `${direction < 0 ? "↑" : "↓"} ${formatKey(key)}`;
 }
 
-export class AltScreenSearchComponent implements Component, Focusable {
+export class AltScreenSearchComponent implements Component, Focusable, SelectionEditComponent {
 	private readonly input = new Input({
 		prompt: " ",
 		placeholder: "Find in transcript",
@@ -263,6 +276,68 @@ export class AltScreenSearchComponent implements Component, Focusable {
 		if (column >= this.previousButtonStart && column < this.previousButtonEnd) return -1;
 		if (column >= this.nextButtonStart && column < this.nextButtonEnd) return 1;
 		return undefined;
+	}
+
+	getText(): string {
+		return this.input.getValue();
+	}
+
+	getSelectionContentStart(row: number): number | undefined {
+		const start = this.input.getSelectionContentStart(row - 1);
+		return start === undefined ? undefined : start + 1;
+	}
+
+	getSelectionContentEnd(row: number): number | undefined {
+		const end = this.input.getSelectionContentEnd(row - 1);
+		return end === undefined ? undefined : end + 1;
+	}
+
+	getClosestSelectionPoint(row: number, column: number): EditorSelectionPoint & { endOffset: number } {
+		const point = this.input.getClosestSelectionPoint(row - 1, column - 1);
+		return { ...point, row: 1, col: point.col + 1 };
+	}
+
+	getSelectionPointForOffset(offset: number, affinity: "forward" | "backward"): EditorSelectionPoint | undefined {
+		const point = this.input.getSelectionPointForOffset?.(offset, affinity);
+		return point ? { ...point, row: 1, col: point.col + 1 } : undefined;
+	}
+
+	getSelectionText(start: number, end: number): string {
+		return this.input.getSelectionText(start, end);
+	}
+
+	moveCursorToOffset(offset: number): void {
+		this.input.moveCursorToOffset(offset);
+	}
+
+	getLineSelection(row: number): EditorSelectionRange | undefined {
+		return row === 1 ? this.getSelectAllSelection() : undefined;
+	}
+
+	getSelectAllSelection(): EditorSelectionRange {
+		const range = this.input.getRenderedValueRange();
+		return {
+			start: { row: 1, col: 1 + range.start, offset: 0 },
+			end: { row: 1, col: 1 + range.end, offset: this.input.getValue().length, boundary: true },
+		};
+	}
+
+	deleteSelection(start: number, end: number): boolean {
+		const deleted = this.input.deleteSelection(start, end);
+		if (deleted) this.onQueryChange(this.input.getValue());
+		return deleted;
+	}
+
+	handleSelectionInput(data: string, selection: SelectionInputContext): SelectionInputResult {
+		const previous = this.input.getValue();
+		const result = this.input.handleSelectionInput(data, selection);
+		const query = this.input.getValue();
+		if (query !== previous) this.onQueryChange(query);
+		return result;
+	}
+
+	invalidateSelectionInput(): void {
+		this.input.invalidateSelectionInput();
 	}
 
 	setHoveredNavigationDirection(direction: -1 | 1 | undefined): boolean {
@@ -350,5 +425,20 @@ export class AltScreenSearchComponent implements Component, Focusable {
 			`│${content}│`,
 			`└${"─".repeat(leftRuleWidth)}${renderedButtons ? " " : ""}${renderedButtons}${renderedButtons ? " " : ""}${"─".repeat(rightRuleWidth)}┘`,
 		];
+	}
+
+	[RENDER_LINES](width: number): TuiRenderLine[] {
+		const lines = this.render(width);
+		const inputStart = 1 + this.input.getRenderedValueRange().start;
+		return lines.map((text, row) => {
+			const lineWidth = visibleWidth(text);
+			const ranges = row === 1
+				? [
+						{ start: 0, end: inputStart },
+						{ start: this.input.getValue() ? 1 + this.inputAreaWidth : inputStart, end: lineWidth },
+					]
+				: [{ start: 0, end: lineWidth }];
+			return withRenderLineSelectionExclusions(textRenderLine(text), ranges);
+		});
 	}
 }

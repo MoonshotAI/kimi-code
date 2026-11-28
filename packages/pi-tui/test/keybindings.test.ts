@@ -42,6 +42,7 @@ describe("KeybindingsManager", () => {
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchNext"), ["down", "enter", "ctrl+g"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchPrevious"), ["up", "shift+enter", "ctrl+shift+g"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchClose"), ["escape"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.searchSelectAll"), ["ctrl+shift+a"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.top"), ["ctrl+home"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.bottom"), ["ctrl+end"]);
 	});
@@ -77,5 +78,35 @@ describe("KeybindingsManager", () => {
 			},
 		]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLeft"), ["left", "ctrl+b"]);
+	});
+
+	it("resolves shift deletion aliases through the registry", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+
+		assert.strictEqual(keybindings.matches("\x1b[127;2u", "tui.editor.deleteCharBackward"), true);
+		assert.strictEqual(keybindings.matches("\x1b[3;2~", "tui.editor.deleteCharForward"), true);
+	});
+
+	it("lets explicit bindings override only the shift deletion aliases", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.editor.deleteWordBackward": "shift+backspace",
+			"tui.editor.deleteWordForward": "shift+delete",
+		});
+
+		assert.strictEqual(keybindings.matches("\x1b[127;2u", "tui.editor.deleteWordBackward"), true);
+		assert.strictEqual(keybindings.matches("\x1b[127;2u", "tui.editor.deleteCharBackward"), false);
+		assert.strictEqual(keybindings.matches("\x1b[3;2~", "tui.editor.deleteWordForward"), true);
+		assert.strictEqual(keybindings.matches("\x1b[3;2~", "tui.editor.deleteCharForward"), false);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLeft"), ["left", "ctrl+b"]);
+	});
+
+	it("allows shift deletion aliases to be disabled", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.editor.deleteCharBackward": [],
+			"tui.editor.deleteCharForward": [],
+		});
+
+		assert.strictEqual(keybindings.matches("\x1b[127;2u", "tui.editor.deleteCharBackward"), false);
+		assert.strictEqual(keybindings.matches("\x1b[3;2~", "tui.editor.deleteCharForward"), false);
 	});
 });

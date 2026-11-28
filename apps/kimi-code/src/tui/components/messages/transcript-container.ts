@@ -1,9 +1,13 @@
-import type {
-  Component,
-  TUI,
-  TuiMouseDispatchResult,
-  TuiMouseEvent,
-  TuiMouseEventResult,
+import {
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  type Component,
+  type TUI,
+  type TuiRenderLine,
+  type TuiMouseDispatchResult,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 import {
@@ -20,6 +24,7 @@ import {
   TranscriptRowComponent,
   type TranscriptGroupInteraction,
 } from '#/tui/components/messages/transcript-group';
+import { TranscriptRowLayout } from '#/tui/components/messages/transcript-row-layout';
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import {
@@ -72,6 +77,8 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private readonly inspector = new TranscriptItemInspector();
   private groups = new Map<Component, TranscriptGroupComponent>();
   private rows = new Map<Component, TranscriptRowComponent>();
+  private readonly rowLayouts = new WeakMap<Component, TranscriptRowLayout>();
+  private renderedLayoutCache: { readonly source: GutterLayout; readonly layout: GutterLayout } | undefined;
   private expandedGroups = new WeakMap<Component, boolean>();
   private openedMembers = new WeakSet<Component>();
   private options: TranscriptPresentationOptions = {
@@ -185,8 +192,12 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
     this.ensureProjection();
-    return this.gutter.render(width);
+    return renderComponentLines(this.gutter, width);
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
@@ -196,7 +207,18 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
 
   getRenderedLayout(): GutterLayout | undefined {
     this.ensureProjection();
-    return this.gutter.getRenderedLayout();
+    const layout = this.gutter.getRenderedLayout();
+    if (layout === undefined) return undefined;
+    if (this.renderedLayoutCache?.source === layout) return this.renderedLayoutCache.layout;
+    const unwrapped = {
+      ...layout,
+      children: layout.children.map((entry) => ({
+        ...entry,
+        component: entry.component instanceof TranscriptRowLayout ? entry.component.child : entry.component,
+      })),
+    };
+    this.renderedLayoutCache = { source: layout, layout: unwrapped };
+    return unwrapped;
   }
 
   toggleGroup(anchor: Component, fromBottom?: { readonly removedLines: number }): void {
@@ -361,7 +383,18 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     }
     this.rows = nextRows;
     this.gutter.clear();
-    for (const child of viewChildren) this.gutter.addChild(child);
+    for (const child of viewChildren) {
+      if (!this.options.fullscreen) {
+        this.gutter.addChild(child);
+        continue;
+      }
+      let layout = this.rowLayouts.get(child);
+      if (layout === undefined) {
+        layout = new TranscriptRowLayout(child);
+        this.rowLayouts.set(child, layout);
+      }
+      this.gutter.addChild(layout);
+    }
     this.projectionCache = {
       sourceVersion: this.sourceVersion,
       options: this.options,

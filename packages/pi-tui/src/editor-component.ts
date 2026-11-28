@@ -1,6 +1,45 @@
 import type { AutocompleteProvider } from "./autocomplete.ts";
 import type { Component } from "./tui.ts";
 
+export interface EditorSelectionPoint {
+	row: number;
+	col: number;
+	offset: number;
+	boundary?: boolean;
+}
+
+export interface EditorSelectionRange {
+	start: EditorSelectionPoint;
+	end: EditorSelectionPoint;
+}
+
+export interface SelectionInputContext {
+	start: number;
+	end: number;
+	generation: number;
+}
+
+export interface SelectionInputResult {
+	handled: boolean;
+	clearSelection?: boolean;
+}
+
+export interface SelectionEditComponent {
+	getText(): string;
+	getClosestSelectionPoint(row: number, column: number): EditorSelectionPoint & { endOffset: number };
+	getSelectionContentStart(row: number): number | undefined;
+	getSelectionContentEnd(row: number): number | undefined;
+	getSelectionText(start: number, end: number): string;
+	deleteSelection(start: number, end: number): boolean;
+	moveCursorToOffset(offset: number): void;
+	handleSelectionInput?(data: string, selection: SelectionInputContext): SelectionInputResult;
+	invalidateSelectionInput?(): void;
+	getSelectionPointForOffset?(offset: number, affinity: "forward" | "backward"): EditorSelectionPoint | undefined;
+	getSelectionNewlineOffset?(row: number): number | undefined;
+	getLineSelection?(row: number): EditorSelectionRange | undefined;
+	getSelectAllSelection?(): EditorSelectionRange | undefined;
+}
+
 /**
  * Interface for custom editor components.
  *

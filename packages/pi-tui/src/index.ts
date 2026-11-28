@@ -92,7 +92,14 @@ export {
 	VStack,
 } from "./components/v-stack.ts";
 // Editor component interface (for custom editors)
-export type { EditorComponent } from "./editor-component.ts";
+export type {
+	EditorComponent,
+	EditorSelectionPoint,
+	EditorSelectionRange,
+	SelectionEditComponent,
+	SelectionInputContext,
+	SelectionInputResult,
+} from "./editor-component.ts";
 // Fuzzy matching
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
 // Keybindings
@@ -206,11 +213,36 @@ export {
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	type TuiMouseEventType,
+	type TuiSelectionTarget,
 	type TuiStopOptions,
 	type ViewportTUI,
 } from "./tui.ts";
-export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
+export {
+	TuiAltScreen,
+	type TuiAltScreenOptions,
+	type TuiRightClickPasteRequest,
+	type TuiSelectionCopyResult,
+} from "./tui-alt-screen.ts";
 export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
+export {
+	decorateRenderLine,
+	offsetRenderLine,
+	prefixRenderLine,
+	RENDER_LINES,
+	renderComponentLines,
+	renderComponentText,
+	renderLineTexts,
+	type SoftWrapContinuation,
+	type SoftWrapFragment,
+	textRenderLine,
+	truncateRenderLine,
+	type TuiColumnRange,
+	type TuiRenderLine,
+	type TuiSelectionRegion,
+	withRenderLineSelectionExclusions,
+	withRenderLineSelectionRegion,
+	withRenderLineText,
+} from "./render-line.ts";
 // Utilities
 export {
 	getOsc8LinkAtColumn,

@@ -264,6 +264,12 @@ interface Component {
 | `capturesViewportInput?` | If true while the component has focus, `TuiAltScreen` passes its viewport scrolling and prompt-jump keys (`tui.altScreen.*` except search) to it instead of scrolling the viewport, as it does for a focused overlay. Set by `SelectList`, `SettingsList`, and `Editor` while autocomplete is open, so PageUp/PageDown move the selection. Only the focused component is checked: a wrapper that forwards input to a list must expose the list's value itself. Use `getSelectPageIndex(keybindings, data, selectedIndex, itemCount, pageSize)` to compute the new selection. |
 | `invalidate()` | Required. Clear any cached render state so the next `render()` starts from scratch. Components without cached render state can use an empty implementation. |
 
+#### Immutable render results
+
+`render()`, `[RENDER_LINES]()`, `renderComponentLines()`, and `renderLineTexts()` return immutable snapshots. After an array is returned, neither its producer nor its consumers may modify the array, its `TuiRenderLine` objects, or nested soft-wrap and selection metadata.
+
+When rendered text, row count or order, or any nested metadata changes, the next render must return a new top-level array and new objects for the changed rows. Unchanged arrays and rows may be reused, so caching does not require allocating a new result for every render. Consumers that decorate or pad a child component's output must copy the returned array before modifying it. Mutating a previously returned result is outside the component contract; reference-based caches rely on this rule.
+
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
 
 ### Mouse Input

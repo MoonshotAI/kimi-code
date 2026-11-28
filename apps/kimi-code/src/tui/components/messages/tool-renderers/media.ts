@@ -1,10 +1,10 @@
 import type { Component } from '@moonshot-ai/pi-tui';
-import { Text } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 
 import type { ChipProvider } from './chip';
 import { renderTruncated } from './truncated';
+import { ToolTranscriptText } from './transcript-row';
 import type { ResultRenderer } from './types';
 
 export interface ReadMediaSummary {
@@ -118,12 +118,12 @@ export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
   const dim = (text: string): string => currentTheme.dim(text);
   const out: Component[] = [];
   if (summary.path !== undefined) {
-    out.push(new Text(`  ${dim(summary.path)}`, 0, 0));
+    out.push(new ToolTranscriptText(`  ${dim(summary.path)}`, 2, 0, 0));
   }
   const meta = metaSegments(summary);
   const tail: string[] = [summary.kind];
   if (meta.length > 0) tail.push(meta.join(', '));
   if (summary.url !== undefined) tail.push(summary.url);
-  out.push(new Text(`  ${dim(tail.join(' · '))}`, 0, 0));
+  out.push(new ToolTranscriptText(`  ${dim(tail.join(' · '))}`, 2, 0, 0));
   return out;
 };

@@ -6,12 +6,12 @@ import {
   TuiMainScreen,
   VStack,
   type TUI,
+  type TuiRightClickPasteRequest,
 } from '@moonshot-ai/pi-tui';
 
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
-import { clipboard } from '#/utils/clipboard/clipboard-native';
-import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { copyTextToClipboard, readClipboardText } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
 
 import { DockSection } from './components/chrome/dock-section';
@@ -99,30 +99,33 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
   setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
   const fullscreen = (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen';
+  const selectionCopyMode = initialAppState.selectionCopyMode ?? 'immediate';
   const ui = fullscreen
       ? new TuiAltScreen(terminal, undefined, undefined, {
           openUrl,
           refocusMouseGuardMs: CLICK_GUARD_MS,
-          copyOnSelect:
-            initialAppState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
           wheelScrollLines: resolveWheelScrollLines(initialAppState.wheelScrollLines),
-          onRightClickPaste: () => {
+          searchSelectAll: true,
+          editorSelection: true,
+          copyOnSelect: selectionCopyMode === 'immediate',
+          copyOnRightClick: selectionCopyMode === 'right-click',
+          onRightClickPaste: (request: TuiRightClickPasteRequest) => {
             const target = ui.getFocusedComponent();
-            if (!target?.handleInput || clipboard?.getText === undefined) return;
-            void clipboard
-              .getText()
+            if (!target?.handleInput || !request.isCurrent()) return;
+            void readClipboardText()
               .then((text) => {
-                if (!text || ui.getFocusedComponent() !== target) return;
-                target.handleInput?.(`\u001B[200~${text}\u001B[201~`);
-                ui.requestRender();
+                if (!request.isCurrent() || !text || ui.getFocusedComponent() !== target) return;
+                ui.dispatchInput(`\u001B[200~${text}\u001B[201~`);
               })
-              .catch(() => {});
+              .catch((error: unknown) => {
+                if (ui instanceof TuiAltScreen) ui.flash(formatErrorMessage(error), 5000);
+              });
           },
           scrollToEndIndicator: () => currentTheme.fg('primary', ' ↓ Jump to bottom '),
           copySelection: async (text) => {
             try {
               const method = await copyTextToClipboard(text);
-              return method === 'native' ? true : 'Copied via terminal';
+              return method === 'native' ? true : { copied: true, message: 'Copied via terminal' };
             } catch (error) {
               return formatErrorMessage(error);
             }

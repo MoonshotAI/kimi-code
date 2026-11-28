@@ -1,4 +1,4 @@
-import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
+import { resetCapabilitiesCache, renderComponentLines, renderLineTexts, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -6,6 +6,7 @@ import {
   UserMessageComponent,
   userMessageLineHeights,
 } from '#/tui/components/messages/user-message';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 
@@ -40,6 +41,47 @@ describe('UserMessageComponent', () => {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
+  });
+
+  it('separates the prompt and spacer from selectable content without changing flattened rows', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+    const component = new UserMessageComponent('1234567890ABCDEFGHIJ', []);
+    const legacy = renderComponentLines(component, 12);
+
+    const parts = component.renderTranscriptRow(12);
+    const flattened = flattenTranscriptRow(parts, 12);
+    expect(parts.gutterWidth).toBe(2);
+    expect(parts.gutterLines.map((line) => stripAnsi(line.text))).toEqual(['', '❯ ', '  ']);
+    expect(parts.contentLines.map((line) => stripAnsi(line.text))).toEqual([
+      '',
+      '1234567890',
+      'ABCDEFGHIJ',
+    ]);
+    expect(parts.contentLines[0]?.text).toMatch(/^\u001B\]133;A\u0007/);
+    expect(parts.contentLines.at(-1)?.text).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
+    expect(renderLineTexts(flattened).map((line) => stripAnsi(line).trimEnd())).toEqual(
+      renderLineTexts(legacy).map((line) => stripAnsi(line).trimEnd()),
+    );
+    expect(flattened[0]?.selectionRegion).toEqual({
+      content: parts.contentLines[0],
+      column: 2,
+      width: 10,
+    });
+    expect(parts.contentLines[1]?.softWrap?.[0]?.logicalLineId).toBe(
+      parts.contentLines[2]?.softWrap?.[0]?.logicalLineId,
+    );
+
+    expect(component.renderTranscriptRow(12)).toBe(parts);
+    component.setSteerPending(true);
+    const pending = component.renderTranscriptRow(12);
+    expect(pending).not.toBe(parts);
+    expect(pending.gutterLines[1]?.text).toContain(currentTheme.fade('❯'));
+    expect(pending.contentLines[1]?.text).toContain(currentTheme.fade('1234'));
+    expect(pending.contentLines.map((line) => stripAnsi(line.text))).toEqual(
+      parts.contentLines.map((line) => stripAnsi(line.text)),
+    );
+    component.invalidate();
+    expect(component.renderTranscriptRow(12)).not.toBe(pending);
   });
 
   it('does not truncate inline image escape sequences', () => {
@@ -88,6 +130,13 @@ describe('UserMessageComponent', () => {
     expect(imageLine).not.toContain('\u001B[0m');
     expect(imageLine).not.toContain('…');
     expect(imageLine).toContain('\u001B\\');
+
+    const parts = component.renderTranscriptRow(80);
+    const imageIndex = parts.contentLines.findIndex((line) => line.text.includes('\u001B_G'));
+    expect(imageIndex).toBeGreaterThan(0);
+    expect(parts.contentLines[imageIndex]?.text).toContain('\u001B_G');
+    expect(parts.contentLines[imageIndex]?.text).not.toContain('…');
+    expect(parts.gutterLines[imageIndex]?.text).toBe('  ');
   });
 
   it('omits the sparkles bullet when an empty bullet is provided', () => {

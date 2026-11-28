@@ -1,4 +1,4 @@
-import { Key, matchesKey, type Terminal } from '@moonshot-ai/pi-tui';
+import { Key, matchesKey, renderLineTexts, type Terminal } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
@@ -160,7 +160,7 @@ export class AgentActivityViewer extends FramedScrollViewer {
         const thinking = new ThinkingComponent(step.thinkingTail);
         out.push(
           currentTheme.dim(`${MESSAGE_INDENT}Thinking`),
-          ...thinking.renderRowDetail(innerWidth),
+          ...renderLineTexts(thinking.renderRowDetail(innerWidth)),
         );
       }
       if (step.textTail.trim().length > 0) {

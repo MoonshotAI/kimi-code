@@ -1,7 +1,21 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { truncateToWidth, visibleWidth, type Component, type MarkdownTheme } from '@moonshot-ai/pi-tui';
+import {
+  decorateRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  textRenderLine,
+  truncateRenderLine,
+  truncateToWidth,
+  visibleWidth,
+  withRenderLineSelectionExclusions,
+  withRenderLineText,
+  type Component,
+  type MarkdownTheme,
+  type TuiRenderLine,
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import { Markdown } from '#/tui/components/markdown/markdown';
@@ -24,7 +38,7 @@ export class PlanBoxComponent implements Component {
   private readonly markdown: Markdown;
   private readonly status: PlanBoxOptions['status'];
   private cachedWidth: number | undefined;
-  private cachedLines: string[] | undefined;
+  private cachedLines: TuiRenderLine[] | undefined;
 
   constructor(
     plan: string,
@@ -44,10 +58,16 @@ export class PlanBoxComponent implements Component {
   }
 
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
     const safeWidth = Math.max(0, width);
-    if (safeWidth <= 0) return [''];
+    if (safeWidth <= 0) return [textRenderLine('')];
     if (safeWidth < LEFT_MARGIN + 4) {
-      return this.markdown.render(Math.max(1, safeWidth)).map((line) => truncateToWidth(line, safeWidth, '…'));
+      return renderComponentLines(this.markdown, Math.max(1, safeWidth)).map((line) =>
+        truncateRenderLine(line, safeWidth, '…'),
+      );
     }
 
     if (this.cachedLines !== undefined && this.cachedWidth === width) {
@@ -59,6 +79,8 @@ export class PlanBoxComponent implements Component {
 
     const paint = (s: string): string => chalk.hex(this.borderHex)(s);
     const indent = ' '.repeat(LEFT_MARGIN);
+    const frameLine = (text: string): TuiRenderLine =>
+      withRenderLineSelectionExclusions(textRenderLine(text), [{ start: 0, end: visibleWidth(text) }]);
 
     const title = this.buildTitle(horzLen);
     const trailingDashLen = Math.max(0, horzLen - visibleWidth(title));
@@ -66,16 +88,23 @@ export class PlanBoxComponent implements Component {
       indent + paint('┌') + paint(title) + paint('─'.repeat(trailingDashLen)) + paint('┐');
     const bottom = indent + paint('└' + '─'.repeat(horzLen) + '┘');
 
-    const rawLines = this.markdown.render(contentWidth);
+    const rawLines = renderComponentLines(this.markdown, contentWidth);
 
-    const lines: string[] = [top];
+    const lines: TuiRenderLine[] = [frameLine(top)];
     for (const raw of rawLines) {
-      const pad = Math.max(0, contentWidth - visibleWidth(raw));
-      lines.push(indent + paint('│') + ' ' + raw + ' '.repeat(pad) + ' ' + paint('│'));
+      const prefixed = decorateRenderLine(raw, indent + paint('│') + ' ');
+      const pad = Math.max(0, contentWidth - visibleWidth(raw.text));
+      const contentEnd = visibleWidth(prefixed.text);
+      const text = truncateToWidth(prefixed.text + ' '.repeat(pad) + ' ' + paint('│'), safeWidth, '…');
+      lines.push(
+        withRenderLineSelectionExclusions(withRenderLineText(prefixed, text), [
+          { start: Math.min(contentEnd, visibleWidth(text)), end: visibleWidth(text) },
+        ]),
+      );
     }
-    lines.push(bottom);
+    lines.push(frameLine(bottom));
 
-    const fitted = lines.map((line) => truncateToWidth(line, safeWidth, '…'));
+    const fitted = lines.map((line) => truncateRenderLine(line, safeWidth, '…'));
     this.cachedWidth = width;
     this.cachedLines = fitted;
     return fitted;

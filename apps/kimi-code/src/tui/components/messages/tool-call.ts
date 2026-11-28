@@ -4,14 +4,19 @@ import chalk from 'chalk';
 
 import {
   Container,
+  prefixRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
   Spacer,
   stripTerminalSequences,
   Text,
-  truncateToWidth,
+  textRenderLine,
+  truncateRenderLine,
   visibleWidth,
-  wrapTextWithAnsi,
+  withRenderLineText,
 } from '@moonshot-ai/pi-tui';
-import type { Component, TUI } from '@moonshot-ai/pi-tui';
+import type { Component, TUI, TuiRenderLine } from '@moonshot-ai/pi-tui';
 import { Markdown } from '#/tui/components/markdown/markdown';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
@@ -52,6 +57,7 @@ import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
+import type { TranscriptRowParts } from './transcript-row-layout';
 import {
   TruncatedHeaderLine,
   type HeaderContent,
@@ -60,6 +66,11 @@ import {
 import { ShellExecutionComponent } from './shell-execution';
 import { chipText, countNonEmptyLines } from './tool-renderers/chip';
 import { buildGoalToolHeader, isGoalToolName, parseGoalToolOutput } from './tool-renderers/goal';
+import {
+  renderToolTranscriptRow,
+  splitToolTranscriptRow,
+  ToolTranscriptText,
+} from './tool-renderers/transcript-row';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
@@ -87,6 +98,35 @@ const MAX_LIVE_OUTPUT_CHARS = 50_000;
 const CARD_PREAMBLE_CHILDREN = 2;
 const dimHeaderStyle = (text: string): string => currentTheme.dim(text);
 const notifyTitleStyle = (text: string): string => currentTheme.boldFg('textStrong', text);
+
+function appendRenderLines(
+  target: TuiRenderLine[],
+  source: readonly TuiRenderLine[],
+  offset = target.length,
+): void {
+  target.length = Math.max(target.length, offset + source.length);
+  for (const key of Object.keys(source)) {
+    target[offset + Number(key)] = source[Number(key)]!;
+  }
+}
+
+function reuseTextRenderLines(
+  previous: TuiRenderLine[] | undefined,
+  next: TuiRenderLine[],
+): TuiRenderLine[] {
+  if (previous === undefined || previous.length !== next.length) return next;
+  const reusable = previous.every((line, index) => {
+    const candidate = next[index]!;
+    if (line.softWrap !== undefined || candidate.softWrap !== undefined) return false;
+    if (line.text !== candidate.text) return false;
+    const left = line.selectionExclusions ?? [];
+    const right = candidate.selectionExclusions ?? [];
+    return left.length === right.length && left.every((range, rangeIndex) =>
+      range.start === right[rangeIndex]?.start && range.end === right[rangeIndex]?.end
+    );
+  });
+  return reusable ? previous : next;
+}
 
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
@@ -521,23 +561,35 @@ function lastNonEmptyLine(text: string): string | undefined {
 }
 
 class PrefixedWrappedLine implements Component {
-  private renderCache: { width: number; lines: string[] } | undefined;
+  private renderCache: { width: number; lines: TuiRenderLine[] } | undefined;
+  private readonly textComponent: Text;
 
   constructor(
     private readonly firstPrefix: string,
     private readonly continuationPrefix: string,
-    private readonly text: string,
+    text: string,
     private readonly tailLines?: number,
     private readonly minLines?: number,
-  ) { }
+  ) {
+    this.textComponent = new Text(text, 0, 0);
+  }
 
   invalidate(): void {
     this.renderCache = undefined;
+    this.textComponent.invalidate();
+  }
+
+  selectionExclusions(width: number) {
+    return [{ start: 0, end: Math.min(MESSAGE_INDENT.length, Math.max(0, width)) }];
   }
 
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
     const safeWidth = Math.max(0, width);
-    if (safeWidth <= 0) return [''];
+    if (safeWidth <= 0) return [textRenderLine('')];
 
     if (isRenderCacheEnabled() && this.renderCache?.width === safeWidth) {
       return this.renderCache.lines;
@@ -548,24 +600,36 @@ class PrefixedWrappedLine implements Component {
       visibleWidth(this.continuationPrefix),
     );
     const contentWidth = Math.max(1, safeWidth - prefixWidth);
-    const wrapped = new Text(this.text, 0, 0).render(contentWidth);
-    const tail =
+    const wrapped = renderComponentLines(this.textComponent, contentWidth);
+    const lines =
       this.tailLines !== undefined && wrapped.length > this.tailLines
         ? wrapped.slice(wrapped.length - this.tailLines)
-        : wrapped;
-    const lines =
-      this.minLines !== undefined && tail.length < this.minLines
-        ? [...tail, ...Array.from<string>({ length: this.minLines - tail.length }).fill('')]
-        : tail;
+        : [...wrapped];
+    if (this.minLines !== undefined) {
+      while (lines.length < this.minLines) lines.push(textRenderLine(''));
+    }
     const rendered = lines
-      .map((line, index) =>
-        index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
-      )
-      .map((line) => truncateToWidth(line, safeWidth, '…'));
+      .map((line, index) => prefixRenderLine(
+        line,
+        index === 0 ? this.firstPrefix : this.continuationPrefix,
+      ))
+      .map((line) => truncateRenderLine(line, safeWidth, '…'));
     if (isRenderCacheEnabled()) {
       this.renderCache = { width: safeWidth, lines: rendered };
     }
     return rendered;
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const lines = renderComponentLines(this, width);
+    return splitToolTranscriptRow(
+      this,
+      lines,
+      width,
+      lines.map((_line, index) =>
+        visibleWidth(index === 0 ? this.firstPrefix : this.continuationPrefix)
+      ),
+    );
   }
 }
 
@@ -611,14 +675,37 @@ function notifyUserTitle(args: Record<string, unknown>): string {
     .trim();
 }
 
-class NotifyUserHeader extends TruncatedHeaderLine {
+function wrapNotifyUserTitle(text: string, width: number): TuiRenderLine[] {
+  return renderComponentLines(new Text(text, 0, 0), width)
+    .map((line) => withRenderLineText(line, line.text.trimEnd()));
+}
+
+class ToolCallHeader extends TruncatedHeaderLine {
+  private transcriptDecoration = '';
+
+  setTranscriptDecoration(decoration: string): void {
+    this.transcriptDecoration = decoration;
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    return splitToolTranscriptRow(
+      this,
+      renderComponentLines(this, width),
+      width,
+      visibleWidth(this.transcriptDecoration),
+      this.transcriptDecoration,
+    );
+  }
+}
+
+class NotifyUserHeader extends ToolCallHeader {
   private prefix = '';
   private title: string | undefined;
   private expanded = false;
-  private expandedCache: { width: number; lines: string[] } | undefined;
+  private expandedCache: { width: number; lines: TuiRenderLine[] } | undefined;
 
-  constructor(content: HeaderContent) {
-    super(content);
+  constructor(content: HeaderContent, decorationWidth: number) {
+    super(content, decorationWidth);
     this.setText(content);
   }
 
@@ -647,6 +734,11 @@ class NotifyUserHeader extends TruncatedHeaderLine {
 
   override render(width: number): string[] {
     if (this.title === undefined || !this.expanded) return super.render(width);
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
+    if (this.title === undefined || !this.expanded) return super.render(width).map(textRenderLine);
     const safeWidth = Math.max(1, width);
     if (isRenderCacheEnabled() && this.expandedCache?.width === safeWidth) {
       return this.expandedCache.lines;
@@ -654,19 +746,50 @@ class NotifyUserHeader extends TruncatedHeaderLine {
     const firstPrefix = this.prefix;
     const firstWidth = Math.max(1, safeWidth - visibleWidth(firstPrefix));
     const continuationWidth = Math.max(1, safeWidth - visibleWidth(MESSAGE_INDENT));
-    const first = wrapTextWithAnsi(this.title, firstWidth)[0] ?? '';
-    const remainder = this.title.slice(first.length).trimStart();
-    const continuation =
-      remainder.length > 0 ? wrapTextWithAnsi(remainder, continuationWidth) : [];
-    const lines = [first, ...continuation].map((row, index) =>
-      truncateToWidth(
-        `${index === 0 ? firstPrefix : MESSAGE_INDENT}${notifyTitleStyle(row)}`,
+    const title = this.title.replaceAll('\t', '   ');
+    const firstWrapped = wrapNotifyUserTitle(title, firstWidth);
+    const first = firstWrapped[0] ?? textRenderLine('');
+    const remainder = title.slice(first.text.length).trimStart();
+    const continuation = remainder.length > 0
+      ? wrapNotifyUserTitle(remainder, continuationWidth)
+      : [];
+    const firstFragment = first.softWrap?.[0];
+    const boundary = firstWrapped[1]?.softWrap?.[0]?.continuation;
+    const linked = firstFragment === undefined ? continuation : continuation.map((line, index) => ({
+      ...line,
+      softWrap: line.softWrap?.map((fragment) => ({
+        ...fragment,
+        logicalLineId: firstFragment.logicalLineId,
+        ...(firstFragment.origin === undefined ? {} : { origin: firstFragment.origin }),
+        ...(index === 0 && boundary !== undefined ? { continuation: boundary } : {}),
+      })),
+    }));
+    const lines = [first, ...linked].map((line, index) => {
+      const styled = withRenderLineText(line, notifyTitleStyle(line.text));
+      return truncateRenderLine(
+        prefixRenderLine(styled, index === 0 ? firstPrefix : MESSAGE_INDENT),
         safeWidth,
         '…',
-      ),
-    );
+      );
+    });
     if (isRenderCacheEnabled()) this.expandedCache = { width: safeWidth, lines };
     return lines;
+  }
+
+  transcriptPrefix(): string | undefined {
+    return this.title === undefined ? undefined : this.prefix;
+  }
+
+  override renderTranscriptRow(width: number): TranscriptRowParts {
+    if (this.title === undefined || !this.expanded) return super.renderTranscriptRow(width);
+    const lines = renderComponentLines(this, width);
+    return splitToolTranscriptRow(
+      this,
+      lines,
+      width,
+      lines.map((_line, index) => index === 0 ? visibleWidth(this.prefix) : MESSAGE_INDENT.length),
+      this.prefix,
+    );
   }
 }
 
@@ -678,23 +801,57 @@ function stripTerminalSequencesExceptLinks(text: string): string {
 }
 
 class ToolOutputMarkdown extends Markdown {
-  private dimCache: { source: string[]; lines: string[] } | undefined;
+  private dimCache: { source: TuiRenderLine[]; lines: TuiRenderLine[] } | undefined;
 
   override invalidate(): void {
     this.dimCache = undefined;
     super.invalidate();
   }
 
+  selectionExclusions(width: number) {
+    return [{ start: 0, end: Math.min(MESSAGE_INDENT.length, Math.max(0, width)) }];
+  }
+
   override render(width: number): string[] {
-    const source = super.render(width);
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  override [RENDER_LINES](width: number): TuiRenderLine[] {
+    const source = super[RENDER_LINES](width);
     if (isRenderCacheEnabled() && this.dimCache?.source === source) return this.dimCache.lines;
-    const lines = source.map((line) =>
-      currentTheme.dim(
-        truncateToWidth(stripTerminalSequencesExceptLinks(line).trimEnd(), Math.max(1, width), '…'),
-      ),
-    );
+    const lines = source.map((line) => {
+      const text = stripTerminalSequencesExceptLinks(line.text).trimEnd();
+      const trimmedWidth = visibleWidth(text);
+      const softWrap = line.softWrap?.flatMap((fragment) => {
+        const start = Math.min(fragment.start, trimmedWidth);
+        const end = Math.min(fragment.end, trimmedWidth);
+        return end > start ? [{ ...fragment, start, end }] : [];
+      });
+      const selectionExclusions = line.selectionExclusions
+        ?.map((range) => ({
+          start: Math.min(range.start, trimmedWidth),
+          end: Math.min(range.end, trimmedWidth),
+        }))
+        .filter((range) => range.end > range.start);
+      const aligned = withRenderLineText({
+        ...line,
+        ...(softWrap === undefined ? {} : { softWrap }),
+        ...(selectionExclusions === undefined ? {} : { selectionExclusions }),
+      }, text);
+      const truncated = truncateRenderLine(aligned, Math.max(1, width), '…');
+      return withRenderLineText(truncated, currentTheme.dim(truncated.text));
+    });
     if (isRenderCacheEnabled()) this.dimCache = { source, lines };
     return lines;
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    return splitToolTranscriptRow(
+      this,
+      renderComponentLines(this, width),
+      width,
+      MESSAGE_INDENT.length,
+    );
   }
 }
 
@@ -705,6 +862,10 @@ class StableSpacer extends Spacer {
     if (!isRenderCacheEnabled()) return super.render(width);
     if (this.cache?.width !== width) this.cache = { width, lines: super.render(width) };
     return this.cache.lines;
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    return splitToolTranscriptRow(this, renderComponentLines(this, width), width, 0);
   }
 }
 
@@ -722,7 +883,7 @@ export class ToolCallComponent extends Container {
   private ui: TUI | undefined;
   private planPath: string | undefined;
   private currentPlan: string | undefined;
-  private headerText: TruncatedHeaderLine;
+  private headerText: ToolCallHeader;
   private callPreviewEndIndex = 0;
 
   private subagentAgentId: string | undefined;
@@ -774,10 +935,11 @@ export class ToolCallComponent extends Container {
     this.applySubagentReplay(toolCall.subagent);
 
     this.addChild(new StableSpacer(1));
+    const headerDecorationWidth = toolCall.name === 'ExitPlanMode' ? 0 : visibleWidth(STATUS_BULLET);
     this.headerText =
       toolCall.name === 'NotifyUser'
-        ? new NotifyUserHeader(this.buildHeader())
-        : new TruncatedHeaderLine(this.buildHeader());
+        ? new NotifyUserHeader(this.buildHeader(), headerDecorationWidth)
+        : new ToolCallHeader(this.buildHeader(), headerDecorationWidth);
     this.addChild(this.headerText);
     this.buildCallPreview();
     this.callPreviewEndIndex = this.children.length;
@@ -791,10 +953,14 @@ export class ToolCallComponent extends Container {
   }
 
   private renderCache:
-    | { width: number; lines: string[]; childRefs: Component[]; childLines: (readonly string[])[] }
+    | { width: number; lines: TuiRenderLine[]; childRefs: Component[]; childLines: TuiRenderLine[][] }
     | undefined;
 
   override render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  override [RENDER_LINES](width: number): TuiRenderLine[] {
     const cache = this.renderCache;
     const cacheValid =
       isRenderCacheEnabled() &&
@@ -803,12 +969,15 @@ export class ToolCallComponent extends Container {
       cache.childRefs.length === this.children.length;
 
     const childRefs: Component[] = [];
-    const childLines: (readonly string[])[] = [];
+    const childLines: TuiRenderLine[][] = [];
     let allReused = cacheValid;
 
     let i = 0;
     for (const child of this.children) {
-      const lines = child.render(width);
+      const lines = reuseTextRenderLines(
+        cacheValid ? cache.childLines[i] : undefined,
+        renderComponentLines(child, width),
+      );
       childRefs.push(child);
       childLines.push(lines);
       if (cacheValid && (cache.childRefs[i] !== child || cache.childLines[i] !== lines)) {
@@ -817,6 +986,23 @@ export class ToolCallComponent extends Container {
       i++;
     }
 
+    this.updateTruncatedAtLastRender(width);
+
+    if (allReused) {
+      return cache!.lines;
+    }
+
+    const out: TuiRenderLine[] = [];
+    for (const lines of childLines) {
+      for (const line of lines) out.push(line);
+    }
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width, lines: out, childRefs, childLines };
+    }
+    return out;
+  }
+
+  private updateTruncatedAtLastRender(width: number): void {
     if (!this.expanded) {
       this.truncatedAtLastRender = this.children.some(
         (child, index) =>
@@ -827,35 +1013,110 @@ export class ToolCallComponent extends Container {
           ((child instanceof TruncatedOutputComponent || child instanceof ShellExecutionComponent) &&
             child.wasTruncated()),
       );
-    } else if (
-      !this.truncatedAtLastRender &&
-      this.collapsedOutcomeClips(width)
-    ) {
+    } else if (!this.truncatedAtLastRender && this.collapsedOutcomeClips(width)) {
       this.truncatedAtLastRender = true;
     }
+  }
 
-    if (allReused) {
-      return cache!.lines;
+  private transcriptRowCache:
+    | {
+        width: number;
+        children: Component[];
+        rows: TranscriptRowParts[];
+        parts: TranscriptRowParts;
+      }
+    | undefined;
+
+  private transcriptRowDetailCache:
+    | { width: number; children: Component[]; rows: TranscriptRowParts[]; lines: TuiRenderLine[] }
+    | undefined;
+
+  private renderTranscriptChildren(children: readonly Component[], width: number): TranscriptRowParts[] {
+    const headerDecoration = this.toolCall.name === 'ExitPlanMode'
+      ? ''
+      : this.headerText instanceof NotifyUserHeader
+        ? this.headerText.transcriptPrefix() ?? this.statusMarker()
+        : this.isSingleSubagentView()
+          ? this.buildSingleSubagentMarker(this.getDerivedSubagentPhase())
+          : this.statusMarker();
+    this.headerText.setTranscriptDecoration(headerDecoration);
+    return children.map((child) => renderToolTranscriptRow(child, width));
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const rows = this.renderTranscriptChildren(this.children, width);
+    this.updateTruncatedAtLastRender(width);
+    const cache = this.transcriptRowCache;
+    if (
+      isRenderCacheEnabled() &&
+      cache?.width === width &&
+      cache.children.length === this.children.length &&
+      this.children.every((child, index) => cache.children[index] === child && cache.rows[index] === rows[index])
+    ) {
+      return cache.parts;
     }
 
-    const out: string[] = [];
-    for (const lines of childLines) {
-      for (const line of lines) out.push(line);
+    const gutterWidths: number[] = [];
+    const gutterLines: TuiRenderLine[] = [];
+    const contentLines: TuiRenderLine[] = [];
+    let gutterWidth = 0;
+    let offset = 0;
+    for (const row of rows) {
+      const rowLength = Math.max(row.gutterLines.length, row.contentLines.length);
+      gutterWidth = Math.max(gutterWidth, row.gutterWidth);
+      for (let index = 0; index < rowLength; index++) {
+        const lineGutterWidth = row.gutterWidths?.[index] ?? row.gutterWidth;
+        gutterWidths[offset + index] = lineGutterWidth;
+        gutterWidth = Math.max(gutterWidth, lineGutterWidth);
+      }
+      appendRenderLines(gutterLines, row.gutterLines, offset);
+      appendRenderLines(contentLines, row.contentLines, offset);
+      offset += rowLength;
     }
-    if (isRenderCacheEnabled()) {
-      this.renderCache = { width, lines: out, childRefs, childLines };
+    const parts: TranscriptRowParts = {
+      gutterWidth,
+      gutterWidths,
+      gutterLines,
+      contentLines,
+    };
+    this.transcriptRowCache = {
+      width,
+      children: [...this.children],
+      rows,
+      parts,
+    };
+    return parts;
+  }
+
+  renderTranscriptRowDetail(width: number): TuiRenderLine[] {
+    const children = this.children.slice(CARD_PREAMBLE_CHILDREN).filter((child) => !(child instanceof CardOnly));
+    const rows = this.renderTranscriptChildren(children, width + MESSAGE_INDENT.length);
+    const cache = this.transcriptRowDetailCache;
+    if (
+      isRenderCacheEnabled() &&
+      cache?.width === width &&
+      cache.children.length === children.length &&
+      children.every((child, index) => cache.children[index] === child && cache.rows[index] === rows[index])
+    ) {
+      return cache.lines;
     }
-    return out;
+    const lines: TuiRenderLine[] = [];
+    for (const row of rows) appendRenderLines(lines, row.contentLines);
+    this.transcriptRowDetailCache = { width, children, rows, lines };
+    return lines;
   }
 
   private rowDetailCache:
-    | { width: number; lines: string[]; parts: Component[]; partLines: (readonly string[])[] }
+    | { width: number; lines: TuiRenderLine[]; parts: Component[]; partLines: TuiRenderLine[][] }
     | undefined;
 
-  renderRowDetail(width: number): string[] {
+  renderRowDetail(width: number): TuiRenderLine[] {
     const parts = this.children.slice(CARD_PREAMBLE_CHILDREN).filter((child) => !(child instanceof CardOnly));
-    const partLines = parts.map((part) => part.render(width));
     const cache = this.rowDetailCache;
+    const partLines = parts.map((part, index) => reuseTextRenderLines(
+      isRenderCacheEnabled() ? cache?.partLines[index] : undefined,
+      renderComponentLines(part, width),
+    ));
     if (
       isRenderCacheEnabled() &&
       cache !== undefined &&
@@ -886,6 +1147,8 @@ export class ToolCallComponent extends Container {
 
   override invalidate(): void {
     this.renderCache = undefined;
+    this.transcriptRowCache = undefined;
+    this.transcriptRowDetailCache = undefined;
     this.rowDetailCache = undefined;
     this.headerText.setText(this.buildHeader());
     this.rebuildBody();
@@ -1893,13 +2156,14 @@ export class ToolCallComponent extends Container {
       this.subagentAgentName !== undefined
         ? `subagent ${this.subagentAgentName} (${this.formatAgentId()})`
         : `subagent (${this.formatAgentId()})`;
-    this.addChild(new Text(`  ${currentTheme.dim(`↳ ${headerLabel}`)}${phaseChip}`, 0, 0));
+    this.addChild(new ToolTranscriptText(`  ${currentTheme.dim(`↳ ${headerLabel}`)}${phaseChip}`, 4, 0, 0));
 
     if (this.hiddenSubCallCount > 0) {
       const suffix = this.hiddenSubCallCount > 1 ? 's' : '';
       this.addChild(
-        new Text(
+        new ToolTranscriptText(
           currentTheme.italic(currentTheme.dim(`    ${String(this.hiddenSubCallCount)} more tool call${suffix} …`)),
+          4,
           0,
           0,
         ),
@@ -1913,7 +2177,7 @@ export class ToolCallComponent extends Container {
       const keyArg = extractKeyArgument(sub.name, sub.args, this.workspaceDir);
       const nameCol = currentTheme.fg('primary', sub.name);
       const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
-      this.addChild(new Text(`    ${mark} Used ${nameCol}${argCol}`, 0, 0));
+      this.addChild(new ToolTranscriptText(`    ${mark} Used ${nameCol}${argCol}`, 6, 0, 0));
     }
 
     for (const [id, call] of this.ongoingSubCalls) {
@@ -1921,27 +2185,27 @@ export class ToolCallComponent extends Container {
       const nameCol = currentTheme.fg('primary', call.name);
       const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
       void id;
-      this.addChild(new Text(`    ${currentTheme.dim('…')} Using ${nameCol}${argCol}`, 0, 0));
+      this.addChild(new ToolTranscriptText(`    ${currentTheme.dim('…')} Using ${nameCol}${argCol}`, 6, 0, 0));
     }
 
     if (this.subagentText.length > 0) {
       const tailLines = tailSourceLines(this.subagentText, 3).split('\n');
       for (const line of tailLines) {
-        this.addChild(new Text(`    ${currentTheme.dim(line)}`, 0, 0));
+        this.addChild(new ToolTranscriptText(`    ${currentTheme.dim(line)}`, 4, 0, 0));
       }
     }
 
     if (this.subagentPhase === 'done' && this.subagentResultSummary !== undefined) {
       const summaryLines = this.subagentResultSummary.split('\n').slice(0, 2);
       for (const line of summaryLines) {
-        this.addChild(new Text(`    ${currentTheme.dim('└')} ${line}`, 0, 0));
+        this.addChild(new ToolTranscriptText(`    ${currentTheme.dim('└')} ${line}`, 6, 0, 0));
       }
     }
 
     if (this.subagentPhase === 'failed' && this.subagentError !== undefined) {
       const errLines = this.subagentError.split('\n');
       for (const line of errLines) {
-        this.addChild(new Text(`    ${currentTheme.fg('error', '└')} ${line}`, 0, 0));
+        this.addChild(new ToolTranscriptText(`    ${currentTheme.fg('error', '└')} ${line}`, 6, 0, 0));
       }
     }
   }
@@ -2086,7 +2350,7 @@ export class ToolCallComponent extends Container {
   private buildSingleSubagentBlock(): void {
     const phase = this.getDerivedSubagentPhase();
 
-    this.addChild(new Text(this.buildSingleSubagentSummaryLine(), 0, 0));
+    this.addChild(new ToolTranscriptText(this.buildSingleSubagentSummaryLine(), 4, 0, 0));
 
     if (phase === 'failed') {
       this.addChild(this.buildSingleSubagentResultWindow('error'));
@@ -2519,14 +2783,14 @@ export class ToolCallComponent extends Container {
     if (!hasAnswers) {
       const noteText =
         typeof note === 'string' && note.length > 0 ? note : 'User dismissed the question.';
-      this.addChild(new Text(currentTheme.dim(`  ${noteText}`), 0, 0));
+      this.addChild(new ToolTranscriptText(currentTheme.dim(`  ${noteText}`), 2, 0, 0));
       return true;
     }
 
     for (const [question, answer] of Object.entries(answers as Record<string, unknown>)) {
       const answerText = typeof answer === 'string' ? answer : JSON.stringify(answer);
-      this.addChild(new Text(`  ${currentTheme.dim('Q')}  ${question}`, 0, 0));
-      this.addChild(new Text(`  ${accent('→')}  ${answerText}`, 0, 0));
+      this.addChild(new ToolTranscriptText(`  ${currentTheme.dim('Q')}  ${question}`, 2, 0, 0));
+      this.addChild(new ToolTranscriptText(`  ${accent('→')}  ${answerText}`, 2, 0, 0));
     }
     return true;
   }

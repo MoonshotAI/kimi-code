@@ -1,10 +1,25 @@
-import type { Component } from '@moonshot-ai/pi-tui';
-import { Spacer, Text, visibleWidth } from '@moonshot-ai/pi-tui';
+import {
+  decorateRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  Spacer,
+  Text,
+  textRenderLine,
+  truncateRenderLine,
+  visibleWidth,
+  withRenderLineText,
+  type Component,
+  type TuiRenderLine,
+} from '@moonshot-ai/pi-tui';
 
+import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { CronTranscriptData } from '#/tui/types';
+
+import type { TranscriptRowParts } from './transcript-row-layout';
 
 export class CronMessageComponent implements Component {
   private readonly spacer = new Spacer(1);
@@ -31,9 +46,61 @@ export class CronMessageComponent implements Component {
     this.promptText.invalidate();
   }
 
-  render(width: number): string[] {
+  renderTranscriptRow(width: number): TranscriptRowParts {
     const safeWidth = Math.max(0, width);
-    if (safeWidth <= 0) return [''];
+    const gutterWidth = visibleWidth(STATUS_BULLET);
+    if (safeWidth <= gutterWidth) {
+      const gutterLines = this[RENDER_LINES](safeWidth);
+      return {
+        gutterWidth: safeWidth,
+        gutterLines,
+        contentLines: gutterLines.map(() => textRenderLine('')),
+      };
+    }
+
+    const missed = this.data.missedCount !== undefined;
+    const titleToken: keyof ColorPalette = this.data.stale === true || missed ? 'warning' : 'accent';
+    const bullet = currentTheme.boldFg(titleToken, STATUS_BULLET);
+    const contentWidth = safeWidth - gutterWidth;
+    const contentLines: TuiRenderLine[] = [textRenderLine('')];
+    const gutterLines: TuiRenderLine[] = [textRenderLine('')];
+    const appendLines = (lines: TuiRenderLine[], firstPrefix?: string): void => {
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i]!;
+        contentLines.push(withRenderLineText(line, line.text.trimEnd()));
+        gutterLines.push(
+          textRenderLine(i === 0 && firstPrefix !== undefined ? firstPrefix : MESSAGE_INDENT),
+        );
+      }
+    };
+
+    appendLines(
+      renderComponentLines(new Text(currentTheme.boldFg(titleToken, this.title), 0, 0), contentWidth),
+      bullet,
+    );
+    if (this.detail !== undefined) {
+      appendLines(
+        renderComponentLines(
+          new Text(currentTheme.fg('textDim', this.detail), 0, 0),
+          contentWidth,
+        ),
+      );
+    }
+    appendLines(renderComponentLines(this.promptText, contentWidth));
+    return { gutterWidth, gutterLines, contentLines };
+  }
+
+  selectionExclusions() {
+    return [{ start: 0, end: visibleWidth(STATUS_BULLET) }];
+  }
+
+  render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [textRenderLine('')];
 
     const missed = this.data.missedCount !== undefined;
     const titleToken: keyof ColorPalette = this.data.stale === true || missed ? 'warning' : 'accent';
@@ -41,29 +108,28 @@ export class CronMessageComponent implements Component {
     const bulletWidth = visibleWidth(bullet);
     const contentWidth = Math.max(1, safeWidth - bulletWidth);
     const continuationIndent = ' '.repeat(bulletWidth);
-    const lines: string[] = [];
+    const lines: TuiRenderLine[] = [...renderComponentLines(this.spacer, safeWidth)];
+    const appendLines = (contentLines: TuiRenderLine[], firstPrefix?: string): void => {
+      for (let i = 0; i < contentLines.length; i += 1) {
+        const prefix = i === 0 && firstPrefix !== undefined ? firstPrefix : continuationIndent;
+        lines.push(
+          truncateRenderLine(decorateRenderLine(contentLines[i]!, prefix), safeWidth, '…'),
+        );
+      }
+    };
 
-    for (const line of this.spacer.render(safeWidth)) {
-      lines.push(line);
-    }
-
-    const titleLines = new Text(currentTheme.boldFg(titleToken, this.title), 0, 0).render(contentWidth);
-    for (let i = 0; i < titleLines.length; i += 1) {
-      lines.push(`${i === 0 ? bullet : continuationIndent}${titleLines[i]}`);
-    }
+    appendLines(
+      renderComponentLines(new Text(currentTheme.boldFg(titleToken, this.title), 0, 0), contentWidth),
+      bullet,
+    );
 
     if (this.detail !== undefined) {
-      const detailLines = new Text(currentTheme.fg('textDim', this.detail), 0, 0).render(contentWidth);
-      for (const line of detailLines) {
-        lines.push(`${continuationIndent}${line}`);
-      }
+      appendLines(
+        renderComponentLines(new Text(currentTheme.fg('textDim', this.detail), 0, 0), contentWidth),
+      );
     }
 
-    const promptLines = this.promptText.render(contentWidth);
-    for (const line of promptLines) {
-      lines.push(`${continuationIndent}${line}`);
-    }
-
+    appendLines(renderComponentLines(this.promptText, contentWidth));
     return lines;
   }
 }

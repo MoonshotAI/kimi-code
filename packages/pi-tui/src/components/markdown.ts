@@ -1,9 +1,22 @@
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens, type TokensList } from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
+import {
+	appendLines,
+	decorateRenderLine,
+	prefixRenderLine,
+	RENDER_LINES,
+	renderLineTexts,
+	textRenderLine,
+	type SoftWrapFragment,
+	type TuiColumnRange,
+	type TuiRenderLine,
+	withRenderLineText,
+	wrapRenderLine,
+} from "../render-line.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, cjkPunctuationRegex, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, cjkPunctuationRegex, flattenLines, visibleWidth } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
@@ -342,7 +355,7 @@ interface RenderedBlock {
 	/** Width and type of the following block (which decides the spacing) that the lines were rendered for. */
 	width: number;
 	nextTokenType: string | undefined;
-	lines: string[];
+	lines: TuiRenderLine[];
 	/** Highlighted lines of the block's code, keyed by language and source; they survive a resize or new spacing. */
 	highlightedCode: Map<string, string[]>;
 }
@@ -359,7 +372,7 @@ export class Markdown implements Component {
 	// Cache for rendered output
 	private cachedText?: string;
 	private cachedWidth?: number;
-	private cachedLines?: string[];
+	private cachedLines?: TuiRenderLine[];
 	// Parsed tokens depend only on the source, so they survive theme and width invalidation. Held weakly: a token tree is
 	// about ten times the size of its source, and every message of a long transcript keeps a Markdown component. The
 	// tokens survive a burst of re-renders, such as a theme preview, and are collected afterwards.
@@ -406,31 +419,27 @@ export class Markdown implements Component {
 		this.cachedLines = undefined;
 	}
 
-	render(width: number): readonly string[] {
-		// Check cache
+	render(width: number): string[] {
+		return renderLineTexts(this[RENDER_LINES](width));
+	}
+
+	[RENDER_LINES](width: number): TuiRenderLine[] {
 		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
 			return this.cachedLines;
 		}
 
-		// Calculate available width for content (subtract horizontal padding)
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const text = this.options.transform?.(this.text, contentWidth) ?? this.text;
-
-		// Don't render anything if there's no actual text
 		if (!text || text.trim() === "") {
 			this.blocks = undefined;
-			const result: string[] = [];
-			// Update cache
+			const result: TuiRenderLine[] = [];
 			this.cachedText = this.text;
 			this.cachedWidth = width;
 			this.cachedLines = result;
 			return result;
 		}
 
-		// Replace tabs with 3 spaces for consistent rendering
 		const normalizedText = text.replace(/\t/g, "   ");
-
-		// Parse markdown to HTML-like tokens
 		const cached = this.cachedTokens?.deref();
 		let tokens = cached?.source === normalizedText ? cached.tokens : undefined;
 		if (!tokens) {
@@ -446,7 +455,7 @@ export class Markdown implements Component {
 		const previousBlocks = this.blocks?.deref();
 		const blocks = new Map<string, RenderedBlock>();
 		this.blocks = new WeakRef(blocks);
-		const contentLines: string[] = [];
+		const contentLines: TuiRenderLine[] = [];
 		for (let i = 0; i < tokens.length; i++) {
 			const token = tokens[i]!;
 			const nextTokenType = tokens[i + 1]?.type;
@@ -464,22 +473,18 @@ export class Markdown implements Component {
 		// Add top/bottom padding (empty lines)
 		const bgFn = this.defaultTextStyle?.bgColor;
 		const emptyLine = " ".repeat(Math.max(0, width));
-		const emptyLines: string[] = [];
+		const emptyLines: TuiRenderLine[] = [];
 		for (let i = 0; i < this.paddingY; i++) {
 			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
-			emptyLines.push(line);
+			emptyLines.push(textRenderLine(line));
 		}
-		flattenLines(emptyLines);
 
-		// Combine top padding, content, and bottom padding
 		const result = emptyLines.concat(contentLines, emptyLines);
-
-		// Update cache
+		flattenLines(result.map((line) => line.text));
 		this.cachedText = this.text;
 		this.cachedWidth = width;
 		this.cachedLines = result;
-
-		return result.length > 0 ? result : [""];
+		return result.length > 0 ? result : [textRenderLine("")];
 	}
 
 	/** Render one top-level block to output lines: wrapped, with margins, and padded or backgrounded to the width. */
@@ -494,29 +499,29 @@ export class Markdown implements Component {
 		const leftMargin = " ".repeat(this.paddingX);
 		const rightMargin = " ".repeat(this.paddingX);
 		const bgFn = this.defaultTextStyle?.bgColor;
-		const lines: string[] = [];
+		const lines: TuiRenderLine[] = [];
 		// Image lines skip wrapping, so split them here: hard breaks after an image must stay separate rows.
 		const tokenLines = this.renderToken(token, contentWidth, nextTokenType).flatMap((line) =>
-			isImageLine(line) ? line.split("\n") : [line],
+			isImageLine(line.text) ? line.text.split("\n").map((text) => textRenderLine(text)) : [line],
 		);
 		for (const line of tokenLines) {
-			if (isImageLine(line)) {
+			if (isImageLine(line.text)) {
 				lines.push(line);
 				continue;
 			}
-			for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
-				const lineWithMargins = leftMargin + wrappedLine + rightMargin;
+			for (const wrappedLine of wrapRenderLine(line, contentWidth)) {
+				const lineWithMargins = leftMargin + wrappedLine.text + rightMargin;
+				const marginedLine = decorateRenderLine(withRenderLineText(wrappedLine, lineWithMargins), leftMargin);
 				if (bgFn) {
-					lines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
+					lines.push(withRenderLineText(marginedLine, applyBackgroundToLine(lineWithMargins, width, bgFn)));
 				} else {
-					// No background - just pad to width
 					const paddingNeeded = Math.max(0, width - visibleWidth(lineWithMargins));
-					lines.push(lineWithMargins + " ".repeat(paddingNeeded));
+					lines.push(withRenderLineText(marginedLine, lineWithMargins + " ".repeat(paddingNeeded)));
 				}
 			}
 		}
 		this.blockHighlightedCode = undefined;
-		flattenLines(lines);
+		flattenLines(lines.map((line) => line.text));
 		block.lines = lines;
 		block.width = width;
 		block.nextTokenType = nextTokenType;
@@ -610,8 +615,8 @@ export class Markdown implements Component {
 		width: number,
 		nextTokenType?: string,
 		styleContext?: InlineStyleContext,
-	): string[] {
-		const lines: string[] = [];
+	): TuiRenderLine[] {
+		const lines: Array<string | TuiRenderLine> = [];
 
 		switch (token.type) {
 			case "heading": {
@@ -704,7 +709,7 @@ export class Markdown implements Component {
 
 			case "list": {
 				const listLines = this.renderList(token as Tokens.List, 0, width, styleContext);
-				lines.push(...listLines);
+				appendLines(lines, listLines);
 				// Don't add spacing after lists if a space token follows
 				// (the space token will handle it)
 				break;
@@ -712,7 +717,7 @@ export class Markdown implements Component {
 
 			case "table": {
 				const tableLines = this.renderTable(token as Tokens.Table, width, nextTokenType, styleContext);
-				lines.push(...tableLines);
+				appendLines(lines, tableLines);
 				break;
 			}
 
@@ -751,30 +756,25 @@ export class Markdown implements Component {
 					stylePrefix: quoteStylePrefix,
 				};
 				const quoteTokens = token.tokens || [];
-				const renderedQuoteLines: string[] = [];
+				const renderedQuoteLines: TuiRenderLine[] = [];
 				for (let i = 0; i < quoteTokens.length; i++) {
 					const quoteToken = quoteTokens[i]!;
 					const nextQuoteToken = quoteTokens[i + 1];
-					for (const line of this.renderToken(
-						quoteToken,
-						quoteContentWidth,
-						nextQuoteToken?.type,
-						quoteInlineStyleContext,
-					)) {
-						renderedQuoteLines.push(line);
-					}
+					appendLines(
+						renderedQuoteLines,
+						this.renderToken(quoteToken, quoteContentWidth, nextQuoteToken?.type, quoteInlineStyleContext),
+					);
 				}
 
 				// Avoid rendering an extra empty quote line before the outer blockquote spacing.
-				while (renderedQuoteLines.length > 0 && renderedQuoteLines[renderedQuoteLines.length - 1] === "") {
+				while (renderedQuoteLines.length > 0 && renderedQuoteLines[renderedQuoteLines.length - 1]?.text === "") {
 					renderedQuoteLines.pop();
 				}
 
 				for (const quoteLine of renderedQuoteLines) {
-					const styledLine = applyQuoteStyle(quoteLine);
-					const wrappedLines = wrapTextWithAnsi(styledLine, quoteContentWidth);
-					for (const wrappedLine of wrappedLines) {
-						lines.push(this.theme.quoteBorder("│ ") + wrappedLine);
+					const styledLine = withRenderLineText(quoteLine, applyQuoteStyle(quoteLine.text));
+					for (const wrappedLine of wrapRenderLine(styledLine, quoteContentWidth)) {
+						lines.push(prefixRenderLine(wrappedLine, this.theme.quoteBorder("│ ")));
 					}
 				}
 				if (nextTokenType && nextTokenType !== "space") {
@@ -809,7 +809,7 @@ export class Markdown implements Component {
 				}
 		}
 
-		return lines;
+		return lines.map((line) => (typeof line === "string" ? textRenderLine(line) : line));
 	}
 
 	private renderInlineTokens(tokens: Token[], styleContext?: InlineStyleContext): string {
@@ -944,8 +944,13 @@ export class Markdown implements Component {
 	/**
 	 * Render a list with proper nesting support
 	 */
-	private renderList(token: Tokens.List, depth: number, width: number, styleContext?: InlineStyleContext): string[] {
-		const lines: string[] = [];
+	private renderList(
+		token: Tokens.List,
+		depth: number,
+		width: number,
+		styleContext?: InlineStyleContext,
+	): TuiRenderLine[] {
+		const lines: Array<string | TuiRenderLine> = [];
 		const indent = "    ".repeat(depth);
 		// Use the list's start property (defaults to 1 for ordered lists)
 		const startNumber = typeof token.start === "number" ? token.start : 1;
@@ -969,16 +974,16 @@ export class Markdown implements Component {
 
 			for (const itemToken of item.tokens) {
 				if (itemToken.type === "list") {
-					lines.push(...this.renderList(itemToken as Tokens.List, depth + 1, width, styleContext));
+					appendLines(lines, this.renderList(itemToken as Tokens.List, depth + 1, width, styleContext));
 					renderedAnyLine = true;
 					continue;
 				}
 
 				const itemLines = this.renderToken(itemToken, itemWidth, undefined, styleContext);
 				for (const line of itemLines) {
-					for (const wrappedLine of wrapTextWithAnsi(line, itemWidth)) {
+					for (const wrappedLine of wrapRenderLine(line, itemWidth)) {
 						const linePrefix = renderedAnyLine ? continuationPrefix : firstPrefix;
-						lines.push(linePrefix + wrappedLine);
+						lines.push(prefixRenderLine(wrappedLine, linePrefix));
 						renderedAnyLine = true;
 					}
 				}
@@ -993,7 +998,7 @@ export class Markdown implements Component {
 			}
 		}
 
-		return lines;
+		return lines.map((line) => (typeof line === "string" ? textRenderLine(line) : line));
 	}
 
 	/**
@@ -1014,15 +1019,13 @@ export class Markdown implements Component {
 	/**
 	 * Wrap a table cell to fit into a column.
 	 *
-	 * Delegates to wrapTextWithAnsi() so ANSI codes + long tokens are handled
-	 * consistently with the rest of the renderer.
+	 * Uses the shared ANSI-aware line breaker and retains each cell's logical-line metadata.
 	 */
-	private wrapCellText(text: string, maxWidth: number, stylePrefix = ""): string[] {
-		const lines = wrapTextWithAnsi(text, Math.max(1, maxWidth));
+	private wrapCellText(text: string, maxWidth: number, stylePrefix = ""): TuiRenderLine[] {
+		const lines = wrapRenderLine(textRenderLine(text), Math.max(1, maxWidth));
 		return lines.map((line, index) => {
-			// Reset text styles after each non-final fragment, then restore the surrounding style before padding and borders.
 			const styleReset = index < lines.length - 1 ? "\x1b[22;23;24;25;27;28;29;39m" : "";
-			return `${line}${styleReset}${stylePrefix}`;
+			return withRenderLineText(line, `${line.text}${styleReset}${stylePrefix}`);
 		});
 	}
 
@@ -1035,13 +1038,11 @@ export class Markdown implements Component {
 		availableWidth: number,
 		nextTokenType?: string,
 		styleContext?: InlineStyleContext,
-	): string[] {
-		const lines: string[] = [];
+	): TuiRenderLine[] {
+		const lines: TuiRenderLine[] = [];
 		const numCols = token.header.length;
 
-		if (numCols === 0) {
-			return lines;
-		}
+		if (numCols === 0) return lines;
 
 		// Calculate border overhead: "│ " + (n-1) * " │ " + " │"
 		// = 2 + (n-1) * 3 + 2 = 3n + 1
@@ -1049,9 +1050,9 @@ export class Markdown implements Component {
 		const availableForCells = availableWidth - borderOverhead;
 		if (availableForCells < numCols) {
 			// Too narrow to render a stable table. Fall back to raw markdown.
-			const fallbackLines = token.raw ? wrapTextWithAnsi(token.raw, availableWidth) : [];
+			const fallbackLines = token.raw ? wrapRenderLine(textRenderLine(token.raw), availableWidth) : [];
 			if (nextTokenType && nextTokenType !== "space") {
-				fallbackLines.push("");
+				fallbackLines.push(textRenderLine(""));
 			}
 			return fallbackLines;
 		}
@@ -1147,59 +1148,78 @@ export class Markdown implements Component {
 			}
 		}
 
+		const renderRow = (cellLines: TuiRenderLine[][], lineIdx: number, bold: boolean): TuiRenderLine => {
+			const fragments: SoftWrapFragment[] = [];
+			const selectionExclusions: TuiColumnRange[] = [];
+			let cellStart = 2;
+			const rowParts = cellLines.map((cell, colIdx) => {
+				const line = cell[lineIdx] ?? textRenderLine("");
+				const cellWidth = columnWidths[colIdx]!;
+				for (const fragment of line.softWrap ?? []) {
+					if (fragment.end <= cellWidth) {
+						fragments.push({ ...fragment, start: fragment.start + cellStart, end: fragment.end + cellStart });
+					}
+				}
+				for (const range of line.selectionExclusions ?? []) {
+					if (range.end <= cellWidth) {
+						selectionExclusions.push({ start: range.start + cellStart, end: range.end + cellStart });
+					}
+				}
+				cellStart += cellWidth + 3;
+				const padded = line.text + " ".repeat(Math.max(0, cellWidth - visibleWidth(line.text)));
+				return bold ? this.theme.bold(padded) : padded;
+			});
+			return {
+				text: `│ ${rowParts.join(" │ ")} │`,
+				...(fragments.length === 0 ? {} : { softWrap: fragments }),
+				...(selectionExclusions.length === 0 ? {} : { selectionExclusions }),
+			};
+		};
+
 		// Render top border
 		const topBorderCells = columnWidths.map((w) => "─".repeat(w));
-		lines.push(`┌─${topBorderCells.join("─┬─")}─┐`);
+		lines.push(textRenderLine(`┌─${topBorderCells.join("─┬─")}─┐`));
 
 		// Render header with wrapping
-		const headerCellLines: string[][] = token.header.map((cell, i) => {
+		const headerCellLines: TuiRenderLine[][] = token.header.map((cell, i) => {
 			const text = this.renderInlineTokens(cell.tokens || [], styleContext);
 			return this.wrapCellText(text, columnWidths[i]!, styleContext?.stylePrefix);
 		});
 		const headerLineCount = Math.max(...headerCellLines.map((c) => c.length));
 
 		for (let lineIdx = 0; lineIdx < headerLineCount; lineIdx++) {
-			const rowParts = headerCellLines.map((cellLines, colIdx) => {
-				const text = cellLines[lineIdx] || "";
-				const padded = text + " ".repeat(Math.max(0, columnWidths[colIdx]! - visibleWidth(text)));
-				return this.theme.bold(padded);
-			});
-			lines.push(`│ ${rowParts.join(" │ ")} │`);
+			lines.push(renderRow(headerCellLines, lineIdx, true));
 		}
 
 		// Render separator
 		const separatorCells = columnWidths.map((w) => "─".repeat(w));
 		const separatorLine = `├─${separatorCells.join("─┼─")}─┤`;
-		lines.push(separatorLine);
+		lines.push(textRenderLine(separatorLine));
 
 		// Render rows with wrapping
 		for (let rowIndex = 0; rowIndex < token.rows.length; rowIndex++) {
 			const row = token.rows[rowIndex]!;
-			const rowCellLines: string[][] = row.map((cell, i) => {
+			const rowCellLines: TuiRenderLine[][] = row.map((cell, i) => {
 				const text = this.renderInlineTokens(cell.tokens || [], styleContext);
 				return this.wrapCellText(text, columnWidths[i]!, styleContext?.stylePrefix);
 			});
 			const rowLineCount = Math.max(...rowCellLines.map((c) => c.length));
 
 			for (let lineIdx = 0; lineIdx < rowLineCount; lineIdx++) {
-				const rowParts = rowCellLines.map((cellLines, colIdx) => {
-					const text = cellLines[lineIdx] || "";
-					return text + " ".repeat(Math.max(0, columnWidths[colIdx]! - visibleWidth(text)));
-				});
-				lines.push(`│ ${rowParts.join(" │ ")} │`);
+				lines.push(renderRow(rowCellLines, lineIdx, false));
 			}
 
 			if (rowIndex < token.rows.length - 1) {
-				lines.push(separatorLine);
+				lines.push(textRenderLine(separatorLine));
 			}
 		}
 
 		// Render bottom border
 		const bottomBorderCells = columnWidths.map((w) => "─".repeat(w));
-		lines.push(`└─${bottomBorderCells.join("─┴─")}─┘`);
+		lines.push(textRenderLine(`└─${bottomBorderCells.join("─┴─")}─┘`));
 
 		if (nextTokenType && nextTokenType !== "space") {
-			lines.push(""); // Add spacing after table
+			lines.push(textRenderLine(""));
 		}
 		return lines;
 	}

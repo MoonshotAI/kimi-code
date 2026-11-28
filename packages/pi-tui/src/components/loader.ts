@@ -1,3 +1,4 @@
+import { RENDER_LINES, textRenderLine, type TuiRenderLine } from "../render-line.ts";
 import type { TUI } from "../tui.ts";
 import { Text } from "./text.ts";
 
@@ -40,8 +41,8 @@ export class Loader extends Text {
 		this.setIndicator(indicator);
 	}
 
-	override render(width: number): string[] {
-		return ["", ...super.render(width)];
+	override [RENDER_LINES](width: number): TuiRenderLine[] {
+		return [textRenderLine(""), ...super[RENDER_LINES](width)];
 	}
 
 	start(): void {

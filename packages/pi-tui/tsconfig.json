@@ -3,5 +3,5 @@
 	"compilerOptions": {
 		"lib": ["ESNext"]
 	},
-	"include": ["src"]
+	"include": ["src", "test/public-exports.ts"]
 }

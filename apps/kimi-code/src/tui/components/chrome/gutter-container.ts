@@ -1,9 +1,15 @@
-import { Container } from '@moonshot-ai/pi-tui';
-import type {
-  Component,
-  TuiMouseDispatchResult,
-  TuiMouseEvent,
-  TuiMouseEventResult,
+import {
+  Container,
+  offsetRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  type Component,
+  type TuiRenderLine,
+  type TuiMouseDispatchResult,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
+  withRenderLineText,
 } from '@moonshot-ai/pi-tui';
 
 import { prefixPreservingOsc133Zone } from '#/tui/utils/osc133';
@@ -12,9 +18,9 @@ import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 interface TranscriptRenderCache {
   width: number;
   childRefs: Component[];
-  childRenderRefs: (readonly string[])[];
-  prefixed: string[][];
-  out: string[];
+  childRenderRefs: TuiRenderLine[][];
+  prefixed: TuiRenderLine[][];
+  out: TuiRenderLine[];
 }
 
 export interface GutterLayout {
@@ -47,7 +53,34 @@ export class GutterContainer extends Container {
     return this.renderedLayout;
   }
 
+  selectionTargetAt(row: number, column: number) {
+    const layout = this.renderedLayout;
+    if (layout === undefined) return undefined;
+    let childY = 0;
+    for (const child of layout.children) {
+      if (row >= childY && row < childY + child.height) {
+        return {
+          component: child.component,
+          row: row - childY,
+          col: column - this.leftPad,
+          originX: this.leftPad,
+          originY: childY,
+        };
+      }
+      childY += child.height;
+    }
+    return undefined;
+  }
+
+  selectionExclusions() {
+    return [{ start: 0, end: this.leftPad }];
+  }
+
   override render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  override [RENDER_LINES](width: number): TuiRenderLine[] {
     const inner = Math.max(1, width - this.leftPad - this.rightPad);
     const lead = ' '.repeat(this.leftPad);
 
@@ -59,8 +92,8 @@ export class GutterContainer extends Container {
       cache.childRefs.length === this.children.length;
 
     const childRefs: Component[] = [];
-    const childRenderRefs: (readonly string[])[] = [];
-    const prefixed: string[][] = [];
+    const childRenderRefs: TuiRenderLine[][] = [];
+    const prefixed: TuiRenderLine[][] = [];
     let allReused = cacheValid;
     const previousLayout = this.renderedLayout;
     let sameLayout =
@@ -69,7 +102,7 @@ export class GutterContainer extends Container {
 
     let i = 0;
     for (const child of this.children) {
-      const lines = child.render(inner);
+      const lines = renderComponentLines(child, inner);
       sameLayout =
         sameLayout &&
         previousLayout!.children[i]!.component === child &&
@@ -82,7 +115,14 @@ export class GutterContainer extends Container {
         prefixed.push(cache.prefixed[i]!);
       } else {
         allReused = false;
-        prefixed.push(lines.map((line) => prefixPreservingOsc133Zone(line, lead)));
+        prefixed.push(
+          lines.map((line) =>
+            withRenderLineText(
+              offsetRenderLine(line, this.leftPad),
+              prefixPreservingOsc133Zone(line.text, lead),
+            ),
+          ),
+        );
       }
       i++;
     }
@@ -97,7 +137,7 @@ export class GutterContainer extends Container {
       };
     }
 
-    let out: string[];
+    let out: TuiRenderLine[];
     if (allReused) {
       out = cache!.out;
     } else {

@@ -1,7 +1,10 @@
-import type { Component } from '@moonshot-ai/pi-tui';
+import { RENDER_LINES, renderComponentLines, type Component, type TuiRenderLine } from '@moonshot-ai/pi-tui';
 
 import { RESULT_PREVIEW_LINES } from '#/tui/constant/rendering';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+
+import type { TranscriptRowParts } from '../transcript-row-layout';
+import { renderToolTranscriptRow } from './transcript-row';
 
 export interface RendererContext {
   readonly expanded: boolean;
@@ -20,6 +23,14 @@ export class CardOnly implements Component {
 
   render(width: number): readonly string[] {
     return this.inner.render(width);
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
+    return renderComponentLines(this.inner, width);
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    return renderToolTranscriptRow(this.inner, width);
   }
 
   invalidate(): void {

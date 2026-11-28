@@ -1,5 +1,20 @@
-import { Text, truncateToWidth, visibleWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
+import {
+  decorateRenderLine,
+  prefixRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  Text,
+  textRenderLine,
+  truncateRenderLine,
+  truncateToWidth,
+  visibleWidth,
+  type Component,
+  type TUI,
+  type TuiRenderLine,
+} from '@moonshot-ai/pi-tui';
 
+import type { TranscriptRowParts } from '#/tui/components/messages/transcript-row-layout';
 import { renderHeaderContent } from '#/tui/components/messages/truncated-header-line';
 import {
   ANSI_ESCAPE_PATTERN,
@@ -38,8 +53,10 @@ export class ThinkingComponent implements Component {
   private projectionVersion = 0;
   private readonly textComponent: Text;
 
-  private renderCache: { width: number; lines: string[] } | undefined;
-  private rowDetailCache: { width: number; lines: string[] } | undefined;
+  private renderCache: { width: number; lines: TuiRenderLine[] } | undefined;
+  private rowDetailCache: { width: number; lines: TuiRenderLine[] } | undefined;
+  private transcriptRowCache: { width: number; parts: TranscriptRowParts } | undefined;
+  private transcriptRowDetailCache: { width: number; lines: TuiRenderLine[] } | undefined;
 
   constructor(
     text: string,
@@ -61,6 +78,8 @@ export class ThinkingComponent implements Component {
   private markRenderDirty(): void {
     this.renderCache = undefined;
     this.rowDetailCache = undefined;
+    this.transcriptRowCache = undefined;
+    this.transcriptRowDetailCache = undefined;
   }
 
   invalidate(): void {
@@ -123,7 +142,96 @@ export class ThinkingComponent implements Component {
     return true;
   }
 
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    if (isRenderCacheEnabled() && this.transcriptRowCache?.width === width) {
+      return this.transcriptRowCache.parts;
+    }
+
+    const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
+    const bodyLines = this.text.length > 0
+      ? renderComponentLines(this.textComponent, contentWidth)
+      : [textRenderLine('')];
+    const blank = () => textRenderLine('');
+    const indent = () => textRenderLine(MESSAGE_INDENT);
+    let contentLines: TuiRenderLine[];
+    let gutterLines: TuiRenderLine[];
+
+    if (this.mode === 'live') {
+      const streamed = withoutTrailingBlankLines(bodyLines);
+      this.previewHidesLines = streamed.length > THINKING_PREVIEW_LINES;
+      const visibleLines =
+        !this.expanded && this.previewHidesLines
+          ? streamed.slice(streamed.length - THINKING_PREVIEW_LINES)
+          : streamed;
+      const paint = this.sweep.painter();
+      const title = paint(LIVE_LABEL, visibleWidth(STATUS_BULLET)) +
+        elapsedSuffix(this.startedAtMs, Date.now());
+      contentLines = [
+        blank(),
+        truncateRenderLine(
+          textRenderLine(title),
+          Math.max(0, width - MESSAGE_INDENT.length),
+          '…',
+        ),
+        ...visibleLines,
+      ];
+      gutterLines = [
+        blank(),
+        textRenderLine(paint(STATUS_BULLET, 0)),
+        ...visibleLines.map(indent),
+      ];
+    } else if (this.finishedForm.kind === 'opened') {
+      this.previewHidesLines = false;
+      const visibleLines = withoutTrailingBlankLines(bodyLines);
+      contentLines = [
+        blank(),
+        textRenderLine(openedTitle(
+          this.finishedForm.title,
+          Math.max(0, width - MESSAGE_INDENT.length),
+          '',
+        )),
+        ...visibleLines,
+      ];
+      gutterLines = [blank(), indent(), ...visibleLines.map(indent)];
+    } else {
+      this.previewHidesLines = bodyLines.length > THINKING_PREVIEW_LINES + FINALIZED_FOLD_HINT_ROWS;
+      const visibleLines = this.expanded || !this.previewHidesLines
+        ? bodyLines
+        : bodyLines.slice(0, THINKING_PREVIEW_LINES);
+      contentLines = [blank(), ...visibleLines];
+      gutterLines = [
+        blank(),
+        ...visibleLines.map((_, index) => textRenderLine(
+          index === 0 && this.showMarker
+            ? currentTheme.fg('textDim', STATUS_BULLET)
+            : MESSAGE_INDENT,
+        )),
+      ];
+      if (!this.expanded && this.previewHidesLines) {
+        const remaining = bodyLines.length - THINKING_PREVIEW_LINES;
+        const hint = `… (${String(remaining)} more lines, ctrl+o to expand)`;
+        const hintWidth = Math.max(0, width - MESSAGE_INDENT.length);
+        contentLines.push(textRenderLine(currentTheme.dim(truncateToWidth(hint, hintWidth, '…'))));
+        gutterLines.push(indent());
+      }
+    }
+
+    const parts = { gutterWidth: MESSAGE_INDENT.length, gutterLines, contentLines };
+    if (isRenderCacheEnabled()) {
+      this.transcriptRowCache = { width, parts };
+    }
+    return parts;
+  }
+
+  selectionExclusions() {
+    return [{ start: 0, end: MESSAGE_INDENT.length }];
+  }
+
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
     if (
       isRenderCacheEnabled() &&
       this.renderCache !== undefined &&
@@ -133,9 +241,11 @@ export class ThinkingComponent implements Component {
     }
 
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
-    const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
+    const contentLines = this.text.length > 0
+      ? renderComponentLines(this.textComponent, contentWidth)
+      : [textRenderLine('')];
 
-    let rendered: string[];
+    let rendered: TuiRenderLine[];
     if (this.mode === 'live') {
       const streamed = withoutTrailingBlankLines(contentLines);
       this.previewHidesLines = streamed.length > THINKING_PREVIEW_LINES;
@@ -149,23 +259,23 @@ export class ThinkingComponent implements Component {
         paint(LIVE_LABEL, visibleWidth(STATUS_BULLET)) +
         elapsedSuffix(this.startedAtMs, Date.now());
       rendered = [
-        '',
-        truncateToWidth(title, width, '…'),
-        ...visibleLines.map((line) => MESSAGE_INDENT + line),
+        textRenderLine(''),
+        truncateRenderLine(textRenderLine(title), width, '…'),
+        ...visibleLines.map((line) => prefixRenderLine(line, MESSAGE_INDENT)),
       ];
     } else if (this.finishedForm.kind === 'opened') {
       this.previewHidesLines = false;
       rendered = [
-        '',
-        openedTitle(this.finishedForm.title, width),
-        ...withoutTrailingBlankLines(contentLines).map((line) => MESSAGE_INDENT + line),
+        textRenderLine(''),
+        textRenderLine(openedTitle(this.finishedForm.title, width)),
+        ...withoutTrailingBlankLines(contentLines).map((line) => prefixRenderLine(line, MESSAGE_INDENT)),
       ];
     } else {
       this.previewHidesLines = contentLines.length > THINKING_PREVIEW_LINES + FINALIZED_FOLD_HINT_ROWS;
-      const lines: string[] = [''];
+      const lines: TuiRenderLine[] = [textRenderLine('')];
       for (let i = 0; i < contentLines.length; i++) {
         const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
-        lines.push(p + contentLines[i]);
+        lines.push(prefixRenderLine(contentLines[i]!, p));
       }
 
       if (this.expanded || !this.previewHidesLines) {
@@ -176,9 +286,10 @@ export class ThinkingComponent implements Component {
         const hint = `… (${String(remaining)} more lines, ctrl+o to expand)`;
         const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
         const hintWidth = Math.max(0, width - indentWidth);
-        truncated.push(
-          ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…')),
-        );
+        truncated.push(prefixRenderLine(
+          textRenderLine(currentTheme.dim(truncateToWidth(hint, hintWidth, '…'))),
+          ' '.repeat(indentWidth),
+        ));
         rendered = truncated;
       }
     }
@@ -189,14 +300,29 @@ export class ThinkingComponent implements Component {
     return rendered;
   }
 
-  renderRowDetail(width: number): string[] {
+  renderRowDetail(width: number): TuiRenderLine[] {
     if (isRenderCacheEnabled() && this.rowDetailCache?.width === width) {
       return this.rowDetailCache.lines;
     }
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
-    const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
-    const lines = contentLines.map((line) => MESSAGE_INDENT + line);
+    const contentLines = this.text.length > 0
+      ? renderComponentLines(this.textComponent, contentWidth)
+      : [textRenderLine('')];
+    const lines = contentLines.map((line) => decorateRenderLine(line, MESSAGE_INDENT));
     this.rowDetailCache = { width, lines };
+    return lines;
+  }
+
+  renderTranscriptRowDetail(width: number): TuiRenderLine[] {
+    if (isRenderCacheEnabled() && this.transcriptRowDetailCache?.width === width) {
+      return this.transcriptRowDetailCache.lines;
+    }
+    const lines = this.text.length > 0
+      ? renderComponentLines(this.textComponent, Math.max(1, width))
+      : [textRenderLine('')];
+    if (isRenderCacheEnabled()) {
+      this.transcriptRowDetailCache = { width, lines };
+    }
     return lines;
   }
 
@@ -229,17 +355,17 @@ function sameFinishedForm(left: FinishedThinkingForm, right: FinishedThinkingFor
   return left.title === right.title;
 }
 
-function openedTitle(title: string, width: number): string {
+function openedTitle(title: string, width: number, head = '  '): string {
   const dim = (text: string): string => currentTheme.fg('textDim', text);
   return renderHeaderContent({
-    head: '  ',
+    head,
     flex: { text: title, style: dim, keep: 'head' },
     tail: '',
   }, width);
 }
 
-function withoutTrailingBlankLines(lines: readonly string[]): readonly string[] {
+function withoutTrailingBlankLines(lines: readonly TuiRenderLine[]): readonly TuiRenderLine[] {
   let end = lines.length;
-  while (end > 0 && (lines[end - 1] ?? '').replaceAll(ANSI_ESCAPE_PATTERN, '').trim() === '') end--;
+  while (end > 0 && (lines[end - 1]?.text ?? '').replaceAll(ANSI_ESCAPE_PATTERN, '').trim() === '') end--;
   return lines.slice(0, end);
 }

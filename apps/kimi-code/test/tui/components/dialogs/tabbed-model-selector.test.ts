@@ -71,7 +71,7 @@ describe('TabbedModelSelectorComponent', () => {
 
   it('repaints the tab strip from the current theme palette without remounting', () => {
     const { component } = make();
-    const stripLine = (lines: string[]): string =>
+    const stripLine = (lines: readonly string[]): string =>
       lines.find((l) => l.includes('All') && l.includes('openai')) ?? '';
     const previous = currentTheme.palette;
     try {
