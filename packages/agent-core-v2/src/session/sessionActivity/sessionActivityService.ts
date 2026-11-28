@@ -9,9 +9,10 @@ import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { onCoreTurnLifecycle, turnOutcomeReason } from '#/agent/loop/coreLoopEvent';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnStarted, type TurnEndReason } from '#/agent/loop/turnEvents';
-import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
+import type { TurnEndReason } from '#/agent/loop/turnEvents';
+import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -132,22 +133,23 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     if (bus === undefined) return;
     const subscriptions = new DisposableStore();
     subscriptions.add(
-      bus.subscribe(TurnStarted, () =>
-        this.patchFold(handle.id, (fold) => ({
-          ...fold,
-          turnActive: true,
-          lastTurnReason: handle.id === MAIN_AGENT_ID ? undefined : fold.lastTurnReason,
-        })),
-      ),
-    );
-    subscriptions.add(
-      bus.subscribe(TurnEnded, (event) =>
-        this.patchFold(handle.id, (fold) => ({
-          ...fold,
-          turnActive: false,
-          lastTurnReason: handle.id === MAIN_AGENT_ID ? mapTurnReason(event.reason) : fold.lastTurnReason,
-        })),
-      ),
+      onCoreTurnLifecycle(bus, {
+        onStarted: () =>
+          this.patchFold(handle.id, (fold) => ({
+            ...fold,
+            turnActive: true,
+            lastTurnReason: handle.id === MAIN_AGENT_ID ? undefined : fold.lastTurnReason,
+          })),
+        onEnded: (event) =>
+          this.patchFold(handle.id, (fold) => ({
+            ...fold,
+            turnActive: false,
+            lastTurnReason:
+              handle.id === MAIN_AGENT_ID
+                ? mapTurnReason(turnOutcomeReason(event.outcome))
+                : fold.lastTurnReason,
+          })),
+      }),
     );
     subscriptions.add(
       bus.subscribe(TaskStarted, (event) =>

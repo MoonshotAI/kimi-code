@@ -1,3 +1,4 @@
+import { STEERED, type LoopEmitted, type TurnOutcome } from '@moonshot-ai/core/loop/index';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
@@ -11,14 +12,15 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
+import { abortError, userCancellationReason } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { OrderedHookSlot } from '#/hooks';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
+import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -94,14 +96,18 @@ class FakeAgentHandle {
     };
   }
 
-  startTurn(turnId: number): void {
-    this.loopState = 'running';
-    this.bus.publish(new TurnStarted({ agentId: this.id, turnId, origin: { kind: 'user' } }));
+  emit(event: LoopEmitted): void {
+    this.bus.publish(new CoreLoopEvent({ agentId: this.id, event }));
   }
 
-  endTurn(turnId: number, reason: 'completed' | 'cancelled' | 'failed' | 'blocked'): void {
+  startTurn(turnId: number): void {
+    this.loopState = 'running';
+    this.emit({ type: 'step.started', turnId, step: 1, stepId: `step-${turnId}-1` });
+  }
+
+  endTurn(turnId: number, outcome: TurnOutcome): void {
     this.loopState = 'idle';
-    this.bus.publish(new TurnEnded({ agentId: this.id, turnId, reason }));
+    this.emit({ type: 'turn.ended', turnId, outcome });
   }
 
   startTask(taskId: string): void {
@@ -293,7 +299,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     const { changes } = viewWithChanges();
 
     main.startTurn(1);
-    main.endTurn(1, 'completed');
+    main.endTurn(1, { type: 'done' });
 
     expect(changes.at(-1)).toEqual({
       state: { busy: false, mainTurnActive: false, pendingInteraction: 'none', lastTurnReason: 'completed' },
@@ -301,9 +307,77 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     });
 
     main.startTurn(2);
-    main.endTurn(2, 'blocked');
+    main.endTurn(2, { type: 'blocked', at: 'step.starting', cause: { by: 'step', reason: 'blocked' } });
 
     expect(changes.at(-1)?.state.lastTurnReason).toBe('failed');
+  });
+
+  it('maps core aborted, failed, and steered outcomes to the main-agent turn reason', () => {
+    const main = lifecycle.addAgent(MAIN_AGENT_ID);
+    const { view } = viewWithChanges();
+
+    main.startTurn(1);
+    main.endTurn(1, { type: 'aborted', reason: userCancellationReason() });
+    expect(view.state().lastTurnReason).toBe('cancelled');
+
+    main.startTurn(2);
+    main.endTurn(2, { type: 'aborted', reason: abortError('parent aborted') });
+    expect(view.state().lastTurnReason).toBe('cancelled');
+
+    main.startTurn(3);
+    main.endTurn(3, { type: 'failed', error: new Error('boom') });
+    expect(view.state().lastTurnReason).toBe('failed');
+
+    main.startTurn(4);
+    main.endTurn(4, { type: 'done', cause: STEERED });
+    expect(view.state().lastTurnReason).toBe('completed');
+  });
+
+  it('ignores gate-blocked pseudo-turns that never start a step', () => {
+    const main = lifecycle.addAgent(MAIN_AGENT_ID);
+    const { view, changes } = viewWithChanges();
+
+    main.startTurn(1);
+    main.endTurn(1, { type: 'done' });
+    const settledChanges = changes.length;
+
+    main.emit({ type: 'turn.started', turnId: 2, trigger: 'normal' });
+    main.emit({
+      type: 'turn.ended',
+      turnId: 2,
+      outcome: { type: 'blocked', at: 'turn.starting', cause: { by: 'prompt', reason: 'blocked' } },
+    });
+
+    expect(changes).toHaveLength(settledChanges);
+    expect(view.state()).toEqual({
+      busy: false,
+      mainTurnActive: false,
+      pendingInteraction: 'none',
+      lastTurnReason: 'completed',
+    });
+  });
+
+  it('tracks promptOnly and resumed turns from core lifecycle events', () => {
+    const main = lifecycle.addAgent(MAIN_AGENT_ID);
+    const { view, changes } = viewWithChanges();
+
+    main.emit({ type: 'turn.started', turnId: 1, trigger: 'notify', promptOnly: true });
+    expect(view.state()).toMatchObject({ busy: true, mainTurnActive: true, lastTurnReason: undefined });
+    main.emit({ type: 'turn.ended', turnId: 1, outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } } });
+    expect(view.state()).toMatchObject({ busy: false, mainTurnActive: false, lastTurnReason: 'completed' });
+
+    main.emit({ type: 'turn.resumed', turnId: 2, step: 2 });
+    main.emit({ type: 'step.started', turnId: 2, step: 2, stepId: 'step-2-2' });
+    expect(view.state()).toMatchObject({ busy: true, mainTurnActive: true, lastTurnReason: undefined });
+    main.emit({ type: 'turn.ended', turnId: 2, outcome: { type: 'done' } });
+    expect(view.state()).toMatchObject({ busy: false, mainTurnActive: false, lastTurnReason: 'completed' });
+
+    expect(changes.map((change) => change.cause)).toEqual([
+      'turn_started',
+      'turn_ended',
+      'turn_started',
+      'turn_ended',
+    ]);
   });
 
   it('tracks subagent turns in busy without touching the main-agent slices', () => {
@@ -316,7 +390,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     expect(view.state().mainTurnActive).toBe(false);
     expect(view.state().lastTurnReason).toBeUndefined();
 
-    sub.endTurn(1, 'completed');
+    sub.endTurn(1, { type: 'done' });
 
     expect(changes).toHaveLength(2);
     expect(view.state().busy).toBe(false);
