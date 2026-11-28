@@ -107,10 +107,11 @@ export interface OpenAILowerContext {
   readonly reasoningKey: string;
   readonly preserveThinking: boolean;
   readonly toolMessageConversion: ToolMessageConversion | undefined;
+  readonly replayExtraContent?: boolean;
 }
 
 export function lowerMessage(message: Message, lower: OpenAILowerContext): NativeMessage[] {
-  const { reasoningKey, preserveThinking } = lower;
+  const { reasoningKey, preserveThinking, replayExtraContent = true } = lower;
   let reasoningContent = '';
   let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
@@ -155,6 +156,9 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): Nativ
               id: toolCall.id,
               type: 'function' as const,
               function: { name: toolCall.name, arguments: toolCall.arguments ?? '' },
+              ...(replayExtraContent && toolCall.extras?.['extra_content'] !== undefined
+                ? { extra_content: toolCall.extras['extra_content'] as Record<string, unknown> }
+                : {}),
             }))
           : undefined,
     };
@@ -350,6 +354,10 @@ export const openAIPipeline: PipelineSpec<
       ),
       preserveThinking: false,
       toolMessageConversion: module.options?.toolMessageConversion,
+      replayExtraContent:
+        message.role !== 'assistant' ||
+        message.attributes?.model === undefined ||
+        message.attributes.model.provider === module.model.spec.provider,
     });
     const [native] = converted;
     if (

@@ -36,7 +36,8 @@ export type RawStreamToolCallDelta = {
   index?: number | string;
   id?: string;
   function?: { name?: string; arguments?: string } | null;
-  extras?: Record<string, unknown>;
+  extras?: Record<string, unknown> | null;
+  extra_content?: Record<string, unknown> | null;
 };
 
 export type RawChunk = {
@@ -57,7 +58,8 @@ type RawToolCall = {
   id?: string;
   type?: string;
   function?: { name?: string; arguments?: string } | null;
-  extras?: Record<string, unknown>;
+  extras?: Record<string, unknown> | null;
+  extra_content?: Record<string, unknown> | null;
 };
 
 export type RawResponse = {
@@ -215,7 +217,13 @@ export function replay(response: RawResponse): RawChunk[] {
                 tool_calls: message.tool_calls?.flatMap((toolCall, index) =>
                   toolCall.type !== undefined && toolCall.type !== 'function'
                     ? []
-                    : [{ index, id: toolCall.id, function: toolCall.function, extras: toolCall.extras }],
+                    : [{
+                        index,
+                        id: toolCall.id,
+                        function: toolCall.function,
+                        extras: toolCall.extras,
+                        extra_content: toolCall.extra_content,
+                      }],
                 ),
               },
       })),
@@ -244,12 +252,14 @@ export function createDecoder(
   function convertStreamToolCall(
     toolCall: RawStreamToolCallDelta,
   ): StreamedMessagePart[] {
-    if (toolCall.function === undefined || toolCall.function === null) {
-      return [];
-    }
     const streamIndex = toolCall.index;
-    const functionName = toolCall.function.name;
-    const functionArguments = toolCall.function.arguments;
+    const functionName = toolCall.function?.name;
+    const functionArguments = toolCall.function?.arguments;
+    const rawExtras = toolCall.extras ?? undefined;
+    const extraContent = toolCall.extra_content ?? undefined;
+    const extras = extraContent === undefined
+      ? rawExtras
+      : { ...rawExtras, extra_content: extraContent };
     const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
     const hasArguments = typeof functionArguments === 'string' && functionArguments.length > 0;
 
@@ -261,12 +271,16 @@ export function createDecoder(
             id: toolCall.id ?? randomUUID(),
             name: functionName,
             arguments: functionArguments ?? null,
-            extras: toolCall.extras,
+            extras,
           },
         ];
       }
-      if (hasArguments) {
-        return [{ type: 'tool_call_part', argumentsPart: functionArguments }];
+      if (hasArguments || extras !== undefined) {
+        return [{
+          type: 'tool_call_part',
+          argumentsPart: hasArguments ? functionArguments : null,
+          ...(extras === undefined ? {} : { extras }),
+        }];
       }
       return [];
     }
@@ -275,8 +289,8 @@ export function createDecoder(
     if (toolCall.id !== undefined) {
       buffered.id = toolCall.id;
     }
-    if (toolCall.extras !== undefined) {
-      buffered.extras = toolCall.extras;
+    if (extras !== undefined) {
+      buffered.extras = { ...buffered.extras, ...extras };
     }
     if (!buffered.emitted) {
       if (!hasConcreteName) {
@@ -304,10 +318,15 @@ export function createDecoder(
         },
       ];
     }
-    if (!hasArguments) {
+    if (!hasArguments && extras === undefined) {
       return [];
     }
-    return [{ type: 'tool_call_part', argumentsPart: functionArguments, index: streamIndex }];
+    return [{
+      type: 'tool_call_part',
+      argumentsPart: hasArguments ? functionArguments : null,
+      index: streamIndex,
+      ...(extras === undefined ? {} : { extras }),
+    }];
   }
 
   return {

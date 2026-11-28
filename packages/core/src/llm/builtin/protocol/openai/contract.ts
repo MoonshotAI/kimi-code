@@ -10,6 +10,7 @@ export type OpenAIWireToolCall = {
   id: string;
   type: 'function';
   function: { name: string; arguments: string };
+  extra_content?: Record<string, unknown>;
 };
 
 export type OpenAIWireMessage =
