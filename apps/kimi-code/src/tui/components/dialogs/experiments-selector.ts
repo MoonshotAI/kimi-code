@@ -185,12 +185,12 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
 }
 
 function isLocked(feature: ExperimentalFeatureState): boolean {
-  return feature.source === 'env' || feature.source === 'master-env';
+  return feature.source === 'env';
 }
 
 function featureDetail(feature: ExperimentalFeatureState): string {
   const source = sourceLabel(feature);
-  if (feature.source === 'env' || feature.source === 'master-env') {
+  if (feature.source === 'env') {
     return `id ${feature.id} · ${source}`;
   }
   return `id ${feature.id} · ${source} · ${feature.env}`;
@@ -199,7 +199,7 @@ function featureDetail(feature: ExperimentalFeatureState): string {
 function sourceLabel(feature: ExperimentalFeatureState): string {
   switch (feature.source) {
     case 'master-env':
-      return 'locked by KIMI_CODE_EXPERIMENTAL_FLAG';
+      return 'KIMI_CODE_EXPERIMENTAL_FLAG (config can override)';
     case 'env':
       return `locked by ${feature.env}`;
     case 'config':
