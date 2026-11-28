@@ -20,7 +20,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { historyEntryFromContext } from '#/agent/loop/history';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { onCoreTurnLifecycle } from '#/agent/loop/coreLoopEvent';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
@@ -166,7 +166,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.states.contributeState(toolDedupeActiveStepKey);
     this.states.contributeState(toolDedupeTurnCallRecordsKey);
     this.states.contributeState(toolDedupeTurnRepeatCountKey);
-    this._register(eventBus.subscribe(TurnEnded, () => this.clearTurnRecords()));
+    this._register(onCoreTurnLifecycle(eventBus, { onEnded: () => this.clearTurnRecords() }));
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();

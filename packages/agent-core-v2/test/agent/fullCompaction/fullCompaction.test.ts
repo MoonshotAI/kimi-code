@@ -15,6 +15,15 @@ import {
   DefaultCompactionStrategy,
 } from '#/agent/fullCompaction/strategy';
 import {
+  fullCompactionActiveTurnIdKey,
+  fullCompactionCompactionCountInTurnKey,
+  fullCompactionConsecutiveOverflowCompactionsKey,
+  fullCompactionLastCompactedTokenCountKey,
+} from '#/agent/fullCompaction/fullCompactionService';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
+import { IEventBus } from '#/app/event/eventBus';
+import { IAgentStateService } from '#/agent/state/agentState';
+import {
   buildCompactionContinuationText,
   COMPACTION_SUMMARY_PREFIX,
 } from '#/agent/contextMemory/compactionHandoff';
@@ -1597,6 +1606,113 @@ describe('FullCompaction', () => {
   });
 
   const testkitTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures(permissionModeServices('yolo')));
+
+  testkitTest(
+    'resets turn-scoped state at core step.started and clears activeTurnId at core turn.ended',
+    async ({ agent: ctx, model }) => {
+      ctx.configure({ modelCapabilities: CATALOGUED_MODEL_CAPABILITIES });
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
+
+      model.lane('compaction').script(say('Auto compacted summary.'));
+      model.script(say('First turn answer.'));
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'First turn' }] });
+      await ctx.untilTurnEnd();
+
+      const states = ctx.get(IAgentStateService);
+      const floorAfterFirstTurn = states.get(fullCompactionLastCompactedTokenCountKey);
+      expect(states.get(fullCompactionCompactionCountInTurnKey)).toBe(1);
+      expect(floorAfterFirstTurn).not.toBeNull();
+      expect(states.get(fullCompactionActiveTurnIdKey)).toBeUndefined();
+
+      const observations: Array<{
+        readonly point: string;
+        readonly count: number;
+        readonly floor: number | null;
+        readonly activeTurnId: number | undefined;
+      }> = [];
+      const record = (point: string): void => {
+        observations.push({
+          point,
+          count: states.get(fullCompactionCompactionCountInTurnKey),
+          floor: states.get(fullCompactionLastCompactedTokenCountKey),
+          activeTurnId: states.get(fullCompactionActiveTurnIdKey),
+        });
+      };
+      const subscription = ctx.get(IEventBus).subscribe(CoreLoopEvent, (envelope) => {
+        const { event } = envelope;
+        if (event.type !== 'turn.started' && event.type !== 'step.started' && event.type !== 'turn.ended') return;
+        if (event.turnId !== 1) return;
+        record(`core.${event.type}`);
+      });
+      const hook = ctx.get(IAgentLoopService).hooks.onWillBeginStep.register('test-observe', async (hookCtx, next) => {
+        if (hookCtx.turnId === 1) record('onWillBeginStep');
+        await next();
+      });
+      try {
+        model.script(say('Second turn answer.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Second turn' }] });
+        await ctx.untilTurnEnd();
+      } finally {
+        subscription.dispose();
+        hook.dispose();
+      }
+
+      expect(observations).toEqual([
+        { point: 'core.turn.started', count: 1, floor: floorAfterFirstTurn, activeTurnId: undefined },
+        { point: 'core.step.started', count: 0, floor: null, activeTurnId: undefined },
+        { point: 'onWillBeginStep', count: 0, floor: null, activeTurnId: 1 },
+        { point: 'core.turn.ended', count: 0, floor: null, activeTurnId: undefined },
+      ]);
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  testkitTest(
+    'resets on promptOnly core turns and ignores gate-blocked or unannounced-cancelled core turns',
+    async ({ agent: ctx }) => {
+      const states = ctx.get(IAgentStateService);
+      const bus = ctx.get(IEventBus);
+      states.set(fullCompactionCompactionCountInTurnKey, 2);
+      states.set(fullCompactionLastCompactedTokenCountKey, 123);
+      states.set(fullCompactionConsecutiveOverflowCompactionsKey, 1);
+      states.set(fullCompactionActiveTurnIdKey, 7);
+
+      bus.publish(new CoreLoopEvent({ agentId: 'main', event: { type: 'turn.started', turnId: 0, trigger: 'normal' } }));
+      bus.publish(new CoreLoopEvent({
+        agentId: 'main',
+        event: {
+          type: 'turn.ended',
+          turnId: 0,
+          outcome: { type: 'blocked', at: 'turn.starting', cause: { by: 'gate', reason: 'blocked' } },
+        },
+      }));
+      bus.publish(new CoreLoopEvent({
+        agentId: 'main',
+        event: { type: 'turn.ended', turnId: 1, outcome: { type: 'aborted' } },
+      }));
+
+      expect(states.get(fullCompactionCompactionCountInTurnKey)).toBe(2);
+      expect(states.get(fullCompactionLastCompactedTokenCountKey)).toBe(123);
+      expect(states.get(fullCompactionConsecutiveOverflowCompactionsKey)).toBe(1);
+      expect(states.get(fullCompactionActiveTurnIdKey)).toBe(7);
+
+      bus.publish(new CoreLoopEvent({
+        agentId: 'main',
+        event: { type: 'turn.started', turnId: 2, trigger: 'notify', promptOnly: true },
+      }));
+      expect(states.get(fullCompactionCompactionCountInTurnKey)).toBe(0);
+      expect(states.get(fullCompactionLastCompactedTokenCountKey)).toBeNull();
+      expect(states.get(fullCompactionConsecutiveOverflowCompactionsKey)).toBe(0);
+      expect(states.get(fullCompactionActiveTurnIdKey)).toBe(7);
+
+      bus.publish(new CoreLoopEvent({
+        agentId: 'main',
+        event: { type: 'turn.ended', turnId: 2, outcome: { type: 'done' } },
+      }));
+      expect(states.get(fullCompactionActiveTurnIdKey)).toBeUndefined();
+    },
+  );
 
   testkitTest(
     'sends turn and compaction requests the same paired history for a failed turn with unanswered tool calls',
