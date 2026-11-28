@@ -1,6 +1,8 @@
 import {
+  BETA_MASTER_CONFIG_KEY,
   ErrorCodes,
   isKimiError,
+  type BetaMasterSwitchState,
   type ExperimentalFeatureState,
   type ModelAlias,
   type PermissionMode,
@@ -817,13 +819,17 @@ export function showUpdatePreferencePicker(host: SlashCommandHost): void {
 
 export async function showExperimentsPanel(host: SlashCommandHost): Promise<void> {
   let features: readonly ExperimentalFeatureState[];
+  let betaState: BetaMasterSwitchState | undefined;
   try {
-    features = await host.harness.getExperimentalFeatures();
+    [features, betaState] = await Promise.all([
+      host.harness.getExperimentalFeatures(),
+      host.harness.getExperimentalBetaState?.(),
+    ]);
   } catch (error) {
     host.showError(`Failed to load experimental features: ${formatErrorMessage(error)}`);
     return;
   }
-  mountExperimentsPanel(host, features);
+  mountExperimentsPanel(host, features, betaState);
 }
 
 export async function applyExperimentalFeatureChanges(
@@ -838,18 +844,32 @@ export async function applyExperimentalFeatureChanges(
     return;
   }
 
-  const experimental: Record<string, boolean> = {};
+  const experimentalBucket: Record<string, boolean> = {};
   for (const change of changes) {
-    experimental[change.id] = change.enabled;
+    experimentalBucket[change.id] = change.enabled;
   }
 
   try {
-    await host.harness.setConfig({ experimental });
+    await host.harness.setConfig({ experimental: { cli: experimentalBucket } });
     const features = await host.harness.getExperimentalFeatures();
     setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
-    if (host.session !== undefined && changes.some((change) => change.id !== 'notify_user')) {
+
+    const featureById = new Map(features.map((feature) => [feature.id, feature]));
+    const shouldReloadSession =
+      host.session !== undefined &&
+      changes.some((change) => {
+        if (change.id === BETA_MASTER_CONFIG_KEY) {
+          return features.some(
+            (feature) => feature.stage === 'beta' && feature.effectTiming === 'immediate',
+          );
+        }
+        const meta = featureById.get(change.id);
+        return meta === undefined || meta.effectTiming === 'immediate';
+      });
+
+    if (shouldReloadSession && host.session !== undefined) {
       const reloadedSession = await host.harness.reloadSession({ id: host.session.id });
       await host.reloadCurrentSessionView(
         reloadedSession,
@@ -858,21 +878,37 @@ export async function applyExperimentalFeatureChanges(
     } else {
       host.showStatus('Experimental features updated.', 'success');
     }
-    if (
-      host.session !== undefined &&
-      changes.some((change) => change.id === 'notify_user' && change.enabled)
-    ) {
-      host.showNotice(
-        'Start a new session to use Updates if this session was created with the feature disabled.',
-      );
+
+    const noticedIds = new Set<string>();
+    for (const change of changes) {
+      const affected =
+        change.id === BETA_MASTER_CONFIG_KEY
+          ? features.filter((feature) => feature.stage === 'beta')
+          : [featureById.get(change.id)].filter(
+              (feature): feature is ExperimentalFeatureState => feature !== undefined,
+            );
+      for (const feature of affected) {
+        if (noticedIds.has(feature.id)) continue;
+        if (feature.effectTiming === 'restart' && feature.enabled && !feature.active) {
+          noticedIds.add(feature.id);
+          host.showNotice(`${feature.title} takes effect after restarting Kimi Code.`);
+        } else if (
+          host.session !== undefined &&
+          feature.effectTiming === 'next-session' &&
+          change.enabled
+        ) {
+          noticedIds.add(feature.id);
+          host.showNotice(
+            `Start a new session to use ${feature.title} if this session was created with the feature disabled.`,
+          );
+        }
+      }
     }
-    if (changes.some((change) => change.id === 'tower')) {
-      host.showNotice('Tower mode takes effect after restarting Kimi Code.');
-    }
+
     host.track('experimental_features_apply', {
       changed: changes.length,
       flags: features
-        .filter((feature) => feature.enabled)
+        .filter((feature) => feature.stage !== 'ga' && feature.enabled)
         .map((feature) => feature.id)
         .toSorted()
         .join(','),
@@ -885,10 +921,12 @@ export async function applyExperimentalFeatureChanges(
 function mountExperimentsPanel(
   host: SlashCommandHost,
   features: readonly ExperimentalFeatureState[],
+  betaState?: BetaMasterSwitchState,
 ): void {
   host.mountEditorReplacement(
     new ExperimentsSelectorComponent({
       features,
+      betaState,
       onApply: (changes) => {
         void applyExperimentalFeatureChanges(host, changes);
       },

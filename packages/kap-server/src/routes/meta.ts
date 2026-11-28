@@ -2,7 +2,12 @@ import KAP_SPEC_MARKDOWN from '../../docs/kap.md?raw';
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
-import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
+import type {
+  MetaExperimentalBeta,
+  MetaExperimentalFeature,
+  MetaFeature,
+  MetaResponse,
+} from '../protocol/rest-meta';
 
 interface RouteHost {
   get(
@@ -24,6 +29,10 @@ export interface MetaRouteOptions {
   readonly dangerousBypassAuth: boolean;
   readonly webTitle?: string;
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
+  readonly getExperimentalBeta?: () => MetaExperimentalBeta | Promise<MetaExperimentalBeta>;
+  readonly getExperimentalFeatures?: () =>
+    | MetaExperimentalFeature[]
+    | Promise<MetaExperimentalFeature[]>;
   readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 
@@ -67,6 +76,10 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       const data: MetaResponse = {
         ...staticData,
         experimental_flags: await opts.getExperimentalFlags(),
+        experimental_beta: opts.getExperimentalBeta ? await opts.getExperimentalBeta() : undefined,
+        experimental_features: opts.getExperimentalFeatures
+          ? await opts.getExperimentalFeatures()
+          : undefined,
         features: await opts.getFeatures(),
       };
       reply.send(okEnvelope(data, req.id));

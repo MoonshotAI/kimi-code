@@ -1351,8 +1351,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         expect(typeof feature.title).toBe('string');
         expect(typeof feature.env).toBe('string');
         expect(typeof feature.enabled).toBe('boolean');
-        expect(typeof feature.defaultEnabled).toBe('boolean');
+        expect(typeof feature.active).toBe('boolean');
+        expect(['experimental', 'beta', 'ga']).toContain(feature.stage);
+        expect(['immediate', 'next-session', 'restart']).toContain(feature.effectTiming);
       }
+      const betaState = await harness.getExperimentalBetaState();
+      expect(typeof betaState.enabled).toBe('boolean');
+      expect(betaState.env).toBe('KIMI_CODE_EXPERIMENTAL_FLAG');
     } finally {
       await harness.close();
     }
@@ -2634,7 +2639,7 @@ key = "${titleOAuthRef.key}"
           },
           models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
           defaultModel: 'stub',
-          experimental: { notify_user: enabled },
+          experimental: { cli: { notify_user: enabled } },
         });
         await client.createSession({ id: 'ses_notify', workDir });
         const session = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
@@ -2675,7 +2680,7 @@ key = "${titleOAuthRef.key}"
         ).toBe(originalPrompt);
         const originalTools = structuredClone(main.accessor.get(IAgentToolRegistryService).list());
         for (const [index, nextEnabled] of [!enabled, enabled, !enabled].entries()) {
-          await client.setConfig({ experimental: { notify_user: nextEnabled } });
+          await client.setConfig({ experimental: { cli: { notify_user: nextEnabled } } });
           let current = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
           let currentMain = current.accessor.get(IAgentLifecycleService).handleOf('main')!;
           expect(currentMain.accessor.get(IAgentLoopService).getSystemPrompt()).toBe(
@@ -2724,7 +2729,7 @@ key = "${titleOAuthRef.key}"
           );
         }
         await client.createSession({ id: 'ses_notify_fresh', workDir });
-        await client.setConfig({ experimental: { notify_user: enabled } });
+        await client.setConfig({ experimental: { cli: { notify_user: enabled } } });
         await client.getStatus({ sessionId: 'ses_notify_fresh' });
         const fresh = getLiveSessionById(client.engineAccessor, 'ses_notify_fresh')!
           .accessor.get(IAgentLifecycleService)
@@ -2749,7 +2754,7 @@ key = "${titleOAuthRef.key}"
             JSON.stringify(fresh.accessor.get(IAgentToolRegistryService).list()),
           ).not.toContain('NotifyUser');
         }
-        await client.setConfig({ experimental: { notify_user: !enabled } });
+        await client.setConfig({ experimental: { cli: { notify_user: !enabled } } });
         const legacy = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
         await legacy.accessor
           .get(IAtomicDocumentStore)
@@ -2767,6 +2772,73 @@ key = "${titleOAuthRef.key}"
     },
     30_000,
   );
+
+  it('isolates [experimental.cli] notify_user and [experimental.desktop] notify_user in shared config.toml', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-home-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-work-'));
+    tempDirs.push(homeDir, workDir);
+    const cliClient = new SDKRpcClientV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      uiCapabilities: ['update_panel'],
+    });
+    try {
+      await cliClient.setConfig({
+        providers: {
+          stub: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+        defaultModel: 'stub',
+        experimental: { cli: { notify_user: true }, desktop: { notify_user: false } },
+      });
+      await cliClient.createSession({ id: 'ses_notify_cli', workDir });
+      const lifecycle = getLiveSessionById(cliClient.engineAccessor, 'ses_notify_cli')!.accessor.get(
+        IAgentLifecycleService,
+      );
+      await lifecycle.create({ agentId: 'main', binding: { profile: 'agent', model: 'stub' } });
+      const main = lifecycle.handleOf('main')!;
+      await main.accessor.get(IAgentToolActivationService).activate();
+      expect(
+        main.accessor
+          .get(IAgentToolRegistryService)
+          .list()
+          .some((tool) => tool.name === 'NotifyUser'),
+      ).toBe(true);
+    } finally {
+      await cliClient.close();
+    }
+
+    const desktopClient = new SDKRpcClientV2({
+      homeDir,
+      identity: { ...TEST_IDENTITY, platform: 'kimi_code_desktop' },
+      uiCapabilities: ['update_panel'],
+    });
+    try {
+      await desktopClient.createSession({ id: 'ses_notify_desktop_off', workDir });
+      const lifecycle = getLiveSessionById(
+        desktopClient.engineAccessor,
+        'ses_notify_desktop_off',
+      )!.accessor.get(IAgentLifecycleService);
+      await lifecycle.create({ agentId: 'main', binding: { profile: 'agent', model: 'stub' } });
+      const main = lifecycle.handleOf('main')!;
+      await main.accessor.get(IAgentToolActivationService).activate();
+      expect(
+        main.accessor
+          .get(IAgentToolRegistryService)
+          .list()
+          .some((tool) => tool.name === 'NotifyUser'),
+      ).toBe(false);
+    } finally {
+      await desktopClient.close();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('reloads workspace dirs without duplicating agent reminders', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -5256,7 +5328,11 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-work-'));
     tempDirs.push(workDir);
-    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nnotify_user = true\n', 'utf-8');
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      '[experimental]\nprompt_prediction = true\nwait_for = true\n',
+      'utf-8',
+    );
     const records: TelemetryRecord[] = [];
     const harness = createKimiHarness({
       homeDir,
@@ -5279,8 +5355,9 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       });
       for (const record of started) {
         const flags = String(record.properties?.['experimental_flags'] ?? '').split(',');
-        expect(flags).toContain('notify_user');
+        expect(flags).toContain('prompt_prediction');
         expect(flags).toContain('wait_for');
+        expect(flags).not.toContain('notify_user');
       }
       await session.close();
       await harness.resumeSession({ id: session.id });

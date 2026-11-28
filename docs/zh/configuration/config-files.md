@@ -501,15 +501,27 @@ require_trust = false
 
 配置变更在 `/reload` 后生效；已经运行的 TUI 不会补弹启动信任提示。`KIMI_CODE_TRUST_WORKSPACE=1` 仍是独立的进程级信任覆盖，假值不会在 `require_trust` 为 `false` 时恢复首次打开的信任确认。已有信任记录会保留，恢复该要求后继续使用。
 
-<!--
 ## `experimental`
 
-`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `false`；如需自动清理较旧的大型工具结果，把它设为 `true`。
+`experimental` 存放 Beta 与实验性功能的持久化开关，按宿主档案拆分为两个互不干扰的子表：
 
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
--->
+- `[experimental.cli]` — 由 CLI 终端（`kimi`）、`kimi web` 和 `kimi rc` 共享。
+- `[experimental.desktop]` — 由 Kimi Code 桌面端及其开启的 Remote Control 网页端共享。
+
+在任一子表中，`beta = true` 会启用该档案下的全部 `Beta` 阶段功能，且不会覆盖子功能的单项配置；`Experimental`（实验性）阶段功能需逐项单独开启。
+
+```toml
+[experimental.cli]
+beta = true
+notify_user = true
+wait_for = true
+tower = true
+
+[experimental.desktop]
+beta = false
+context_inspector = true
+notify_user = true
+```
 
 ## `services`
 

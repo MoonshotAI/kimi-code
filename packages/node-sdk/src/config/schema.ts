@@ -1,4 +1,8 @@
 import { parsePattern } from '@moonshot-ai/agent-core-v2/agent/permissionRules/matchesRule';
+import {
+  ExperimentalBucketSchema as CoreExperimentalBucketSchema,
+  ExperimentalConfigSchema as CoreExperimentalConfigSchema,
+} from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { EnvironmentsSectionSchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import { z } from 'zod';
 
@@ -201,7 +205,11 @@ export const ModelCatalogConfigSchema = z.object({
 
 export type ModelCatalogConfig = z.infer<typeof ModelCatalogConfigSchema>;
 
-export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
+export const ExperimentalBucketSchema = CoreExperimentalBucketSchema;
+
+export type ExperimentalBucketConfig = z.infer<typeof ExperimentalBucketSchema>;
+
+export const ExperimentalConfigSchema = CoreExperimentalConfigSchema;
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 

@@ -9,6 +9,15 @@ export const providerConfigResponseSchema = z.object({
 });
 export type ProviderConfigResponse = z.infer<typeof providerConfigResponseSchema>;
 
+export const experimentalBucketSchema = z.record(z.string(), z.boolean());
+
+export const experimentalConfigSchema = z
+  .object({
+    cli: experimentalBucketSchema.optional(),
+    desktop: experimentalBucketSchema.optional(),
+  })
+  .strict();
+
 const configFieldsSchema = z.object({
   default_provider: z.string().optional(),
   default_model: z.string().optional(),
@@ -28,7 +37,7 @@ const configFieldsSchema = z.object({
   background: z.unknown().optional(),
   subagent: z.unknown().optional(),
   secondary_model: z.unknown().optional(),
-  experimental: z.record(z.string(), z.boolean()).optional(),
+  experimental: experimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   disable_feedback_survey: z.boolean().optional(),
 });

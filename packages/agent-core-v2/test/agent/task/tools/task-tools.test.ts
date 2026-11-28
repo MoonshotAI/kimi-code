@@ -46,8 +46,10 @@ import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { stubFlag } from '../../../app/flag/stubs';
 import { stubGoal } from '../../../features/goal/stubs';
+import { IConfigService } from '#/app/config/config';
+import { EXPERIMENTAL_SECTION, IFlagService } from '#/app/flag/flag';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { createTestAgent, telemetryServices } from '../../../harness';
+import { appService, createTestAgent, telemetryServices } from '../../../harness';
 
 const signal = new AbortController().signal;
 
@@ -1321,7 +1323,7 @@ describe('WaitForTool (harness)', () => {
   }
 
   it.each(['specific', 'any'] as const)('steers out of a running %s wait without losing tool history or stopping the background task', async (target) => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(true)));
     try {
       ctx.get(IAgentLoopService).update({ activeToolNames: ['TaskList', 'WaitFor'] });
       installControlledTask(ctx);
@@ -1387,7 +1389,7 @@ describe('WaitForTool (harness)', () => {
   });
 
   it.each(['before-request', 'before-tool'] as const)('interrupts every wait after %s steering and can wait again after consuming the new input', async (timing) => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(true)));
     try {
       ctx.get(IAgentLoopService).update({ activeToolNames: ['WaitFor'] });
       installControlledTask(ctx);
@@ -1468,7 +1470,7 @@ describe('WaitForTool (harness)', () => {
   });
 
   it.each(['steer-first', 'completion-first'] as const)('reports task completion through wait and notification when it races with steering (%s)', async (order) => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(true)));
     try {
       ctx.get(IAgentLoopService).update({ activeToolNames: ['WaitFor'] });
       installControlledTask(ctx);
@@ -1520,7 +1522,7 @@ describe('WaitForTool (harness)', () => {
   });
 
   it('still cancels a wait when execution is aborted together with steering', async () => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(true)));
     try {
       const tasks = ctx.get(IAgentTaskService);
       const controlled = await startControlledTaskInLoop(ctx, { description: 'background work' });
@@ -1546,7 +1548,10 @@ describe('WaitForTool (harness)', () => {
 
   it('waits for a real registered task end-to-end without suppressing its notification', async () => {
     const records: TelemetryRecord[] = [];
-    const ctx = createTestAgent(telemetryServices(recordingTelemetry(records)));
+    const ctx = createTestAgent(
+      appService(IFlagService, stubFlag(true)),
+      telemetryServices(recordingTelemetry(records)),
+    );
     try {
       const tasks = ctx.get(IAgentTaskService);
       const tool = ctx.get(IAgentToolRegistryService).resolve('WaitFor');
@@ -1585,7 +1590,7 @@ describe('WaitForTool (harness)', () => {
   });
 
   it('does not include tasks registered after the wait started', async () => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(true)));
     try {
       const tasks = ctx.get(IAgentTaskService);
       const tool = ctx.get(IAgentToolRegistryService).resolve('WaitFor');
@@ -1636,7 +1641,7 @@ describe('WaitForTool (harness)', () => {
   });
 
   it('returns from a wait on a task that never settles once the timeout elapses', async () => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(true)));
     try {
       const tasks = ctx.get(IAgentTaskService);
       const tool = ctx.get(IWaitForTool);
@@ -1650,6 +1655,27 @@ describe('WaitForTool (harness)', () => {
       expect(output).toContain('wait_status: timed_out');
       expect(output).toContain('[still_running]');
       expect(output).toContain(taskId);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('registers and unregisters WaitFor in the live session when experimental.wait_for changes', async () => {
+    const ctx = createTestAgent();
+    try {
+      const registry = ctx.get(IAgentToolRegistryService);
+      const config = ctx.get(IConfigService);
+      expect(registry.resolve('WaitFor')).toBeUndefined();
+
+      await config.set(EXPERIMENTAL_SECTION, { cli: { wait_for: true } });
+      expect(registry.resolve('WaitFor')).toBeDefined();
+
+      await config.set(EXPERIMENTAL_SECTION, { cli: { wait_for: false } });
+      expect(registry.resolve('WaitFor')).toBeUndefined();
+      expect(registry.list().map((tool) => tool.name)).not.toContain('WaitFor');
+
+      await config.set(EXPERIMENTAL_SECTION, { cli: { wait_for: true } });
+      expect(registry.resolve('WaitFor')).toBeDefined();
     } finally {
       await ctx.dispose();
     }

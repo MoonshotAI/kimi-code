@@ -485,7 +485,9 @@ const turnErrorDisplayMessage = computed(() => {
 provide(BrowserToolContextKey, computed(() => browserToolContexts(props.turns)));
 provide(CronToolContextKey, computed(() => cronToolContexts(props.turns)));
 provide(LatestNotifyToolCallIdKey, computed(() => latestNotifyToolCallId(props.turns)));
-const notifyUserEnabled = computed(() => client.experimentalFlags.value['notify_user'] === true);
+const notifyUserEnabled = computed(
+  () => client.experimentalFlags.value['notify_user'] === true,
+);
 provide(NotifyUserEnabledKey, notifyUserEnabled);
 
 const emit = defineEmits<{

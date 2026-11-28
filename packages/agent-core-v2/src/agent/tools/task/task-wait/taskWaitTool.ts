@@ -407,4 +407,5 @@ registerAgentToolService(IWaitForTool, WaitForTool, {
   name: 'WaitFor',
   domain: 'agentTask',
   when: (accessor) => accessor.get(IFlagService).enabled(WAIT_FOR_FLAG_ID),
+  reconcileOnFlagChange: true,
 });

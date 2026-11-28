@@ -171,8 +171,13 @@ kimi
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills，优先级高于 `config.toml` 的 `builtin_product_skills` | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_REPEAT_BREAKER` | 同一工具调用连续重复多次时，是否注入提醒并最终强制停止该轮。未设置时保持开启 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；其他值忽略 |
 | `KIMI_CODE_SESSION_LOCK` | 本进程是否使用跨进程会话锁，防止两个 Kimi Code 进程同时写同一会话。未设置时保持开启；锁记录的 hostname 与当前环境不一致时会自动回收该锁。跨机器或容器共享同一会话目录时，应保证只有一个实例写入，或关闭此开关；关闭后回到加锁前的行为，多个进程同时写入时会话历史可能交错 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；其他值忽略 |
-| `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION` | 在交互式 TUI 中启用实验性的下一条提示词预测，在轮次正常完成后显示建议，详见[提示词预测](../guides/interaction.md#提示词预测（实验）) | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
-| `KIMI_CODE_EXPERIMENTAL_TOWER` | 启用实验性 [Tower 多 Agent 协作](../guides/tower.md) 和 `/tower` 命令，需在启动前设置。持久配置等价于在 `config.toml` 中设置 `[experimental] tower = true`；在运行中的 CLI 里修改该配置后，需要重启 Kimi Code。`KIMI_CODE_EXPERIMENTAL_FLAG=1` 仅在未显式配置 `[experimental] tower` 时启用 Tower；`tower = false` 会优先于总开关，而本变量可覆盖该配置 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_CONTEXT_INSPECTOR` | 在桌面端和 Web UI 中启用 Beta 阶段的上下文用量圆环与组成查看（持久配置等价于在 `config.toml` 的 `[experimental.desktop]` 或 `[experimental.cli]` 下设置 `context_inspector = true`；桌面端不会读取登录 Shell 启动脚本中导出的 `KIMI_CODE_EXPERIMENTAL_*`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER` | 在 TUI `Updates` 面板、桌面端和 Web UI 中启用实验性的 `NotifyUser` 进展更新（持久配置等价于在 `config.toml` 的 `[experimental.cli]`（`kimi` / `kimi web`）或 `[experimental.desktop]`（桌面端）下设置 `notify_user = true`，对新建会话生效） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION` | 在 TUI、桌面端和 Web UI 中启用 Beta 阶段的下一条提示词预测，在轮次正常完成后显示建议（持久配置等价于在 `config.toml` 的 `[experimental.cli]` 或 `[experimental.desktop]` 下设置 `prompt_prediction = true`），详见[提示词预测](../guides/interaction.md#提示词预测（beta）) | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS` | 在桌面端和 Web UI 中启用实验性的 `@` 引用会话功能（持久配置等价于在 `config.toml` 的 `[experimental.desktop]` 或 `[experimental.cli]` 下设置 `session_mentions = true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_SIDEBAR_MULTI_TAB` | 在桌面端和 Web UI 中启用实验性的多标签页会话列表（`进行中` / `已完成` / `项目`；持久配置等价于在 `config.toml` 的 `[experimental.desktop]` 或 `[experimental.cli]` 下设置 `sidebar_multi_tab = true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_TOWER` | 启用实验性 [Tower 多 Agent 协作](../guides/tower.md) 和 `/tower` 命令，需在启动前设置。持久配置等价于在 `config.toml` 的 `[experimental.cli]` 或 `[experimental.desktop]` 下设置 `tower = true`；在运行中的进程里修改该配置后，需要重启 Kimi Code | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_WAIT_FOR` | 在 TUI 中启用实验性的 [`WaitFor`](../reference/tools.md#后台任务) 工具，让 Agent 可以在当前轮次内等待后台任务完成；持久配置等价于在 `config.toml` 中设置 `[experimental.cli] wait_for = true` | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_WATCH` | 是否挂文件系统 watch 以热更新配置和工作区文件，优先级高于 `[watch] enabled`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_GLOBAL_SEARCH` | 是否构建全局全文搜索索引并提供 `POST /api/v1/search`，优先级高于 `[database] global_search`（默认 `false`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_SEARCH_WORKER` | 全局搜索开启时，在独立 worker 线程中运行索引，优先级高于 `[database] search`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
@@ -191,7 +196,7 @@ kimi
 | `KIMI_WEB_SEARCH_API_KEY` | 网页搜索（`WebSearch`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_FETCH_BASE_URL` | 网页抓取（`FetchURL`）服务的 API URL，优先级高于配置文件；未指定端点时已登录用户走 Kimi OAuth 托管抓取，再回退本地直连；凭据不发往该端点 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_FETCH_API_KEY` | 网页抓取（`FetchURL`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
-| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有已注册的实验功能 | `1`、`true`、`yes`、`on` |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有 Beta 功能（持久配置等价于 `config.toml` 中 `[experimental.cli]` 或 `[experimental.desktop]` 下的 `beta = true`；单项 `KIMI_CODE_EXPERIMENTAL_<NAME>` 优先级更高，不开启 `Experimental` 阶段功能，且桌面端忽略登录 Shell 配置中的 `KIMI_CODE_EXPERIMENTAL_*`） | `1`、`true`、`yes`、`on` |
 | `KIMI_SHELL_PATH` | Windows 上覆盖 Git Bash 路径（自动探测失败时使用） | 绝对路径 |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | 单步 LLM 请求的 `max_completion_tokens` 硬上限，仅对 `kimi` 供应商生效 | 正整数；`0` 或负数禁用 clamp |
 | `KIMI_MODEL_TEMPERATURE` | 每次请求的采样温度，仅对 `kimi` 供应商生效（全局生效，不依赖 `KIMI_MODEL_NAME`） | 数字，如 `0.3` |
