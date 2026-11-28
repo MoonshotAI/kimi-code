@@ -71,9 +71,18 @@ export type TurnOutcome =
   | { readonly type: 'aborted'; readonly reason?: unknown }
   | { readonly type: 'blocked'; readonly at: 'turn.starting' | 'step.starting' | StepEndingPoint; readonly cause: Cause };
 
-export function convergeTurnOutcome(outcome: TurnOutcome, filtered: boolean): TurnOutcome {
-  if (outcome.type === 'aborted' || outcome.type === 'failed') return outcome;
-  if (filtered) return { type: 'failed', error: createProviderFilteredError() };
+export type TerminalTurnOutcome = Extract<TurnOutcome, { type: 'failed' | 'aborted' }>;
+
+export interface TurnOutcomeConvergence {
+  readonly filtered?: boolean;
+  readonly terminal?: TerminalTurnOutcome;
+}
+
+export function convergeTurnOutcome(outcome: TurnOutcome, convergence: TurnOutcomeConvergence = {}): TurnOutcome {
+  if (outcome.type === 'aborted') return outcome;
+  if (convergence.terminal !== undefined) return convergence.terminal;
+  if (outcome.type === 'failed') return outcome;
+  if (convergence.filtered === true) return { type: 'failed', error: createProviderFilteredError() };
   if (outcome.cause?.reason === MAX_STEPS_REASON) {
     const maxSteps = outcome.cause.details?.['maxSteps'];
     return { type: 'failed', error: createMaxStepsExceededError(typeof maxSteps === 'number' ? maxSteps : 0) };

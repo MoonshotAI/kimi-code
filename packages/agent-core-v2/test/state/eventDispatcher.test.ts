@@ -267,6 +267,36 @@ describe('EventDispatcherService', () => {
     expect(order).toEqual(['changed:5']);
   });
 
+  it('runs commit listeners after fold and wire append while queueing reentrant dispatches before drain', async () => {
+    const order: string[] = [];
+    disposables.add(bus.subscribe(CounterChanged, (event) => order.push(`bus:changed:${event.value}`)));
+    const subscription = dispatcher.onDidCommit(CounterAdd, (event) => {
+      order.push(`commit:${event.by}:${agentState.get(counterKey).value}:${journal.map((r) => r.type).join(',')}`);
+      void dispatcher.dispatch(new CounterSet({ value: 100 }));
+    });
+
+    expect(() => dispatcher.onDidCommit(PingEvent, () => {})).toThrow(BugIndicatingError);
+
+    await dispatcher.dispatch(new CounterAdd({ by: 5 }));
+    expect(order).toEqual(['commit:5:5:state.test.counter.add', 'bus:changed:5']);
+    expect(journal.map((record) => record.type)).toEqual([
+      'state.test.counter.add',
+      'state.test.counter.set',
+    ]);
+    expect(agentState.get(counterKey).value).toBe(100);
+
+    order.length = 0;
+    subscription.dispose();
+    await dispatcher.dispatch(new CounterAdd({ by: 2 }));
+    expect(order).toEqual(['bus:changed:102']);
+
+    order.length = 0;
+    const replaySubscription = dispatcher.onDidCommit(CounterAdd, () => order.push('replay-commit'));
+    await dispatcher.restore();
+    expect(order).toEqual([]);
+    replaySubscription.dispose();
+  });
+
   it('does not publish or persist non-observable transient events', async () => {
     const seen: string[] = [];
     disposables.add(bus.subscribe((event) => seen.push(event.type)));

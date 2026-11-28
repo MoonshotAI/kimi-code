@@ -192,6 +192,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   >();
   private readonly participantTargets = new Map<string, ParticipantAttachment[]>();
   private readonly participantAttachments = new Map<string, ParticipantAttachment>();
+  private readonly commitListeners = new Map<string, Set<(event: unknown) => void>>();
 
   private readonly spaceHost: AgentSpaceHost = {
     isActiveModelDefinition: (definition) =>
@@ -293,6 +294,25 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     const attachment = this.buildParticipantAttachment(participant);
     this.attachParticipant(attachment);
     return toDisposable(() => { this.detachParticipant(attachment); });
+  }
+
+  onDidCommit<P, E extends Event2<P>>(
+    cls: Event2Class<P, E>,
+    listener: (event: E) => void,
+  ): IDisposable {
+    if (!cls.durable) {
+      throw new BugIndicatingError(`Commit listener requires a durable event class, received '${cls.type}'`);
+    }
+    const entry = listener as (event: unknown) => void;
+    const listeners = this.commitListeners.get(cls.type) ?? new Set();
+    listeners.add(entry);
+    this.commitListeners.set(cls.type, listeners);
+    return toDisposable(() => {
+      const current = this.commitListeners.get(cls.type);
+      if (current === undefined) return;
+      current.delete(entry);
+      if (current.size === 0) this.commitListeners.delete(cls.type);
+    });
   }
 
   async attachLate(participant: DurableAgentRuntimeParticipant): Promise<IDisposable> {
@@ -732,6 +752,16 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       const dehydrator = folds?.find(({ key }) => key.replayable.blobs !== undefined)?.key
         .replayable.blobs?.dehydrate;
       this.wire.appendRecord(event.serialize(), dehydrator);
+      const listeners = this.commitListeners.get(event.type);
+      if (listeners !== undefined) {
+        for (const listener of listeners) {
+          try {
+            listener(event);
+          } catch (error) {
+            onUnexpectedError(error);
+          }
+        }
+      }
     }
     const observable = cls.observable ||
       (event instanceof ContextAppendMessage && event.message.origin?.kind === 'task');

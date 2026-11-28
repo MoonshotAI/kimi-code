@@ -231,14 +231,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       if (REQUEST_CONFIG_SECTIONS.has(domain)) this.syncRequester();
     }));
     this._register(this.providerCatalog.onChanged(() => this.syncRequester()));
-    this.journal = new LoopJournal(wire, scopeContext.agentId, dispatcher);
+    this.journal = new LoopJournal(wire, scopeContext.agentId, dispatcher, { events: eventBus, attribution });
+    this._register(this.journal);
     this.prompts = new AgentPromptProjection(
       dispatcher,
       scopeContext.agentId,
       (includeCurrent) => this.snapshot().queue.length + (includeCurrent ? 1 : 0),
     );
     this.turns = new AgentTurnProjection({
-      attribution,
+      commitTurnEnded: (commit) => this.journal.commitTurnEnded(commit),
       dispatcher,
       events: eventBus,
       scopeContext,
@@ -679,7 +680,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.syncRequester();
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
-      this.eventBus.publish(new CoreLoopEvent({ agentId: this.scopeContext.agentId, event: enriched }));
+      if (enriched.type !== 'turn.ended' || !this.turns.isActive(enriched.turnId)) {
+        this.eventBus.publish(new CoreLoopEvent({ agentId: this.scopeContext.agentId, event: enriched }));
+      }
       this.notifications.project(event);
       if (event.type === 'llm.retry') this.journal.append(enriched);
       this.turns.project(enriched, loop);

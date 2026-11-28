@@ -1,6 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
+import { isUserCancellation } from '#/_base/utils/abort';
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import {
   ContextAppendLoopEvent,
@@ -13,8 +14,10 @@ import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart, ToolDescription } from '@moonshot-ai/core/llm/message';
 import type { TurnContinuation } from '@moonshot-ai/core/loop/index';
+import { ErrorCodes, isError2 } from '#/errors';
 import { defineState, registerUndoableProtocol } from '#/state/state';
 
+import { isMaxStepsExceededError, type TurnResult } from './loop';
 import type { TurnEndReason, TurnInterruptReason } from './turnEvents';
 
 const settledToolSchema = z.object({
@@ -182,6 +185,15 @@ export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
   }
 }
 export interface TurnEnded extends TurnEndedPayload {}
+
+export function turnInterruptReason(
+  result: Extract<TurnResult, { readonly type: 'cancelled' | 'failed' }>,
+): TurnInterruptReason {
+  if (result.type === 'cancelled') return isUserCancellation(result.reason) ? 'user_cancelled' : 'aborted';
+  if (isMaxStepsExceededError(result.error)) return 'max_steps';
+  if (isError2(result.error) && result.error.code === ErrorCodes.PROVIDER_FILTERED) return 'filtered';
+  return 'error';
+}
 
 export const turnKey = defineState(
   'turn',

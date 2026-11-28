@@ -1,6 +1,6 @@
 import type { ContentPart, Message, ToolCall } from '#/llm/message';
 import type { QueuedItem, TurnTrigger } from './inbox';
-import type { Cause, StepOutcome } from './outcome';
+import type { Cause, StepOutcome, TerminalTurnOutcome } from './outcome';
 import type { LoopProfile } from './profile';
 
 export interface HookToolResult {
@@ -53,11 +53,15 @@ export type TurnStartingVerdict = { readonly type: 'blocked'; readonly cause: Ca
 
 export type MessageAppendingDecision = { readonly message?: Message; readonly blocked?: Cause };
 
-export type StepStartingDecision = { readonly blocked?: Cause };
+export type StepStartingDecision = { readonly blocked?: Cause; readonly turnOutcome?: TerminalTurnOutcome };
 
 export type ToolBatchStartingDecision = { readonly blocked: Cause; readonly result?: HookToolResult };
 
-export type StepStoppingVerdict = { readonly type: 'continue' | 'done'; readonly cause: Cause };
+export type StepStoppingVerdict = {
+  readonly type: 'continue' | 'done';
+  readonly cause: Cause;
+  readonly turnOutcome?: TerminalTurnOutcome;
+};
 
 export type StepContinuingVerdict = { readonly type: 'done' | 'blocked'; readonly cause: Cause };
 

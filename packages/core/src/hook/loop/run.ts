@@ -15,8 +15,8 @@ import type {
   TurnStartingEvent,
   TurnStartingVerdict,
 } from '#/loop/contract/hook';
-import type { Cause, StepEndingPoint, StepOutcome } from '#/loop/contract/outcome';
-import { isCause, isHookToolResult, isMessage, isObject } from '#/loop/guards';
+import type { Cause, StepEndingPoint, StepOutcome, TerminalTurnOutcome } from '#/loop/contract/outcome';
+import { isCause, isHookToolResult, isMessage, isObject, isTerminalTurnOutcome } from '#/loop/guards';
 
 export function isTurnStartingVerdict(value: unknown): value is TurnStartingVerdict {
   return isObject(value) && value['type'] === 'blocked' && isCause(value['cause']);
@@ -31,7 +31,11 @@ export function isMessageAppendingDecision(value: unknown): value is MessageAppe
 }
 
 export function isStepStartingDecision(value: unknown): value is StepStartingDecision {
-  return isObject(value) && (value['blocked'] === undefined || isCause(value['blocked']));
+  return (
+    isObject(value) &&
+    (value['blocked'] === undefined || isCause(value['blocked'])) &&
+    (value['turnOutcome'] === undefined || isTerminalTurnOutcome(value['turnOutcome']))
+  );
 }
 
 export function isToolBatchStartingDecision(value: unknown): value is ToolBatchStartingDecision {
@@ -43,7 +47,12 @@ export function isToolBatchStartingDecision(value: unknown): value is ToolBatchS
 }
 
 export function isStepStoppingVerdict(value: unknown): value is StepStoppingVerdict {
-  return isObject(value) && (value['type'] === 'continue' || value['type'] === 'done') && isCause(value['cause']);
+  return (
+    isObject(value) &&
+    (value['type'] === 'continue' || value['type'] === 'done') &&
+    isCause(value['cause']) &&
+    (value['turnOutcome'] === undefined || isTerminalTurnOutcome(value['turnOutcome']))
+  );
 }
 
 export function isStepContinuingVerdict(value: unknown): value is StepContinuingVerdict {
@@ -126,6 +135,7 @@ export async function runMessageAppending(
 
 export interface StepStartingRun {
   blocked?: Cause;
+  turnOutcome?: TerminalTurnOutcome;
   failures: HookFailure[];
 }
 
@@ -137,8 +147,10 @@ export async function runStepStarting(
   const hook = hooks['step.starting'];
   if (hook === undefined) return { failures: [] };
   const run = await runItem('step.starting', () => hook(event, signal), isStepStartingDecision);
+  const blocked = run.decision?.blocked ?? run.blocked;
   return {
-    blocked: run.decision?.blocked ?? run.blocked,
+    blocked,
+    turnOutcome: run.decision?.blocked === undefined ? undefined : run.decision.turnOutcome,
     failures: run.failures,
   };
 }
@@ -179,6 +191,7 @@ export interface StepEndingFailure {
 export interface StepEndingRun {
   outcome: StepOutcome;
   stoppingDecided: boolean;
+  turnOutcome?: TerminalTurnOutcome;
   failures: StepEndingFailure[];
 }
 
@@ -195,6 +208,14 @@ export async function runStepEnding(
     : await runItem('step.stopping', () => stoppingHook({ ...event, draft }, signal), isStepStoppingVerdict);
   failures.push(...stopping.failures.map((failure) => ({ point: 'step.stopping' as const, failure })));
   if (draft.type === 'aborted') return { outcome: draft, stoppingDecided: true, failures };
+  if (stopping.decision?.turnOutcome !== undefined) {
+    return {
+      outcome: draft.type === 'failed' ? draft : { type: 'done', cause: stopping.decision.cause },
+      stoppingDecided: true,
+      turnOutcome: stopping.decision.turnOutcome,
+      failures,
+    };
+  }
   if (stopping.blocked !== undefined) {
     return { outcome: { type: 'blocked', at: 'step.stopping', cause: stopping.blocked }, stoppingDecided: true, failures };
   }

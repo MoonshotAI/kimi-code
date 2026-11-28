@@ -29,6 +29,8 @@ import {
   type StepStartingDecision,
   type StepStartingEvent,
   type StepStoppingEvent,
+  type StepStoppingVerdict,
+  type TerminalTurnOutcome,
   type TurnTrigger,
 } from '@moonshot-ai/core/loop/index';
 import { apiRequestId, type LLMRequestTrace } from '#/agent/loop/requestObservation';
@@ -51,11 +53,10 @@ import {
   TurnStepRetrying,
   TurnStepStarted,
   TurnStepStreamReset,
-  type TurnInterruptReason,
 } from './turnEvents';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { TurnEnded, TurnPrompt, type TurnReplyModel } from './turnOps';
-import type { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import type { TurnEndedCommit } from './journal';
+import { TurnPrompt, turnInterruptReason, type TurnReplyModel } from './turnOps';
 import { ErrorCodes, Error2, fromErrorPayload, isCodedError, isError2, toKimiErrorPayload } from '#/errors';
 import type {
   AfterStepContext,
@@ -91,12 +92,6 @@ interface CoreStepState {
   tools: AfterStepTool[];
 }
 
-interface MachineFailedStep {
-  readonly number: number;
-  readonly uuid: string;
-  readonly error: unknown;
-}
-
 interface ActiveTurn {
   readonly id: number;
   readonly prompt: ActivePrompt;
@@ -113,10 +108,8 @@ interface ActiveTurn {
   readonly stepIds: Map<number, string>;
   current: CoreStepState | undefined;
   interruptStep: number | undefined;
-  failedStep: MachineFailedStep | undefined;
   forcedStopReason: string | undefined;
   lastStopReason: FinishReason | undefined;
-  abortReason: unknown;
   retryRequested: boolean;
   retry: { failedAttempt: number; nextAttempt: number; maxAttempts: number; delayMs: number; errorName?: string; statusCode?: number } | undefined;
   streamPartCount: number;
@@ -132,10 +125,10 @@ type MutableTurn = {
   -readonly [K in keyof Turn]: Turn[K];
 };
 
-type TurnContinuation = Extract<LoopEmitted, { type: 'turn.ended' }>['continuation'];
+type TurnEndedEvent = Extract<LoopEmitted, { type: 'turn.ended' }>;
 
 export interface TurnProjectionOptions {
-  readonly attribution: ISessionRequestAttributionService;
+  readonly commitTurnEnded: (commit: TurnEndedCommit) => Promise<void>;
   readonly dispatcher: IEventDispatcher;
   readonly events: IEventBus;
   readonly scopeContext: IAgentScopeContext;
@@ -183,10 +176,13 @@ export class AgentTurnProjection {
     return this.active?.steerController.signal;
   }
 
+  isActive(turnId: number): boolean {
+    return this.active?.id === turnId;
+  }
+
   abort(turnId: number, reason: unknown): void {
     const active = this.active;
     if (active?.id !== turnId || active.controller.signal.aborted) return;
-    active.abortReason = reason;
     active.controller.abort(reason);
   }
 
@@ -279,7 +275,11 @@ export class AgentTurnProjection {
     return this.runStepStarting(turn, step, event);
   }
 
-  private async runStepStarting(turn: ActiveTurn, step: CoreStepState, event: StepStartingEvent) {
+  private async runStepStarting(
+    turn: ActiveTurn,
+    step: CoreStepState,
+    event: StepStartingEvent,
+  ): Promise<StepStartingDecision | undefined> {
     try {
       await this.options.hooks.onWillBeginStep.run({
         turnId: turn.id,
@@ -288,21 +288,23 @@ export class AgentTurnProjection {
         signal: step.signal,
       });
     } catch (error) {
+      const blocked = { by: 'step', reason: 'step_hook_failed', message: toErrorMessage(error) };
       if (isAbortError(error) || step.signal.aborted) {
-        turn.abortReason = turn.controller.signal.aborted ? turn.controller.signal.reason : error;
-      } else {
-        turn.failedStep = { number: step.number, uuid: step.uuid, error };
+        const reason = turn.controller.signal.aborted ? signalReason(turn.controller.signal) : error;
+        return { blocked, turnOutcome: { type: 'aborted', reason } };
       }
-      return { blocked: { by: 'step', reason: 'step_hook_failed', message: toErrorMessage(error) } };
+      return { blocked, turnOutcome: { type: 'failed', error } };
     }
     if (step.signal.aborted) {
-      turn.abortReason = step.signal.reason ?? abortError('Step aborted');
-      return { blocked: { by: 'step', reason: 'aborted' } };
+      return {
+        blocked: { by: 'step', reason: 'aborted' },
+        turnOutcome: { type: 'aborted', reason: step.signal.reason ?? abortError('Step aborted') },
+      };
     }
     return undefined;
   }
 
-  async stepStopping(event: StepStoppingEvent) {
+  async stepStopping(event: StepStoppingEvent): Promise<StepStoppingVerdict | undefined> {
     const turn = this.active;
     if (turn === undefined) return undefined;
     const step = turn.current;
@@ -321,30 +323,32 @@ export class AgentTurnProjection {
         stopTurn: step.tools.some((tool) => tool.result?.stopTurn === true),
         stopReason: step.tools.find((tool) => tool.result?.stopTurnReason !== undefined)?.result?.stopTurnReason,
       };
+      let turnOutcome: TerminalTurnOutcome | undefined;
       try {
         await this.options.hooks.onDidFinishStep.run(context);
       } catch (error) {
-        if (isAbortError(error) || step.signal.aborted) {
-          turn.abortReason = turn.controller.signal.aborted ? turn.controller.signal.reason : error;
-        } else {
-          turn.failedStep = { number: step.number, uuid: step.uuid, error };
-        }
+        turnOutcome = isAbortError(error) || step.signal.aborted
+          ? { type: 'aborted', reason: turn.controller.signal.aborted ? turn.controller.signal.reason : error }
+          : { type: 'failed', error };
       }
       turn.interruptStep = undefined;
-      if (turn.failedStep !== undefined || turn.abortReason !== undefined) {
-        return { type: 'done' as const, cause: { by: 'afterStep', reason: 'step_hook_failed' } };
+      if (turnOutcome !== undefined) {
+        return { type: 'done', cause: { by: 'afterStep', reason: 'step_hook_failed' }, turnOutcome };
       }
       if (context.stopTurn) {
         turn.forcedStopReason = context.stopReason;
-        return { type: 'done' as const, cause: { by: 'afterStep', reason: 'stop_turn' } };
+        return { type: 'done', cause: { by: 'afterStep', reason: 'stop_turn' } };
       }
       return undefined;
     }
-    const failure = turn.failedStep ?? { number: step.number, uuid: step.uuid, error: event.draft.error };
-    turn.failedStep = undefined;
+    const failure = { number: step.number, uuid: step.uuid, error: event.draft.error };
     if (turn.controller.signal.aborted || isAbortError(failure.error)) {
-      turn.abortReason = turn.controller.signal.aborted ? turn.controller.signal.reason : failure.error;
-      return undefined;
+      const reason = turn.controller.signal.aborted ? signalReason(turn.controller.signal) : failure.error;
+      return {
+        type: 'done',
+        cause: { by: 'afterStep', reason: 'step_hook_failed' },
+        turnOutcome: { type: 'aborted', reason },
+      };
     }
     const context: LoopErrorContext = {
       turnId: turn.id,
@@ -363,20 +367,17 @@ export class AgentTurnProjection {
           turn.interruptStep = undefined;
           if (turn.retryRequested) {
             turn.retryRequested = false;
-            return { type: 'continue' as const, cause: { by: handler.id, reason: 'retry' } };
+            return { type: 'continue', cause: { by: handler.id, reason: 'retry' } };
           }
           return undefined;
         }
       } catch (handlerError) {
-        if (isAbortError(handlerError) || turn.controller.signal.aborted) {
-          turn.abortReason = turn.controller.signal.aborted ? turn.controller.signal.reason : handlerError;
-        } else {
-          turn.failedStep = { number: failure.number, uuid: failure.uuid, error: handlerError };
-        }
-        return undefined;
+        const turnOutcome: TerminalTurnOutcome = isAbortError(handlerError) || turn.controller.signal.aborted
+          ? { type: 'aborted', reason: turn.controller.signal.aborted ? turn.controller.signal.reason : handlerError }
+          : { type: 'failed', error: handlerError };
+        return { type: 'done', cause: { by: 'afterStep', reason: 'step_hook_failed' }, turnOutcome };
       }
     }
-    turn.failedStep = failure;
     return undefined;
   }
 
@@ -683,7 +684,6 @@ export class AgentTurnProjection {
           turn.current = undefined;
           return;
         }
-        if (outcome.type === 'failed') turn.failedStep ??= { number: event.step, uuid: step?.uuid ?? randomUUID(), error: outcome.error };
         if (step !== undefined && turn.current !== undefined) turn.current = undefined;
         return;
       }
@@ -696,7 +696,7 @@ export class AgentTurnProjection {
         }
         const turn = this.active;
         if (turn === undefined) return;
-        return this.finishTurn(turn, outcome, event.continuation);
+        return this.finishTurn(turn, event);
       }
       case 'prompt.notified':
       case 'prompt.steered': {
@@ -740,10 +740,8 @@ export class AgentTurnProjection {
       stepIds: new Map(),
       current: undefined,
       interruptStep: undefined,
-      failedStep: undefined,
       forcedStopReason: undefined,
       lastStopReason: undefined,
-      abortReason: undefined,
       retryRequested: false,
       retry: undefined,
       streamPartCount: 0,
@@ -826,28 +824,31 @@ export class AgentTurnProjection {
     }));
   }
 
-  private async finishTurn(turn: ActiveTurn, outcome: Extract<LoopEmitted, { type: 'turn.ended' }>['outcome'], continuation?: TurnContinuation): Promise<void> {
+  private async finishTurn(turn: ActiveTurn, event: TurnEndedEvent): Promise<void> {
     if (this.active !== turn) return;
-    if (turn.abortReason !== undefined || turn.controller.signal.aborted || outcome.type === 'aborted') {
-      const reason = turn.abortReason ?? (turn.controller.signal.aborted ? turn.controller.signal.reason : undefined) ?? abortError('Turn aborted');
+    const outcome = event.outcome;
+    if (outcome.type === 'aborted' || turn.controller.signal.aborted) {
+      const reason = (turn.controller.signal.aborted ? turn.controller.signal.reason : undefined)
+        ?? (outcome.type === 'aborted' ? outcome.reason : undefined)
+        ?? abortError('Turn aborted');
       this.interruptRunForCancel(turn, reason);
-      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason }, undefined, continuation);
+      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason }, event);
       return;
     }
-    if (outcome.type === 'failed' || turn.failedStep !== undefined) {
-      const failure = outcome.type === 'failed' ? outcome.error : undefined;
-      const error = (isCodedError(failure) ? fromErrorPayload(toKimiErrorPayload(failure)) : undefined)
-        ?? turn.failedStep?.error
+    if (outcome.type === 'failed') {
+      const failure = outcome.error;
+      const error = (isError2(failure) ? failure : undefined)
+        ?? (isCodedError(failure) ? fromErrorPayload(toKimiErrorPayload(failure)) : undefined)
         ?? failure
         ?? new Error('Turn failed');
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, event);
       return;
     }
     if (outcome.type === 'blocked') {
       const error = new Error2(ErrorCodes.INTERNAL, outcome.cause.message ?? outcome.cause.reason);
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, event);
       return;
     }
     const result: LoopRunResult = {
@@ -856,7 +857,7 @@ export class AgentTurnProjection {
       truncated: turn.lastStopReason === 'truncated',
       stopReason: this.promptOnlyTurnIds.has(turn.id) ? 'prompt_only' : turn.forcedStopReason,
     };
-    await this.endTurn(turn, result, this.promptOnlyTurnIds.has(turn.id), continuation);
+    await this.endTurn(turn, result, event);
   }
 
   private failStep(turnId: number, step: number | undefined, error: unknown): void {
@@ -874,13 +875,14 @@ export class AgentTurnProjection {
     }
   }
 
-  private async endTurn(turn: ActiveTurn, result: TurnResult, promptOnly = false, continuation?: TurnContinuation): Promise<void> {
+  private async endTurn(turn: ActiveTurn, result: TurnResult, event: TurnEndedEvent): Promise<void> {
     if (this.active !== turn) return;
     this.lastResultValue = result;
     this.active = undefined;
     this.options.prompts.endActive(turn.prompt);
     this.disarmTurnWatch();
     turn.turn.state = result.type;
+    const promptOnly = this.promptOnlyTurnIds.has(turn.id);
     if (!turn.readyResolved) {
       if (result.type === 'failed') turn.ready.reject(result.error);
       else if (result.type === 'cancelled') turn.ready.reject(result.reason instanceof Error ? result.reason : abortError('Turn cancelled'));
@@ -889,21 +891,14 @@ export class AgentTurnProjection {
     const durationMs = promptOnly ? 0 : Date.now() - turn.startedAt;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
     const requestId = this.turnRequestId(promptOnly, result.type === 'cancelled', result.type === 'completed');
-    const modelSteps = this.options.attribution.finishModelSteps(this.options.scopeContext.agentId, turn.id);
-    const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
-    const turnEnded = this.options.dispatcher.dispatch(new TurnEnded({
-      agentId: this.options.scopeContext.agentId,
-      turnId: turn.id,
-      reason: result.type,
-      error,
+    const interruptReason = result.type === 'completed' ? undefined : turnInterruptReason(result);
+    const turnEnded = this.options.commitTurnEnded({
+      event,
+      result,
       durationMs,
-      interruptReason,
-      stopReason: result.type === 'completed' ? result.stopReason : undefined,
       requestId,
-      replyModel: modelSteps !== undefined && turn.replyModel?.requestId === requestId ? turn.replyModel?.model : undefined,
-      modelSteps,
-      continuation,
-    }));
+      replyModel: turn.replyModel,
+    });
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
     this.options.prompts.complete(turn.id, result);
     if (interruptReason !== undefined) {
@@ -1004,6 +999,10 @@ export class AgentTurnProjection {
   }
 }
 
+function signalReason(signal: AbortSignal): unknown {
+  return signal.reason as unknown;
+}
+
 function createStepState(number: number, signal: AbortSignal, uuid: string = randomUUID()): CoreStepState {
   return { number, uuid, signal, pendingToolIds: new Set(), tools: [] };
 }
@@ -1022,11 +1021,4 @@ function normalizeFinishReason(reason: FinishReason): string {
   if (reason === 'completed') return 'end_turn';
   if (reason === 'truncated') return 'max_tokens';
   return reason;
-}
-
-function interruptReasonFor(result: Extract<TurnResult, { readonly type: 'cancelled' | 'failed' }>): TurnInterruptReason {
-  if (result.type === 'cancelled') return isUserCancellation(result.reason) ? 'user_cancelled' : 'aborted';
-  if (isMaxStepsExceededError(result.error)) return 'max_steps';
-  if (isError2(result.error) && result.error.code === ErrorCodes.PROVIDER_FILTERED) return 'filtered';
-  return 'error';
 }
