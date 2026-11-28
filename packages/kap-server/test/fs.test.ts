@@ -10,7 +10,7 @@ import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-loca
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environment/environment';
-import { createGitRepository, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { createGitRepository, createGitWorktree, slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { sendMappedError } from '../src/routes/fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1398,7 +1398,7 @@ describe('server-v2 /api/v1 fs routes', () => {
       const workspaces = (await res.json()) as Envelope<{
         items: { id: string; root: string; additional_dirs: string[] }[];
       }>;
-      expect(workspaces.data.items.some((item) => [shared, firstOnly, secondOnly].includes(item.root))).toBe(false);
+      expect(workspaces.data.items.some((item) => [shared, firstOnly, secondOnly].map(slashPathOf).includes(item.root))).toBe(false);
     } finally {
       await rm(shared, { recursive: true, force: true });
       await rm(firstOnly, { recursive: true, force: true });
@@ -1642,7 +1642,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.code).toBe(0);
     expect(body.data.items.map((i) => i.path)).toContain('kappa.ts');
 
-    const workAliases = new Set([work!, await realpath(work!)]);
+    const workAliases = new Set([work!, await realpath(work!)].map(slashPathOf));
     expect((await listWorkspaces()).some((w) => workAliases.has(w.root))).toBe(false);
     expect(
       server!.core.accessor

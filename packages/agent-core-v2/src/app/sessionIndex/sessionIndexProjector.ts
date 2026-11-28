@@ -2,6 +2,7 @@ import { ILogService } from '#/_base/log/log';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore, type WriteOp } from '#/persistence/interface/queryStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { normalizeSessionDirs } from '#/session/workspaceContext/workspaceRoots';
 
 import { PARENT_SESSION_ID_KEY, type SessionSummary } from './sessionIndex';
 import {
@@ -343,7 +344,7 @@ export class SessionIndexProjector {
         if (check === undefined) return undefined;
         if (check.cached !== undefined) {
           nextCache.set(check.sessionId, check.cached);
-          return check.cached.summary;
+          return normalizeSessionDirs(check.cached.summary);
         }
         const summary = await readSessionSummary(
           docs,

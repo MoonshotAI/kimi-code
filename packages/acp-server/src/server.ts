@@ -44,6 +44,7 @@ import type {
   SessionSummary,
 } from '@moonshot-ai/klient';
 import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
+import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { RPCError } from '@moonshot-ai/klient';
 
 import type { AcpClient } from './acp-client';
@@ -539,7 +540,7 @@ export function filterSessionSummariesByCwd(
   cwd: string | undefined,
 ): readonly SessionSummary[] {
   if (cwd === undefined) return items;
-  return items.filter((s) => s.cwd === undefined || s.cwd === cwd);
+  return items.filter((s) => s.cwd === undefined || sameDir(s.cwd, cwd));
 }
 
 function sessionSummaryToSessionInfo(summary: SessionSummary): SessionInfo {

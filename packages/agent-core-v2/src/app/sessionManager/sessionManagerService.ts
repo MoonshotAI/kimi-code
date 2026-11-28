@@ -16,6 +16,7 @@ import { ISessionLockService, type SessionLockLease } from '#/persistence/interf
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { workDirToPin } from '#/session/workspaceContext/workspaceRoots';
+import { normalizeDir } from '#/_base/utils/workdir-slug';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -98,6 +99,7 @@ export class SessionManager implements ISessionManager {
     try {
       const effective = {
         ...options,
+        workDir: opened.workDir,
         environmentId: opened.environmentId,
         environmentCwd: opened.environmentCwd,
         ensureMainAgent: options.ensureMainAgent === true || opened.environmentRequested,
@@ -140,9 +142,9 @@ export class SessionManager implements ISessionManager {
               },
             );
           }
-          const canonicalWorkDir = await this.hostFs
-            .realpath(options.workDir)
-            .catch(() => options.workDir);
+          const canonicalWorkDir = normalizeDir(
+            await this.hostFs.realpath(options.workDir).catch(() => options.workDir),
+          );
           const environmentCwd = workDirToPin(canonicalWorkDir, targetLease.instance.root);
           return await controller.move({
             sessionId: options.sessionId,
@@ -163,16 +165,20 @@ export class SessionManager implements ISessionManager {
       : await this.environmentDeclarations.declarations();
     const environmentId = options.environmentId ?? declarations?.defaultId;
     const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
-    if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
+    const workDir = remote || options.workDir === undefined ? options.workDir : normalizeDir(options.workDir);
+    if (workDir !== undefined && !remote) await this.assertUsableWorkDir(workDir);
     const lease = await this.projects.acquire(
-      options.workspaceId === undefined ? { cwd: options.workDir } : { workspaceId: options.workspaceId },
+      options.workspaceId === undefined ? { cwd: workDir } : { workspaceId: options.workspaceId },
     );
     try {
       if (!remote) {
         return {
           workspaceId: lease.instance.id,
+          workDir,
           environmentId,
-          environmentCwd: options.environmentCwd ?? workDirToPin(options.workDir, lease.instance.root),
+          environmentCwd: options.environmentCwd === undefined
+            ? workDirToPin(workDir, lease.instance.root)
+            : normalizeDir(options.environmentCwd),
           environmentRequested: options.environmentCwd !== undefined,
           lease,
         };
@@ -197,6 +203,7 @@ export class SessionManager implements ISessionManager {
       }
       return {
         workspaceId: lease.instance.id,
+        workDir,
         environmentId,
         environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
         environmentRequested: true,

@@ -73,7 +73,7 @@ export function defineKlientConformance(
       try {
         const workspaces = target.klient.global.workspaces;
         const created = await workspaces.resolveImplicit(root);
-        expect(created).toMatchObject({ root, kind: 'implicit' });
+        expect(created).toMatchObject({ root: slashPathOf(root), kind: 'implicit' });
 
         const fetched = await workspaces.get(created.id);
         expect(fetched).toEqual(created);
@@ -85,7 +85,7 @@ export function defineKlientConformance(
           id: created.id,
           patch: { additionalDirs: [additionalDir] },
         });
-        expect(withAdditionalDirs?.additionalDirs).toEqual([additionalDir]);
+        expect(withAdditionalDirs?.additionalDirs).toEqual([slashPathOf(additionalDir)]);
 
         const cleared = await workspaces.update({
           id: created.id,

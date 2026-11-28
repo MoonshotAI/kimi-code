@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { bashPathOf, createTestHome, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createTestHome, slashPathOf, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
 import { KapProcess, type KapSocket, type KapTurn } from '@moonshot-ai/testkit/kap';
 import { bash, fakeModelConfig, held, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { modelFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
@@ -174,13 +174,13 @@ test('keeps a released session without an environment cwd following the current 
     const id = corpus.manifest.sessionId;
     const server = await startServer(home);
     try {
-      expect((await server.session(id)).cwd, 'cwd of the released session').toBe(moved);
+      expect((await server.session(id)).cwd, 'cwd of the released session').toBe(slashPathOf(moved));
       model.script(bash('pwd -P'), say('Still at the root.'));
       const before = model.requests('main').length;
       await server.prompt(id, 'Where are you?');
       await server.waitIdle(id);
       expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(moved))}\n`);
-      expect((await server.session(id)).cwd).toBe(moved);
+      expect((await server.session(id)).cwd).toBe(slashPathOf(moved));
     } finally {
       await server.close();
     }
@@ -252,7 +252,7 @@ test('keeps a pinned session in its directory and its interrupted prompt after t
     try {
       const atMain = await first.createSession({ cwd: main });
       created = await first.createSession({ cwd: pinnedDir });
-      expect(created).toMatchObject({ workspace_id: atMain.workspace_id, cwd: pinnedDir });
+      expect(created).toMatchObject({ workspace_id: atMain.workspace_id, cwd: slashPathOf(pinnedDir) });
       model.script(held('mid-turn', say('never finished')));
       const prompt = await first.prompt(created.id, 'Start something long.');
       await model.hold('mid-turn').reached();
@@ -265,7 +265,7 @@ test('keeps a pinned session in its directory and its interrupted prompt after t
     const second = await startServer(home);
     try {
       expect(second.pid).not.toBe(first.pid);
-      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: pinnedDir });
+      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: slashPathOf(pinnedDir) });
       expect(await second.turns(created.id), 'turns after the crash').toMatchObject([{
         status: 'ended',
         outcome: 'interrupted',
@@ -279,7 +279,7 @@ test('keeps a pinned session in its directory and its interrupted prompt after t
       await second.waitIdle(created.id);
       expect(model.requests('main')[before]!.view.messages.slice(0, interrupted.length), 'context after the crash').toEqual(interrupted);
       expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(pinnedDir))}\n`);
-      expect(await second.session(created.id)).toMatchObject({ cwd: pinnedDir });
+      expect(await second.session(created.id)).toMatchObject({ cwd: slashPathOf(pinnedDir) });
     } finally {
       await second.close();
     }
@@ -307,7 +307,7 @@ test('revives the repository project of a pinned worktree session whose project 
     });
     const second = await startServer(home);
     try {
-      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: worktree });
+      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: slashPathOf(worktree) });
       model.script(bash('pwd -P'), say('Revived.'));
       const before = model.requests('main').length;
       await second.prompt(created.id, 'Where are you?');

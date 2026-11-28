@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -183,7 +184,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
 
     const { body } = await getJson<HomeWire>('/api/v1/fs:home');
     expect(body.code).toBe(0);
-    expect(body.data.recent_roots).toContain(root);
+    expect(body.data.recent_roots).toContain(slashPathOf(root));
   });
 });
 

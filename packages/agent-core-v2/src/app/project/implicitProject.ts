@@ -2,6 +2,7 @@ import {
   encodeWorkDirKey,
   isAncestorOrSelf,
   isWorkDirKey,
+  normalizeDir,
   sameDir,
   toAbsoluteDir,
   type AbsoluteDir,
@@ -35,7 +36,7 @@ export async function decideImplicitProject(
   const location = absolute === undefined ? undefined : await ports.locate(absolute);
   const repository = repositoryOf(location, ports.homeDirs);
   const grouped = repository === undefined ? undefined : repositoryDecision(repository, implicit);
-  return grouped ?? (own === undefined ? { id: encodeWorkDirKey(dir), root: dir } : reuse(own));
+  return grouped ?? (own === undefined ? { id: encodeWorkDirKey(dir), root: normalizeDir(dir) } : reuse(own));
 }
 
 export function repositoryOf(

@@ -10,7 +10,7 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { bashPathOf, createGitWorktree, FAKE_MCP_SERVER, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createGitWorktree, FAKE_MCP_SERVER, fakeMcpServer, slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import type { KapHarness } from '@moonshot-ai/testkit/kap';
 import { startKimiServices } from '@moonshot-ai/testkit/services';
 import {
@@ -492,8 +492,8 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(typeof body.data.id).toBe('string');
     expect(typeof body.data.workspace_id).toBe('string');
     expect(body.data.title).toBe('hello');
-    expect(body.data.cwd).toBe(cwd);
-    expect(body.data.workspace_root).toBe(cwd);
+    expect(body.data.cwd).toBe(slashPathOf(cwd));
+    expect(body.data.workspace_root).toBe(slashPathOf(cwd));
     expect(body.data.environment_id).toBe('local');
     expect(body.data).not.toHaveProperty('environment_cwd');
     expect(body.data.activity).toBe('idle');
@@ -513,8 +513,8 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(0);
     expect(body.data).toMatchObject({
       workspace_id: legacy.body.data.workspace_id,
-      workspace_root: cwd,
-      cwd,
+      workspace_root: slashPathOf(cwd),
+      cwd: slashPathOf(cwd),
       environment_id: 'local',
     });
     expect(body.data).not.toHaveProperty('environment_cwd');
@@ -554,8 +554,8 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(created.body.code).toBe(0);
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
-    expect(got.body.data.cwd).toBe(nested);
-    expect(created.body.data.cwd).toBe(nested);
+    expect(got.body.data.cwd).toBe(slashPathOf(nested));
+    expect(created.body.data.cwd).toBe(slashPathOf(nested));
   });
 
   it('reports the requested cwd of a remote session in the create response', async () => {
@@ -582,7 +582,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
       expect(created.body.data.cwd).toBe(got.body.data.cwd);
       const location = {
-        workspace_root: cwd,
+        workspace_root: slashPathOf(cwd),
         cwd: `${cwd}/`,
         environment_id: 'remote-create',
         environment_cwd: remote,
@@ -636,7 +636,7 @@ describe('server-v2 /api/v1/sessions', () => {
       environment_cwd: missing,
     });
     expect(body.code).toBe(40001);
-    expect(body.msg).toContain(`cwd ${missing} is not readable on environment local`);
+    expect(body.msg).toContain(`cwd ${slashPathOf(missing)} is not readable on environment local`);
   });
 
   it.each(['missing', 'not-a-directory'] as const)(
@@ -760,23 +760,40 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(inWorktree.body.code).toBe(0);
       expect(inWorktree.body.data.workspace_id).toBe(atMain.body.data.workspace_id);
       expect(inWorktree.body.data.workspace_id).toBe(encodeWorkDirKey(main));
-      expect(inWorktree.body.data.cwd).toBe(worktree);
-      expect((await getJson<SessionWire>(`/api/v1/sessions/${inWorktree.body.data.id}`)).body.data.cwd).toBe(worktree);
-      expect(await stateOf(inWorktree.body.data)).toMatchObject({ cwd: worktree, environmentCwd: worktree });
-      expect(await indexWorkDirOf(inWorktree.body.data.id)).toBe(worktree);
-      expect(await environmentCwdOf(inWorktree.body.data.id)).toBe(worktree);
-      expect(await stateOf(atMain.body.data)).toMatchObject({ cwd: main });
+      expect(inWorktree.body.data.cwd).toBe(slashPathOf(worktree));
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${inWorktree.body.data.id}`)).body.data.cwd).toBe(slashPathOf(worktree));
+      expect(await stateOf(inWorktree.body.data)).toMatchObject({ cwd: slashPathOf(worktree), environmentCwd: slashPathOf(worktree) });
+      expect(await indexWorkDirOf(inWorktree.body.data.id)).toBe(slashPathOf(worktree));
+      expect(await environmentCwdOf(inWorktree.body.data.id)).toBe(slashPathOf(worktree));
+      expect(await stateOf(atMain.body.data)).toMatchObject({ cwd: slashPathOf(main) });
       expect(await stateOf(atMain.body.data)).not.toHaveProperty('environmentCwd');
-      expect(await indexWorkDirOf(atMain.body.data.id)).toBe(main);
+      expect(await indexWorkDirOf(atMain.body.data.id)).toBe(slashPathOf(main));
       expect(await environmentCwdOf(atMain.body.data.id)).toBeUndefined();
       const listed = await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(encodeWorkDirKey(main))}`);
       expect(
         Object.fromEntries(listed.body.data.items.map((item) => [item.id, item.cwd])),
-      ).toEqual({ [atMain.body.data.id]: main, [inWorktree.body.data.id]: worktree });
+      ).toEqual({ [atMain.body.data.id]: slashPathOf(main), [inWorktree.body.data.id]: slashPathOf(worktree) });
       const workspaces = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
-      expect(workspaces.body.data.items.filter((item) => [main, worktree].includes(item.root))).toEqual([
-        expect.objectContaining({ id: encodeWorkDirKey(main), root: main }),
+      expect(workspaces.body.data.items.filter((item) => [slashPathOf(main), slashPathOf(worktree)].includes(item.root))).toEqual([
+        expect.objectContaining({ id: encodeWorkDirKey(main), root: slashPathOf(main) }),
       ]);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('pins a session to the directory it names and reports it in one spelling however the request spells it', async () => {
+    const { lab, worktree } = await repositoryWithWorktree();
+    try {
+      const respelled = await postJson<SessionWire>('/api/v1/sessions', { cwd: `${worktree}/` });
+      expect(respelled.body.code).toBe(0);
+      expect(respelled.body.data).toMatchObject({ cwd: slashPathOf(worktree), environment_cwd: slashPathOf(worktree) });
+      expect(await stateOf(respelled.body.data)).toMatchObject({ environmentCwd: slashPathOf(worktree) });
+      expect(await indexWorkDirOf(respelled.body.data.id)).toBe(slashPathOf(worktree));
+
+      const twoSpellings = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree, workspace_root: `${worktree}/` });
+      expect(twoSpellings.body.code).toBe(0);
+      expect(twoSpellings.body.data.cwd).toBe(slashPathOf(worktree));
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -799,12 +816,12 @@ describe('server-v2 /api/v1/sessions', () => {
       const outside = await postJson<null>('/api/v1/sessions', { workspace_id: workspaceId, cwd: lab });
 
       for (const created of [rootOnly, atRoot]) {
-        expect(created.body.data).toMatchObject({ workspace_id: workspaceId, cwd: main });
+        expect(created.body.data).toMatchObject({ workspace_id: workspaceId, cwd: slashPathOf(main) });
         expect(await stateOf(created.body.data)).not.toHaveProperty('environmentCwd');
       }
-      expect(inSubdir.body.data).toMatchObject({ workspace_id: workspaceId, cwd: subdir });
-      expect(await stateOf(inSubdir.body.data)).toMatchObject({ environmentCwd: subdir });
-      expect(inWorktree.body.data).toMatchObject({ workspace_id: workspaceId, cwd: worktree });
+      expect(inSubdir.body.data).toMatchObject({ workspace_id: workspaceId, cwd: slashPathOf(subdir) });
+      expect(await stateOf(inSubdir.body.data)).toMatchObject({ environmentCwd: slashPathOf(subdir) });
+      expect(inWorktree.body.data).toMatchObject({ workspace_id: workspaceId, cwd: slashPathOf(worktree) });
       expect(outside.body.code).toBe(40001);
       expect(outside.body.details?.[0]?.path).toBe('cwd');
     } finally {
@@ -822,8 +839,8 @@ describe('server-v2 /api/v1/sessions', () => {
       const outside = await postJson<null>('/api/v1/sessions', { workspace_id: workspaceId, workspace_root: lab });
 
       expect(workspaceId).toBe(encodeWorkDirKey(main));
-      expect(inWorktree.body.data).toMatchObject({ workspace_root: main, cwd: worktree, environment_id: 'local', environment_cwd: worktree });
-      expect(inSubdir.body.data).toMatchObject({ workspace_id: workspaceId, workspace_root: main, cwd: subdir, environment_cwd: subdir });
+      expect(inWorktree.body.data).toMatchObject({ workspace_root: slashPathOf(main), cwd: slashPathOf(worktree), environment_id: 'local', environment_cwd: slashPathOf(worktree) });
+      expect(inSubdir.body.data).toMatchObject({ workspace_id: workspaceId, workspace_root: slashPathOf(main), cwd: slashPathOf(subdir), environment_cwd: slashPathOf(subdir) });
       expect(outside.body.code).toBe(40001);
       expect(outside.body.details?.[0]?.path).toBe('workspace_root');
     } finally {
@@ -844,9 +861,9 @@ describe('server-v2 /api/v1/sessions', () => {
       const nextToRoot = await postJson<SessionWire>('/api/v1/sessions', await placementOf(atRoot.body.data.id));
       const nextToWorktree = await postJson<SessionWire>('/api/v1/sessions', await placementOf(inWorktree.body.data.id));
 
-      expect(nextToRoot.body.data).toMatchObject({ workspace_root: main, cwd: main });
+      expect(nextToRoot.body.data).toMatchObject({ workspace_root: slashPathOf(main), cwd: slashPathOf(main) });
       expect(nextToRoot.body.data).not.toHaveProperty('environment_cwd');
-      expect(nextToWorktree.body.data).toMatchObject({ workspace_root: main, cwd: worktree, environment_cwd: worktree });
+      expect(nextToWorktree.body.data).toMatchObject({ workspace_root: slashPathOf(main), cwd: slashPathOf(worktree), environment_cwd: slashPathOf(worktree) });
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -898,9 +915,9 @@ describe('server-v2 /api/v1/sessions', () => {
         cwd: join(alias, 'src'),
       });
 
-      expect(viaAlias.body.data).toMatchObject({ workspace_id: workspaceId, cwd: alias });
+      expect(viaAlias.body.data).toMatchObject({ workspace_id: workspaceId, cwd: slashPathOf(alias) });
       expect(viaAliasSubdir.body.code).toBe(40001);
-      expect(viaRepositorySubdir.body.data).toMatchObject({ workspace_id: workspaceId, cwd: join(alias, 'src') });
+      expect(viaRepositorySubdir.body.data).toMatchObject({ workspace_id: workspaceId, cwd: slashPathOf(join(alias, 'src')) });
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -958,8 +975,8 @@ describe('server-v2 /api/v1/sessions', () => {
       const byCwd = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree });
       const byId = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: atMain.body.data.workspace_id, cwd: worktree });
 
-      expect(byCwd.body.data).toMatchObject({ workspace_id: ownId, cwd: worktree });
-      expect(byId.body.data).toMatchObject({ workspace_id: atMain.body.data.workspace_id, cwd: worktree });
+      expect(byCwd.body.data).toMatchObject({ workspace_id: ownId, cwd: slashPathOf(worktree) });
+      expect(byId.body.data).toMatchObject({ workspace_id: atMain.body.data.workspace_id, cwd: slashPathOf(worktree) });
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -977,7 +994,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
       expect(atFormerRoot.body.code).toBe(40001);
       expect(atFormerRoot.body.details?.[0]?.path).toBe('metadata.cwd');
-      expect(atRoot.body.data).toMatchObject({ workspace_id: id, cwd: two });
+      expect(atRoot.body.data).toMatchObject({ workspace_id: id, cwd: slashPathOf(two) });
     } finally {
       await rm(one, { recursive: true, force: true });
       await rm(two, { recursive: true, force: true });
@@ -999,6 +1016,7 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(await codeOf('~')).toBe(40001);
       await rm(main, { recursive: true, force: true });
       expect(await codeOf(main)).toBe(40409);
+      expect(await codeOf(`${main}/`)).toBe(40409);
       const listed = await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}`);
       expect(listed.body.data.items).toHaveLength(1);
     } finally {
@@ -1025,7 +1043,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const mcp = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!.accessor.get(ISessionMcpHandle);
       await mcp.ready;
 
-      expect(created.body.data).toMatchObject({ workspace_id: atMain.body.data.workspace_id, cwd: subdir });
+      expect(created.body.data).toMatchObject({ workspace_id: atMain.body.data.workspace_id, cwd: slashPathOf(subdir) });
       expect(mcp.connectionManager.list().map((entry) => entry.name).toSorted()).toEqual(['worktree-local', 'worktree-shared']);
     } finally {
       vi.unstubAllEnvs();
@@ -1040,8 +1058,8 @@ describe('server-v2 /api/v1/sessions', () => {
       const inManaged = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: managed.body.data.id, cwd: dir });
       const inImplicit = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
 
-      expect(inManaged.body.data).toMatchObject({ workspace_id: managed.body.data.id, cwd: dir });
-      expect(inImplicit.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: dir });
+      expect(inManaged.body.data).toMatchObject({ workspace_id: managed.body.data.id, cwd: slashPathOf(dir) });
+      expect(inImplicit.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: slashPathOf(dir) });
       expect(await stateOf(inManaged.body.data)).not.toHaveProperty('environmentCwd');
       expect(await stateOf(inImplicit.body.data)).not.toHaveProperty('environmentCwd');
     } finally {
@@ -1062,13 +1080,13 @@ describe('server-v2 /api/v1/sessions', () => {
       await writeFile(projectsPath, JSON.stringify(projects));
       await vi.waitFor(async () => {
         const listed = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
-        expect(listed.body.data.items.find((item) => item.id === encodeWorkDirKey(dir))?.root).toBe(moved);
+        expect(listed.body.data.items.find((item) => item.id === encodeWorkDirKey(dir))?.root).toBe(slashPathOf(moved));
       });
 
       const second = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
 
-      expect(second.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: dir });
-      expect(await stateOf(second.body.data)).toMatchObject({ environmentCwd: dir });
+      expect(second.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: slashPathOf(dir) });
+      expect(await stateOf(second.body.data)).toMatchObject({ environmentCwd: slashPathOf(dir) });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1081,10 +1099,10 @@ describe('server-v2 /api/v1/sessions', () => {
       const forked = await postJson<SessionWire>(`/api/v1/sessions/${source.body.data.id}:fork`, {});
 
       expect(forked.body.code).toBe(0);
-      expect(forked.body.data).toMatchObject({ workspace_id: source.body.data.workspace_id, cwd: worktree });
-      expect(await stateOf(forked.body.data)).toMatchObject({ environmentCwd: worktree });
-      expect(await indexWorkDirOf(forked.body.data.id)).toBe(worktree);
-      expect((await getJson<SessionWire>(`/api/v1/sessions/${forked.body.data.id}`)).body.data.cwd).toBe(worktree);
+      expect(forked.body.data).toMatchObject({ workspace_id: source.body.data.workspace_id, cwd: slashPathOf(worktree) });
+      expect(await stateOf(forked.body.data)).toMatchObject({ environmentCwd: slashPathOf(worktree) });
+      expect(await indexWorkDirOf(forked.body.data.id)).toBe(slashPathOf(worktree));
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${forked.body.data.id}`)).body.data.cwd).toBe(slashPathOf(worktree));
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -1107,11 +1125,11 @@ describe('server-v2 /api/v1/sessions', () => {
 
       expect(patched.body.code).toBe(0);
       await vi.waitFor(() => {
-        expect(agent.accessor.get(IAgentEnvironmentService).workspaceRoots().additionalDirs).toContain(shared);
+        expect(agent.accessor.get(IAgentEnvironmentService).workspaceRoots().additionalDirs).toContain(slashPathOf(shared));
       });
-      expect(agent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(worktree);
-      expect((await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data.cwd).toBe(worktree);
-      expect((await postJson<{ session: SessionWire }>(`/api/v1/sessions/${id}:wait`, { timeout_ms: 0 })).body.data.session.cwd).toBe(worktree);
+      expect(agent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(slashPathOf(worktree));
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data.cwd).toBe(slashPathOf(worktree));
+      expect((await postJson<{ session: SessionWire }>(`/api/v1/sessions/${id}:wait`, { timeout_ms: 0 })).body.data.session.cwd).toBe(slashPathOf(worktree));
       expect(main).not.toBe(worktree);
     } finally {
       await rm(lab, { recursive: true, force: true });
@@ -1135,10 +1153,10 @@ describe('server-v2 /api/v1/sessions', () => {
         return agent.accessor.get(IAgentEnvironmentService).workspaceRoots().additionalDirs;
       };
 
-      expect(await additionalDirsAt(worktree)).toEqual([shared]);
-      expect(await additionalDirsAt(join(main, 'src'))).toEqual([shared]);
+      expect(await additionalDirsAt(worktree)).toEqual([slashPathOf(shared)]);
+      expect(await additionalDirsAt(join(main, 'src'))).toEqual([slashPathOf(shared)]);
       expect(await additionalDirsAt(other)).toEqual([]);
-      expect(await additionalDirsAt(shared)).toEqual([main]);
+      expect(await additionalDirsAt(shared)).toEqual([slashPathOf(main)]);
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -1156,10 +1174,10 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(promoted.body.code).toBe(0);
 
       expect(await stateOf(created.body.data)).not.toHaveProperty('environmentCwd');
-      expect((await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data.cwd).toBe(second);
-      expect((await postJson<{ session: SessionWire }>(`/api/v1/sessions/${id}:wait`, { timeout_ms: 0 })).body.data.session.cwd).toBe(second);
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data.cwd).toBe(slashPathOf(second));
+      expect((await postJson<{ session: SessionWire }>(`/api/v1/sessions/${id}:wait`, { timeout_ms: 0 })).body.data.session.cwd).toBe(slashPathOf(second));
       const forked = await postJson<SessionWire>(`/api/v1/sessions/${id}:fork`, {});
-      expect(forked.body.data.cwd).toBe(second);
+      expect(forked.body.data.cwd).toBe(slashPathOf(second));
       expect(await stateOf(forked.body.data)).not.toHaveProperty('environmentCwd');
     } finally {
       await rm(first, { recursive: true, force: true });
@@ -1177,9 +1195,9 @@ describe('server-v2 /api/v1/sessions', () => {
       for (const body of [{ cwd: link }, { workspace_id: workspaceId, cwd: link }]) {
         const created = await postJson<SessionWire>('/api/v1/sessions', body);
 
-        expect(created.body.data).toMatchObject({ workspace_id: workspaceId, cwd: link });
-        expect(await stateOf(created.body.data)).toMatchObject({ environmentCwd: link });
-        expect(await indexWorkDirOf(created.body.data.id)).toBe(link);
+        expect(created.body.data).toMatchObject({ workspace_id: workspaceId, cwd: slashPathOf(link) });
+        expect(await stateOf(created.body.data)).toMatchObject({ environmentCwd: slashPathOf(link) });
+        expect(await indexWorkDirOf(created.body.data.id)).toBe(slashPathOf(link));
       }
     } finally {
       await rm(lab, { recursive: true, force: true });
@@ -1205,14 +1223,14 @@ describe('server-v2 /api/v1/sessions', () => {
           ),
         );
       expect(await listedCwds()).toEqual({
-        [atRoot.id]: main,
-        [inWorktree.id]: worktree,
-        [inSubdir.id]: join(main, 'src'),
+        [atRoot.id]: slashPathOf(main),
+        [inWorktree.id]: slashPathOf(worktree),
+        [inSubdir.id]: slashPathOf(join(main, 'src')),
       });
 
       expect((await postJson<unknown>(`/api/v1/workspaces/${workspaceId}/primary`, { path: moved })).body.code).toBe(0);
 
-      const expected = { [atRoot.id]: moved, [inWorktree.id]: worktree, [inSubdir.id]: join(main, 'src') };
+      const expected = { [atRoot.id]: slashPathOf(moved), [inWorktree.id]: slashPathOf(worktree), [inSubdir.id]: slashPathOf(join(main, 'src')) };
       await vi.waitFor(async () => {
         expect(await listedCwds()).toEqual(expected);
       });
@@ -1572,7 +1590,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     expect(created.body.code).toBe(0);
     expect(created.body.data.metadata).toMatchObject({ source: 'composer' });
-    expect(created.body.data.cwd).toBe(cwd);
+    expect(created.body.data.cwd).toBe(slashPathOf(cwd));
     const state = readAgentState(await mainAgentOf(created.body.data.id), false);
     expect(state.plan_mode).toBe(true);
     expect(state.permission_mode).toBe('yolo');
@@ -1589,7 +1607,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     expect(created.body.code).toBe(0);
     expect(created.body.data.metadata).toMatchObject({ source: 'composer' });
-    expect(created.body.data.cwd).toBe(cwd);
+    expect(created.body.data.cwd).toBe(slashPathOf(cwd));
   });
 
   it('drops the child-link metadata keys when creating an ordinary session', async () => {
@@ -2292,9 +2310,9 @@ describe('server-v2 /api/v1/sessions', () => {
       const resumed = await postJson<ProfileWire>(`/api/v1/sessions/${id}/profile`, {});
 
       expect(resumed.body.code).toBe(0);
-      expect(resumed.body.data.session).toMatchObject({ id, workspace_id: workspaceId, cwd: subdir });
+      expect(resumed.body.data.session).toMatchObject({ id, workspace_id: workspaceId, cwd: slashPathOf(subdir) });
       const workspaces = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
-      expect(workspaces.body.data.items).toContainEqual(expect.objectContaining({ id: workspaceId, root: main }));
+      expect(workspaces.body.data.items).toContainEqual(expect.objectContaining({ id: workspaceId, root: slashPathOf(main) }));
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -2309,13 +2327,13 @@ describe('server-v2 /api/v1/sessions', () => {
       git(main, 'worktree', 'remove', '--force', worktree);
 
       const listed = await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(created.body.data.workspace_id)}`);
-      expect(listed.body.data.items.find((item) => item.id === id)?.cwd).toBe(worktree);
+      expect(listed.body.data.items.find((item) => item.id === id)?.cwd).toBe(slashPathOf(worktree));
       const resumed = await resumeSessionById((server as RunningServer).core.accessor, id);
-      expect(resumed?.accessor.get(ISessionWorkdir).cwd).toBe(worktree);
+      expect(resumed?.accessor.get(ISessionWorkdir).cwd).toBe(slashPathOf(worktree));
       const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
       expect(archived.body.code).toBe(0);
       const restored = await postJson<SessionWire>(`/api/v1/sessions/${id}:restore`);
-      expect(restored.body.data).toMatchObject({ id, cwd: worktree, archived: false });
+      expect(restored.body.data).toMatchObject({ id, cwd: slashPathOf(worktree), archived: false });
     } finally {
       await rm(lab, { recursive: true, force: true });
     }
@@ -2459,7 +2477,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
         projects: Record<string, { root: string; additional_dirs?: string[] }>;
       };
-      const project = Object.values(projects.projects).find((entry) => entry.root === cwd);
+      const project = Object.values(projects.projects).find((entry) => entry.root === slashPathOf(cwd));
       if (project === undefined) throw new Error('expected the session project');
       project.additional_dirs = [extra];
       await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
@@ -2472,7 +2490,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const text = JSON.stringify(afterItems);
       expect(text).toContain('AGENTS.md');
       expect(text).toContain('were not included in your system prompt');
-      expect(text).toContain(`Added directories: ${extra}.`);
+      expect(text).toContain(`Added directories: ${slashPathOf(extra)}.`);
       expect(
         afterItems.filter(
           (item) => (item.origin as { variant?: string } | undefined)?.variant === 'workspace_dirs_change',
@@ -2581,7 +2599,7 @@ describe('server-v2 /api/v1/sessions', () => {
           const reloaded = await postJson<SessionWire | null>(`/api/v1/sessions/${id}:reload`);
 
           expect(reloaded.body).toMatchObject(
-            dir === broken ? { code: 50001, msg: `Invalid TOML in ${localToml}` } : { code: 0, data: { id, cwd: dir } },
+            dir === broken ? { code: 50001, msg: `Invalid TOML in ${slashPathOf(localToml)}` } : { code: 0, data: { id, cwd: slashPathOf(dir) } },
           );
         }
         await rm(localToml);
@@ -3418,7 +3436,7 @@ describe('server-v2 /api/v1/sessions', () => {
     for (const agentId of ['main', 'agent-0', 'agent-150', `agent-${subagentCount - 1}`]) {
       const entry = forkedState.agents[agentId];
       const source = agents[agentId]!;
-      expect(entry.homedir).toBe(join(forkedDir, 'agents', agentId));
+      expect(entry.homedir).toBe(slashPathOf(join(forkedDir, 'agents', agentId)));
       expect(entry.type).toBe(source.type);
       expect(entry.parentAgentId ?? null).toBe(source.parentAgentId);
       expect(entry.labels).toEqual(
@@ -3842,7 +3860,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.code).toBe(0);
-    expect(got.body.data.cwd).toBe(cwd);
+    expect(got.body.data.cwd).toBe(slashPathOf(cwd));
   });
 
   it('does not page a deleted managed workspace session into a same-root active project', async () => {
@@ -3876,7 +3894,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${removed.body.data.id}`);
     expect(got.body.code).toBe(0);
-    expect(got.body.data.cwd).toBe(cwd);
+    expect(got.body.data.cwd).toBe(slashPathOf(cwd));
   });
 
   it('merges metadata via profile and keeps cwd authoritative', async () => {
@@ -3889,11 +3907,11 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(first.body.code).toBe(0);
     expect(first.body.data.session.metadata['foo']).toBe('bar');
-    expect(first.body.data.session.cwd).toBe(cwd);
+    expect(first.body.data.session.cwd).toBe(slashPathOf(cwd));
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.data.metadata['foo']).toBe('bar');
-    expect(got.body.data.cwd).toBe(cwd);
+    expect(got.body.data.cwd).toBe(slashPathOf(cwd));
   });
 
   it('replaces custom metadata on a second profile update (v1 semantics)', async () => {
@@ -3908,7 +3926,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(second.body.code).toBe(0);
     expect(second.body.data.session.metadata['foo']).toBeUndefined();
     expect(second.body.data.session.metadata['baz']).toBe(1);
-    expect(second.body.data.session.cwd).toBe(cwd);
+    expect(second.body.data.session.cwd).toBe(slashPathOf(cwd));
   });
 
   it('applies agent_config.permission_mode via profile idempotently', async () => {
@@ -4701,7 +4719,7 @@ kapTest('reports the project root and where the agent works on every view of a s
     environment_id: 'local',
     environment_cwd: packageDir,
   });
-  const location = { workspace_root: root, cwd: packageDir, environment_id: 'local', environment_cwd: packageDir };
+  const location = { workspace_root: slashPathOf(root), cwd: slashPathOf(packageDir), environment_id: 'local', environment_cwd: slashPathOf(packageDir) };
 
   expect(created).toMatchObject(location);
   expect(await kap.rest.get<SessionWire>(`/api/v1/sessions/${created.id}`)).toMatchObject(location);
@@ -4711,7 +4729,7 @@ kapTest('reports the project root and where the agent works on every view of a s
   const profile = await kap.rest.post<{ session: SessionWire }>(`/api/v1/sessions/${created.id}/profile`, { title: 'renamed' });
   expect(profile.session).toMatchObject(location);
   const forked = await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:fork`, {});
-  expect(forked).toMatchObject({ workspace_root: root, environment_id: 'local', environment_cwd: packageDir });
+  expect(forked).toMatchObject({ workspace_root: slashPathOf(root), environment_id: 'local', environment_cwd: slashPathOf(packageDir) });
   await kap.rest.post(`/api/v1/sessions/${created.id}:archive`, {});
   expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:restore`, {})).toMatchObject(location);
   expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:reload`, {})).toMatchObject(location);
@@ -4913,9 +4931,9 @@ kapTest.for(vanishingDirectories)('opens, renames, restores and forks a session 
   expect(await kap.rest.get(`${path}/environment`)).toMatchObject({ environment_id: 'local' });
   await expect(kap.rest.post(`${path}/fs:list`, { path: '.' })).rejects.toMatchObject({ code: 40409 });
   await kap.rest.post(`${path}/profile`, { title: 'Renamed' });
-  expect(await kap.session(sessionId)).toMatchObject({ title: 'Renamed', cwd: dir });
+  expect(await kap.session(sessionId)).toMatchObject({ title: 'Renamed', cwd: slashPathOf(dir) });
   const fork = await kap.fork(sessionId);
-  expect(fork.cwd).toBe(dir);
+  expect(fork.cwd).toBe(slashPathOf(dir));
   expect(await kap.turns(fork.id)).toHaveLength(1);
   await kap.rest.post(`${path}:archive`, {});
   expect(await kap.rest.post(`${path}:restore`, {})).toMatchObject({ id: sessionId, archived: false });

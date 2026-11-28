@@ -32,6 +32,7 @@ import type {
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
+import { slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -229,7 +230,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       cwd,
     );
     expect(created.body.code).toBe(0);
-    expect(created.body.data.root).toBe(cwd);
+    expect(created.body.data.root).toBe(slashPathOf(cwd));
 
     const got = await call<{ id: string; root: string }>(
       'GET',
@@ -237,7 +238,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       created.body.data.id,
     );
     expect(got.body.code).toBe(0);
-    expect(got.body.data.root).toBe(cwd);
+    expect(got.body.data.root).toBe(slashPathOf(cwd));
   });
 
   it('exposes workspace, session association, and agent binding business snapshots', async () => {
@@ -252,7 +253,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       `/api/v1/debug/workspace/${workspaceId}/snapshot`,
     );
     expect(workspace.body.data).toMatchObject({
-      metadata: { id: workspaceId, root: home },
+      metadata: { id: workspaceId, root: slashPathOf(home as string) },
       lifecycle: 'active',
       program: {
         binding: { environmentId: 'local' },
@@ -268,7 +269,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(association.body.data).toEqual({
       sessionId,
       workspaceId,
-      cwd: home,
+      cwd: slashPathOf(home as string),
     });
 
     const binding = await call<AgentEnvironmentBindingSnapshot>(
@@ -296,7 +297,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       missing,
     );
     expect(created.body.code).toBe(0);
-    expect(created.body.data.root).toBe(missing);
+    expect(created.body.data.root).toBe(slashPathOf(missing));
 
     const got = await call<{ id: string; root: string }>(
       'GET',
@@ -304,7 +305,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       created.body.data.id,
     );
     expect(got.body.code).toBe(0);
-    expect(got.body.data.root).toBe(missing);
+    expect(got.body.data.root).toBe(slashPathOf(missing));
   });
 
   it('renames a workspace via update', async () => {

@@ -50,6 +50,7 @@ import {
   stripRecencyField,
   type SessionProjectCounts,
 } from './sessionIndexModel';
+import { normalizeSessionDirs } from '#/session/workspaceContext/workspaceRoots';
 import { SessionIndexProjector, type ReconcileResult } from './sessionIndexProjector';
 import {
   listSessionIds,
@@ -499,7 +500,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const queued = this.mirror.pending().find((summary) => summary.id === id);
     if (queued !== undefined) return queued;
     const cached: unknown = await this.queryStore.get(sessionCollection(generation), id);
-    if (isSessionSummaryShape(cached)) return stripRecencyField(generation, cached);
+    if (isSessionSummaryShape(cached)) return normalizeSessionDirs(stripRecencyField(generation, cached));
     const summary = await this.getLegacy(id);
     if (summary !== undefined) this.mirror.record(summary);
     return summary;
@@ -527,7 +528,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const filter = { ...this.baseFilter(query), ...cursor.filter };
     const column = recencyColumn(generation);
     const notQueued = (record: SessionSummary): boolean => !queuedIds.has(record.id);
-    const strip = (record: SessionSummary): SessionSummary => stripRecencyField(generation, record);
+    const strip = (record: SessionSummary): SessionSummary => normalizeSessionDirs(stripRecencyField(generation, record));
     const fetchVisible = async (
       fetch: (fetchLimit: number) => Promise<SessionSummary[]>,
       fetchLimit: number,

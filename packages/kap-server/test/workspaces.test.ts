@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createGitWorktree, slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -125,7 +125,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     });
     expect(status).toBe(200);
     expect(body.code).toBe(0);
-    expect(body.data.root).toBe(root);
+    expect(body.data.root).toBe(slashPathOf(root));
     expect(body.data.name).toBe('proj');
     expect(body.data.id).toMatch(/^wm_[0-9a-f-]{36}$/);
     expect(body.data.additional_dirs).toEqual([]);
@@ -257,11 +257,11 @@ describe('server-v2 /api/v1/workspaces', () => {
       additional_dirs: [extraA, 'nested/extra-b'],
     });
     expect(created.body.code).toBe(0);
-    expect(created.body.data.additional_dirs).toEqual([extraA, extraB]);
+    expect(created.body.data.additional_dirs).toEqual([slashPathOf(extraA), slashPathOf(extraB)]);
 
     const { body } = await getJson<ListWire>('/api/v1/workspaces');
     const ws = body.data.items.find((w) => w.id === created.body.data.id);
-    expect(ws?.additional_dirs).toEqual([extraA, extraB]);
+    expect(ws?.additional_dirs).toEqual([slashPathOf(extraA), slashPathOf(extraB)]);
   });
 
   it('rejects invalid additional_dirs on create (40409 / 40006)', async () => {
@@ -277,8 +277,8 @@ describe('server-v2 /api/v1/workspaces', () => {
       additional_dirs: [root],
     });
     expect(dupRoot.body.code).toBe(40006);
-    expect(dupRoot.body.msg).toBe(`Duplicate source folder: ${root}`);
-    expect(dupRoot.body.details).toEqual([{ path: 'additional_dirs.0', directory: root }]);
+    expect(dupRoot.body.msg).toBe(`Duplicate source folder: ${slashPathOf(root)}`);
+    expect(dupRoot.body.details).toEqual([{ path: 'additional_dirs.0', directory: slashPathOf(root) }]);
 
     const extra = join(root, 'extra-dup');
     await mkdir(extra, { recursive: true });
@@ -287,8 +287,8 @@ describe('server-v2 /api/v1/workspaces', () => {
       additional_dirs: [extra, `${extra}/`],
     });
     expect(dup.body.code).toBe(40006);
-    expect(dup.body.msg).toBe(`Duplicate source folder: ${extra}`);
-    expect(dup.body.details).toEqual([{ path: 'additional_dirs.1', directory: extra }]);
+    expect(dup.body.msg).toBe(`Duplicate source folder: ${slashPathOf(extra)}`);
+    expect(dup.body.details).toEqual([{ path: 'additional_dirs.1', directory: slashPathOf(extra) }]);
   });
 
   it('replaces additional_dirs wholesale via PATCH and validates input', async () => {
@@ -308,11 +308,11 @@ describe('server-v2 /api/v1/workspaces', () => {
       name: 'renamed',
     });
     expect(replaced.body.code).toBe(0);
-    expect(replaced.body.data.additional_dirs).toEqual([extraB]);
+    expect(replaced.body.data.additional_dirs).toEqual([slashPathOf(extraB)]);
     expect(replaced.body.data.name).toBe('renamed');
 
     const nameOnly = await patchJson<WorkspaceWire>(`/api/v1/workspaces/${id}`, { name: 'again' });
-    expect(nameOnly.body.data.additional_dirs).toEqual([extraB]);
+    expect(nameOnly.body.data.additional_dirs).toEqual([slashPathOf(extraB)]);
 
     const cleared = await patchJson<WorkspaceWire>(`/api/v1/workspaces/${id}`, {
       additional_dirs: [],
@@ -329,15 +329,15 @@ describe('server-v2 /api/v1/workspaces', () => {
 
     const dupRoot = await patchJson<null>(`/api/v1/workspaces/${id}`, { additional_dirs: [root] });
     expect(dupRoot.body.code).toBe(40006);
-    expect(dupRoot.body.msg).toBe(`Duplicate source folder: ${root}`);
-    expect(dupRoot.body.details).toEqual([{ path: 'additional_dirs.0', directory: root }]);
+    expect(dupRoot.body.msg).toBe(`Duplicate source folder: ${slashPathOf(root)}`);
+    expect(dupRoot.body.details).toEqual([{ path: 'additional_dirs.0', directory: slashPathOf(root) }]);
 
     const dup = await patchJson<null>(`/api/v1/workspaces/${id}`, {
       additional_dirs: [extraB, `${extraB}/`],
     });
     expect(dup.body.code).toBe(40006);
-    expect(dup.body.msg).toBe(`Duplicate source folder: ${extraB}`);
-    expect(dup.body.details).toEqual([{ path: 'additional_dirs.1', directory: extraB }]);
+    expect(dup.body.msg).toBe(`Duplicate source folder: ${slashPathOf(extraB)}`);
+    expect(dup.body.details).toEqual([{ path: 'additional_dirs.1', directory: slashPathOf(extraB) }]);
 
     const unknown = await patchJson<null>(
       '/api/v1/workspaces/wm_00000000-0000-0000-0000-000000000000',
@@ -361,8 +361,8 @@ describe('server-v2 /api/v1/workspaces', () => {
     });
     expect(promoted.body.code).toBe(0);
     expect(promoted.body.data.id).toBe(id);
-    expect(promoted.body.data.root).toBe(extra);
-    expect(promoted.body.data.additional_dirs).toEqual([root]);
+    expect(promoted.body.data.root).toBe(slashPathOf(extra));
+    expect(promoted.body.data.additional_dirs).toEqual([slashPathOf(root)]);
 
     const session = await postJson<{ workspace_id: string; cwd: string }>(
       '/api/v1/sessions',
@@ -370,7 +370,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     );
     expect(session.body.code).toBe(0);
     expect(session.body.data.workspace_id).toBe(id);
-    expect(session.body.data.cwd).toBe(extra);
+    expect(session.body.data.cwd).toBe(slashPathOf(extra));
   });
 
   it('rejects promoting a folder of an implicit workspace with WORKSPACE_PRIMARY_IMMUTABLE (40941)', async () => {
@@ -388,8 +388,8 @@ describe('server-v2 /api/v1/workspaces', () => {
       const listed = await getJson<{ items: WorkspaceWire[] }>('/api/v1/workspaces');
       expect(listed.body.data.items.find((item) => item.id === id)).toMatchObject({
         kind: 'implicit',
-        root,
-        additional_dirs: [extra],
+        root: slashPathOf(root),
+        additional_dirs: [slashPathOf(extra)],
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -450,7 +450,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     await mkdir(join(root, '.kimi-code'), { recursive: true });
     await writeFile(
       join(root, '.kimi-code', 'local.toml'),
-      `[workspace]\nadditional_dir = ["${extra}"]\n`,
+      `[workspace]\nadditional_dir = [${JSON.stringify(extra)}]\n`,
       'utf8',
     );
 
@@ -458,7 +458,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       `/api/v1/workspaces/project-config-dirs?root=${encodeURIComponent(root)}`,
     );
     expect(read.body.code).toBe(0);
-    expect(read.body.data.additional_dirs).toEqual([extra]);
+    expect(read.body.data.additional_dirs).toEqual([slashPathOf(extra)]);
 
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
     expect(created.body.data.additional_dirs).toEqual([]);
@@ -864,31 +864,31 @@ describe('server-v2 /api/v1/workspaces', () => {
     });
     expect(promoted.body.code).toBe(0);
     await vi.waitFor(() => {
-      expect(instance.root).toBe(dirB);
-      expect(environment.workspaceRoots().workDir).toBe(dirB);
+      expect(instance.root).toBe(slashPathOf(dirB));
+      expect(environment.workspaceRoots().workDir).toBe(slashPathOf(dirB));
     });
     expect(manager.get(workspaceId)).toBe(instance);
     expect(instance.program).toBe(program);
-    expect(environment.workspaceRoots().additionalDirs).toEqual([dirA]);
+    expect(environment.workspaceRoots().additionalDirs).toEqual([slashPathOf(dirA)]);
     expect(identities()).toEqual(initialTools);
     for (const name of toolNames) expect(registry.resolve(name)).toBe(initialTools[name]);
     expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
     expect(await run('Read', { path: join(dirA, 'a.txt') })).toContain('from-a');
-    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
+    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${bashPathOf(dirB)}\n`));
     await run('Write', { path: 'new.txt', content: 'from-write' });
     await run('Edit', { path: 'new.txt', old_string: 'from-write', new_string: 'from-edit' });
     expect(await readFile(join(dirB, 'new.txt'), 'utf8')).toBe('from-edit');
 
     const explicitLive = getLiveSessionById((server as RunningServer).core.accessor, explicitSession.body.data.id)!;
     const explicitAgent = await ensureAgent(explicitLive);
-    expect(explicitAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
+    expect(explicitAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(slashPathOf(dirA));
 
     const added = await patchJson<WorkspaceWire>(`/api/v1/workspaces/${workspaceId}`, {
       additional_dirs: [dirA, dirC],
     });
     expect(added.body.code).toBe(0);
     await vi.waitFor(() => {
-      expect(environment.workspaceRoots().additionalDirs).toEqual([dirA, dirC]);
+      expect(environment.workspaceRoots().additionalDirs).toEqual([slashPathOf(dirA), slashPathOf(dirC)]);
     });
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
     for (const name of toolNames) expect(registry.resolve(name)).toBe(initialTools[name]);
@@ -899,14 +899,14 @@ describe('server-v2 /api/v1/workspaces', () => {
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
     environment = agent.accessor.get(IAgentEnvironmentService);
-    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirB, additionalDirs: [dirA, dirC] });
+    expect(environment.workspaceRoots()).toMatchObject({ workDir: slashPathOf(dirB), additionalDirs: [slashPathOf(dirA), slashPathOf(dirC)] });
     expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
-    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
+    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${bashPathOf(dirB)}\n`));
 
     const reloaded = await postJson<{ cwd: string }>(`/api/v1/sessions/${sessionId}:reload`);
     expect(reloaded.body.code).toBe(0);
-    expect(reloaded.body.data.cwd).toBe(dirB);
+    expect(reloaded.body.data.cwd).toBe(slashPathOf(dirB));
     session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
@@ -928,15 +928,15 @@ describe('server-v2 /api/v1/workspaces', () => {
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
     environment = agent.accessor.get(IAgentEnvironmentService);
-    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirB, additionalDirs: [dirA, dirC] });
+    expect(environment.workspaceRoots()).toMatchObject({ workDir: slashPathOf(dirB), additionalDirs: [slashPathOf(dirA), slashPathOf(dirC)] });
     for (const name of toolNames) expect(registry.resolve(name), name).toBeDefined();
     expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
-    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
+    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${bashPathOf(dirB)}\n`));
 
     const explicitResumed = (await resumeSessionById(server.core.accessor, explicitSession.body.data.id))!;
     const explicitResumedAgent = await ensureAgent(explicitResumed);
-    expect(explicitResumedAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
+    expect(explicitResumedAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(slashPathOf(dirA));
   }, 30_000);
 
   describe('project MCP servers of sessions in several working directories', () => {

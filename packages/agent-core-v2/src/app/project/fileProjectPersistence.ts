@@ -10,6 +10,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { TimeoutTimer } from '#/_base/utils/timer';
+import { normalizeDir } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import {
@@ -258,10 +259,10 @@ function parseProjectsDocument(value: unknown): {
     if (entry === null) throw projectsCorrupted(`invalid project entry ${id}`);
     workspaces.push({
       id,
-      root: entry.root,
+      root: normalizeDir(entry.root),
       name: entry.name,
       kind: entry.kind === 'managed' ? 'managed' : 'implicit',
-      additionalDirs: entry.additional_dirs ?? [],
+      additionalDirs: (entry.additional_dirs ?? []).map(normalizeDir),
       createdAt: parseTime(entry.created_at, now),
       lastOpenedAt: parseTime(entry.last_opened_at, now),
     });

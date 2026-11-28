@@ -12,7 +12,7 @@ import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { normalizeSessionDirs, resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 
 import {
@@ -344,7 +344,7 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
       ? legacyWorkDir
       : undefined);
   const { title, titleKind } = normalizedTitle;
-  return {
+  return normalizeSessionDirs({
     ...clean,
     id: clean.version === SESSION_META_VERSION ? clean.id : sessionId,
     version: SESSION_META_VERSION,
@@ -354,7 +354,7 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
     createdAt: toEpochMs(legacyCreatedAt),
     updatedAt: toEpochMs(legacyUpdatedAt),
     archived: clean.archived === true,
-  };
+  });
 }
 
 type LegacySessionMeta = Omit<SessionMeta, 'createdAt' | 'updatedAt'> & {

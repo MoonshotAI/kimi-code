@@ -195,6 +195,22 @@ describe('FileSessionIndex (legacy)', () => {
     expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'remote-without-host-cwd'))?.cwd).toBeUndefined();
   });
 
+  it('reads the directories of a local session written with Windows backslashes in forward-slash form and leaves a remote session as written', async () => {
+    await seedSession('pinned-windows', { cwd: 'C:\\repo\\app', environmentCwd: 'C:\\repo\\app-fix' });
+    await seedSession('remote-windows', { cwd: 'C:\\repo\\app', environmentId: 'ssh', environmentCwd: 'D:\\remote\\app' });
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const sessionsScope = stubBootstrap(homeDir).scope('sessions');
+
+    expect(await readSessionSummary(docs, sessionsScope, workspaceId, 'pinned-windows')).toMatchObject({
+      cwd: 'C:/repo/app-fix',
+      environmentCwd: 'C:/repo/app-fix',
+    });
+    expect(await readSessionSummary(docs, sessionsScope, workspaceId, 'remote-windows')).toMatchObject({
+      cwd: 'C:\\repo\\app',
+      environmentCwd: 'D:\\remote\\app',
+    });
+  });
+
   it('recovers the session environment binding from metadata', async () => {
     await seedSession('remote', {
       cwd: '/local/workspace',
@@ -1827,6 +1843,67 @@ describe('FileSessionIndex (read model)', () => {
     const page = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(page.items).toMatchObject([
       { id: 'remote', environmentId: 'dev-box', environmentCwd: '/remote/project' },
+    ]);
+  });
+
+  it('reports the directories of rows an older version indexed with Windows backslashes in forward-slash form', async () => {
+    await seedSession('pinned', { createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    const generation = (await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST))!.seq;
+    const legacy = {
+      id: 'pinned',
+      workspaceId,
+      cwd: 'C:\\repo\\app-fix',
+      environmentCwd: 'C:\\repo\\app-fix',
+      createdAt: 1,
+      updatedAt: 2,
+      archived: false,
+    };
+    await queryStore.batch([
+      {
+        kind: 'put',
+        collection: sessionCollection(generation),
+        key: 'pinned',
+        value: { ...legacy, [recencyColumn(generation)]: legacy.updatedAt },
+        columns: { [recencyColumn(generation)]: legacy.updatedAt },
+      },
+    ]);
+
+    expect(await store.get('pinned')).toMatchObject({ cwd: 'C:/repo/app-fix', environmentCwd: 'C:/repo/app-fix' });
+    expect((await store.listRecent({ workspaceIds: [workspaceId] })).items).toMatchObject([
+      { id: 'pinned', cwd: 'C:/repo/app-fix', environmentCwd: 'C:/repo/app-fix' },
+    ]);
+  });
+
+  it('reports the directories of sessions served from a scan cache written with Windows backslashes in forward-slash form', async () => {
+    await seedSession('pinned', { createdAt: 1, updatedAt: 2 });
+    const first = build();
+    await first.prepare();
+    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { ...manifest!, schemaVersion: 2 });
+    const scanCachePath = join(sessionsDir, '.index-cache', 'scan.json');
+    const scanCache = JSON.parse(await fsp.readFile(scanCachePath, 'utf8')) as {
+      version: number;
+      sessions: Record<string, { summary: Record<string, unknown> }>;
+    };
+    const cached = scanCache.sessions['pinned']!;
+    await fsp.writeFile(
+      scanCachePath,
+      JSON.stringify({
+        ...scanCache,
+        sessions: { pinned: { ...cached, summary: { ...cached.summary, cwd: 'C:\\repo\\app-fix', environmentCwd: 'C:\\repo\\app-fix' } } },
+      }),
+    );
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    const second = build();
+    await second.prepare();
+    expect((await second.listRecent({ workspaceIds: [workspaceId] })).items).toMatchObject([
+      { id: 'pinned', cwd: 'C:/repo/app-fix', environmentCwd: 'C:/repo/app-fix' },
     ]);
   });
 

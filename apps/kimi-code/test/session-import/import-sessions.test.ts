@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { createKimiHarness, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import { importedSessionDir } from '@moonshot-ai/migration-legacy';
-import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { createGitWorktree, slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { Command } from 'commander';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -529,8 +529,8 @@ describe('/import-sessions', () => {
 
     await importAll(root, harness, 'Imported 1 session.');
 
-    expect(await sessionsIn(harness, worktree)).toEqual([['ses_newer', worktree], ['ses_earlier', worktree]]);
-    expect(await roots()).toEqual([worktree]);
+    expect(await sessionsIn(harness, worktree)).toEqual([['ses_newer', slashPathOf(worktree)], ['ses_earlier', slashPathOf(worktree)]]);
+    expect(await roots()).toEqual([slashPathOf(worktree)]);
     expect(await readdir(join(kimiHome, 'sessions', own))).toEqual(['ses_earlier', 'ses_newer']);
   });
 });

@@ -10,7 +10,7 @@ import {
   type Scope,
   type Project,
 } from '@moonshot-ai/agent-core-v2';
-import { workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { normalizeDir, workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { isAbsolute, join, normalize, resolve } from 'node:path';
 
 import { z } from 'zod';
@@ -428,7 +428,7 @@ function resolveAdditionalDirPath(core: Scope, root: string, input: string): str
       : trimmed.startsWith('~/')
         ? join(osHomeDir, trimmed.slice(2))
         : trimmed;
-  return isAbsolute(expanded) ? normalize(expanded) : resolve(root, expanded);
+  return normalizeDir(isAbsolute(expanded) ? normalize(expanded) : resolve(root, expanded));
 }
 
 async function normalizeAdditionalDirsInput(
@@ -511,7 +511,7 @@ export async function toWireWorkspace(core: Scope, ws: Project): Promise<Workspa
 }
 
 function buildDuplicateDirEnvelope(index: number, dir: string, requestId: string) {
-  const directory = resolve(dir);
+  const directory = normalizeDir(resolve(dir));
   return errEnvelope(
     ErrorCode.WORKSPACE_DUPLICATE_DIR,
     `Duplicate source folder: ${directory}`,

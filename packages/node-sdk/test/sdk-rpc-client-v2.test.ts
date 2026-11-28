@@ -328,9 +328,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const inWorktree = await harness.createSession({ workDir: worktree });
 
       expect(await atMain.getEnvironment()).toEqual({ environmentId: 'local' });
-      expect(await inWorktree.getEnvironment()).toEqual({ environmentId: 'local', cwd: worktree });
+      expect(await inWorktree.getEnvironment()).toEqual({ environmentId: 'local', cwd: slashPathOf(worktree) });
       expect(await harness.resolveSessionEnvironment({ workDir: main })).toEqual({ environmentId: 'local', cwd: undefined });
-      expect(await harness.resolveSessionEnvironment({ workDir: worktree })).toEqual({ environmentId: 'local', cwd: worktree });
+      expect(await harness.resolveSessionEnvironment({ workDir: worktree })).toEqual({ environmentId: 'local', cwd: slashPathOf(worktree) });
     } finally {
       await harness.close();
     }
@@ -348,7 +348,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       environmentCwd: sessionDir,
     });
     try {
-      expect(await session.getEnvironment()).toEqual({ environmentId: 'local', cwd: sessionDir });
+      expect(await session.getEnvironment()).toEqual({ environmentId: 'local', cwd: slashPathOf(sessionDir) });
     } finally {
       await harness.close();
     }
@@ -458,7 +458,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         workDir,
         environmentId: 'local',
         environmentCwd: workDir,
-      })).toEqual({ environmentId: 'local', cwd: workDir });
+      })).toEqual({ environmentId: 'local', cwd: slashPathOf(workDir) });
       expect(client.engineAccessor.get(ISessionManager).list()).toHaveLength(0);
     } finally {
       await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
@@ -656,7 +656,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     try {
       await created.close();
       const restored = await harness.resumeSession({ id: created.id });
-      expect(await restored.getEnvironment()).toEqual({ environmentId: 'local', cwd: sessionDir });
+      expect(await restored.getEnvironment()).toEqual({ environmentId: 'local', cwd: slashPathOf(sessionDir) });
     } finally {
       await harness.close();
     }
@@ -2873,7 +2873,7 @@ key = "${titleOAuthRef.key}"
       const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
         projects: Record<string, { root: string; additional_dirs?: string[] }>;
       };
-      const project = Object.values(projects.projects).find((entry) => entry.root === workDir);
+      const project = Object.values(projects.projects).find((entry) => entry.root === slashPathOf(workDir));
       if (project === undefined) throw new Error('expected the session project');
       project.additional_dirs = [extraDir];
       await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
@@ -2895,7 +2895,7 @@ key = "${titleOAuthRef.key}"
             message.origin.variant === 'workspace_dirs_change',
         );
       expect(dirsReminders()).toHaveLength(1);
-      expect(JSON.stringify(dirsReminders()[0])).toContain(`Added directories: ${extraDir}.`);
+      expect(JSON.stringify(dirsReminders()[0])).toContain(`Added directories: ${slashPathOf(extraDir)}.`);
 
       const secondReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
       await client.reloadSession({ sessionId: 'ses_dirs_reload' });
@@ -2907,7 +2907,7 @@ key = "${titleOAuthRef.key}"
         projects: Record<string, { root: string; additional_dirs?: string[] }>;
       };
       const latestProject = Object.values(latestProjects.projects).find(
-        (entry) => entry.root === workDir,
+        (entry) => entry.root === slashPathOf(workDir),
       );
       if (latestProject === undefined) throw new Error('expected the latest session project');
       latestProject.additional_dirs = [extraDir, failureDir];
@@ -2923,7 +2923,7 @@ key = "${titleOAuthRef.key}"
       expect(failureReloadDirs).toHaveBeenCalledTimes(1);
       expect(dirsReminders()).toHaveLength(2);
       expect(JSON.stringify(dirsReminders().at(-1))).toContain(
-        `Added directories: ${failureDir}.`,
+        `Added directories: ${slashPathOf(failureDir)}.`,
       );
 
       await client.reloadSession({ sessionId: 'ses_dirs_reload' });
@@ -3781,7 +3781,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
 
         const asked = await harness.getWorkspaceTrustInfo(worktree, ofSession);
 
-        expect(asked).toMatchObject({ trusted: false, projectRoot: worktree });
+        expect(asked).toMatchObject({ trusted: false, projectRoot: slashPathOf(worktree) });
         expect(asked.gatedMcpServers.map((server) => server.name)).toEqual(['worktree-server']);
         expect((await harness.getWorkspaceTrustInfo(worktree)).trusted).toBe(true);
         await harness.trustWorkspace(worktree, ofSession);
@@ -3821,10 +3821,10 @@ describe('SDKRpcClientV2 workspace trust', () => {
         const inWorktree = await harness.getWorkspaceTrustInfo(worktree, { sessionId: 'ses_worktree' });
         const atPrimary = await harness.getWorkspaceTrustInfo(main, { sessionId: 'ses_primary' });
 
-        expect(inWorktree).toMatchObject({ trusted: false, projectRoot: main });
+        expect(inWorktree).toMatchObject({ trusted: false, projectRoot: slashPathOf(main) });
         expect(inWorktree.gatedMcpServers.map((server) => server.name)).toEqual(['worktree-server']);
         expect(inWorktree.instructionSources.agentsMdPaths).toEqual([await realpath(join(worktree, 'AGENTS.md'))]);
-        expect(atPrimary).toMatchObject({ trusted: false, projectRoot: main });
+        expect(atPrimary).toMatchObject({ trusted: false, projectRoot: slashPathOf(main) });
         expect(atPrimary.gatedMcpServers.map((server) => server.name)).toEqual(['main-server']);
         expect(atPrimary.instructionSources.agentsMdPaths).toEqual([]);
       } finally {

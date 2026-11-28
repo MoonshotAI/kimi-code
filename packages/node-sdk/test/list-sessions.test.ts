@@ -224,7 +224,7 @@ describe('KimiHarness.listSessions', () => {
 
       const [found] = await client.listSessions({ sessionId: 'ses_managed' });
 
-      expect(found).toMatchObject({ id: 'ses_managed', workDir: managedRoot });
+      expect(found).toMatchObject({ id: 'ses_managed', workDir: slashPathOf(managedRoot) });
       expect(await client.listSessions({ workDir: managedRoot })).toEqual([]);
       expect(await client.listSessions({ workDir: elsewhere, sessionId: 'ses_managed' })).toEqual([found]);
       expect(await client.listSessionsPage({ workDir: elsewhere, sessionId: 'ses_managed', limit: 1 })).toEqual({ items: [found] });
@@ -276,8 +276,8 @@ describe('KimiHarness.listSessions', () => {
       await workspaces.setPrimary(workspaceId, moved);
 
       const workDirOf = async (sessionId: string) => (await client.listSessions({ sessionId }))[0]?.workDir;
-      expect(await workDirOf('ses_root')).toBe(moved);
-      expect(await workDirOf('ses_worktree')).toBe(worktree);
+      expect(await workDirOf('ses_root')).toBe(slashPathOf(moved));
+      expect(await workDirOf('ses_worktree')).toBe(slashPathOf(worktree));
     } finally {
       await client.close();
     }
