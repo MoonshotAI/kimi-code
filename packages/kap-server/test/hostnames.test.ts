@@ -77,6 +77,13 @@ describe('isAllowedHost (default allow set)', () => {
     '[2001:db8::1',
     '[]',
     '[]:80',
+    '[2001:db8::1].evil.test',
+    '[2001:db8::1]:not-a-port',
+    '[2001:db8::1]:80:90',
+    '[2001:db8::1]extra',
+    '[2001:db8::1]:',
+    '[127.0.0.1]',
+    '[127.0.0.1]:80',
   ];
 
   for (const host of deny) {
@@ -202,6 +209,28 @@ describe('createHostCheck (onRequest hook)', () => {
     });
     expect(res.statusCode).toBe(200);
   });
+
+  const malformedBracketed = [
+    '[2001:db8::1].evil.test',
+    '[2001:db8::1]:not-a-port',
+    '[2001:db8::1]:80:90',
+    '[2001:db8::1]extra',
+    '[127.0.0.1]',
+    '[127.0.0.1]:80',
+  ];
+
+  for (const host of malformedBracketed) {
+    it(`rejects malformed bracketed Host ${host} with 40301`, async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/probe',
+        headers: { host },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = res.json() as Record<string, unknown>;
+      expect(body['code']).toBe(40301);
+    });
+  }
 });
 
 describe('startServer allowedHosts — env + option merge', () => {

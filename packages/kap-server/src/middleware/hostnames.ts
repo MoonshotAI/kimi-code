@@ -75,8 +75,11 @@ export function isAllowedHost(host: string | undefined, opts: HostCheckOptions):
   if (net.isIP(h) !== 0) {
     return true;
   }
-  if (h.startsWith('[') && h.endsWith(']') && net.isIP(h.slice(1, -1)) !== 0) {
-    return true;
+  if (h.startsWith('[') && h.endsWith(']') && net.isIP(h.slice(1, -1)) === 6) {
+    const after = host.slice(host.indexOf(']') + 1);
+    if (after.length === 0 || /^:\d+$/.test(after)) {
+      return true;
+    }
   }
   if (opts.boundHost !== undefined && h === stripPort(opts.boundHost)) {
     return true;
