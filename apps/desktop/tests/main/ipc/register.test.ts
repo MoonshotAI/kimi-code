@@ -140,6 +140,9 @@ const mocks = vi.hoisted(() => ({
   sendToRenderer: vi.fn(),
   captureScreenshot: vi.fn(async () => ({ status: 'cancelled' })),
   cancelScreenshotCapture: vi.fn(),
+  getSystemPermissions: vi.fn(async (query: { computerUseInstalled: boolean }) => ({ platform: 'darwin', computerUseInstalled: query.computerUseInstalled, items: [] })),
+  requestSystemPermission: vi.fn(async () => ({ platform: 'darwin', computerUseInstalled: false, items: [] })),
+  openSystemPermissionSettings: vi.fn(async () => ({ platform: 'darwin', computerUseInstalled: false, items: [] })),
 }));
 
 vi.mock('../../../src/main/browser/browser-control', () => ({
@@ -337,6 +340,11 @@ vi.mock('../../../src/main/app/ui-state', async importOriginal => ({
 vi.mock('../../../src/main/system/power-save-blocker', () => ({
   isPowerSaveBlockerEnabled: mocks.isPowerSaveBlockerEnabled,
   setPowerSaveBlockerEnabled: mocks.setPowerSaveBlockerEnabled,
+}));
+vi.mock('../../../src/main/system/permissions-service', () => ({
+  getSystemPermissions: mocks.getSystemPermissions,
+  requestSystemPermission: mocks.requestSystemPermission,
+  openSystemPermissionSettings: mocks.openSystemPermissionSettings,
 }));
 vi.mock('../../../src/main/system/prevent-lid-sleep', () => ({
   getPreventSleepState: mocks.getPreventSleepState,
@@ -1732,5 +1740,43 @@ describe('quitConfirmResponse', () => {
     handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, 'quit');
     handler(IPC.quitConfirmResponse)({ sender: {} }, { choice: 'quit', requestId: 1 });
     expect(mocks.resolveQuitConfirmResponse).not.toHaveBeenCalled();
+  });
+});
+
+describe('systemPermissions IPC', () => {
+  it('serves snapshots only to the main renderer and normalizes the query', async () => {
+    const mainSender = {};
+    mocks.getMainWindow.mockReturnValue({ isDestroyed: () => false, webContents: mainSender });
+    await expect(handler(IPC.systemPermissionsGetAll)({ sender: mainSender }, {
+      computerUseInstalled: true,
+      notificationPermission: 'denied',
+    })).resolves.toEqual({ platform: 'darwin', computerUseInstalled: true, items: [] });
+    expect(mocks.getSystemPermissions).toHaveBeenLastCalledWith({
+      computerUseInstalled: true,
+      notificationPermission: 'denied',
+    });
+    await handler(IPC.systemPermissionsGetAll)({ sender: mainSender }, { computerUseInstalled: 'yes', notificationPermission: 'bad' });
+    expect(mocks.getSystemPermissions).toHaveBeenLastCalledWith({
+      computerUseInstalled: false,
+      notificationPermission: 'default',
+    });
+    expect(() => handler(IPC.systemPermissionsGetAll)({ sender: {} }, {})).toThrow('unknown sender');
+  });
+
+  it('validates permission ids and senders for request and openSettings', async () => {
+    const mainSender = {};
+    mocks.getMainWindow.mockReturnValue({ isDestroyed: () => false, webContents: mainSender });
+    await handler(IPC.systemPermissionsRequest)({ sender: mainSender }, 'microphone', { computerUseInstalled: false, notificationPermission: 'default' });
+    expect(mocks.requestSystemPermission).toHaveBeenCalledExactlyOnceWith('microphone', {
+      computerUseInstalled: false,
+      notificationPermission: 'default',
+    });
+    await handler(IPC.systemPermissionsOpenSettings)({ sender: mainSender }, 'local-network', null);
+    expect(mocks.openSystemPermissionSettings).toHaveBeenCalledExactlyOnceWith('local-network', {
+      computerUseInstalled: false,
+      notificationPermission: 'default',
+    });
+    expect(() => handler(IPC.systemPermissionsRequest)({ sender: mainSender }, 'full-disk-access', {})).toThrow('invalid permission id');
+    expect(() => handler(IPC.systemPermissionsOpenSettings)({ sender: {} }, 'camera', {})).toThrow('unknown sender');
   });
 });

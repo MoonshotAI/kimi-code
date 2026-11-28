@@ -32,6 +32,7 @@ export * from './usePanelScroll';
 export * from './useWorkspaceTrust';
 export * from './useWorkspaceFolderPicker';
 export * from './usePlugins';
+export * from './useSystemPermissions';
 export * from './useMcpAuthorization';
 
 export * from './usePanelTabDrag';

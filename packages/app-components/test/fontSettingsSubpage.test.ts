@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createApp, defineComponent, h, nextTick, type App } from 'vue';
+import { createApp, defineComponent, h, inject, nextTick, type App } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
@@ -15,7 +15,7 @@ vi.mock('../src/settings/FontSettingsPreview.vue', () => ({
 
 import FontSettingsPage from '../src/settings/FontSettingsPage.vue';
 import FontSettingsRow from '../src/settings/FontSettingsRow.vue';
-import { useSettingsSubpage } from '../src/settings/useSettingsSubpage';
+import { SettingsSubpageHostKey, useSettingsSubpage, type SettingsSubpageHost } from '../src/settings/useSettingsSubpage';
 
 let app: App | null = null;
 let host: HTMLDivElement | null = null;
@@ -232,6 +232,39 @@ describe('settings child page height', () => {
     state().reset();
     await frames(8);
     expect(state().fitHeight.value).toBeNull();
+  });
+});
+
+describe('useSettingsSubpage host inheritance', () => {
+  it('keeps the parent scroller host when a nested subpage has no scroller of its own', async () => {
+    const region = document.createElement('div');
+    region.className = 'settings-region';
+    const header = document.createElement('header');
+    header.className = 'settings-region-header';
+    const scroller = document.createElement('div');
+    scroller.scrollTop = 140;
+    region.append(header, scroller);
+    document.body.append(region);
+    let childHost: SettingsSubpageHost | null = null;
+    const Child = defineComponent({
+      setup() {
+        useSettingsSubpage<string>();
+        childHost = inject(SettingsSubpageHostKey, null);
+        return () => h('div');
+      },
+    });
+    const Parent = defineComponent({
+      setup() {
+        useSettingsSubpage<string>(() => scroller);
+        return () => h(Child);
+      },
+    });
+    const nested = createApp(Parent);
+    nested.mount(scroller);
+    await nextTick();
+    expect(childHost?.header()).toBe(header);
+    nested.unmount();
+    region.remove();
   });
 });
 

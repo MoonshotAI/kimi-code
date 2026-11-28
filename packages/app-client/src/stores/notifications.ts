@@ -39,21 +39,30 @@ export const useNotificationsStore = defineStore('kimi.notifications', () => {
     typeof Notification !== 'undefined' ? Notification.permission : 'denied',
   );
 
+  function syncPermission(): string {
+    const permission = typeof Notification !== 'undefined' ? Notification.permission : 'denied';
+    notifyPermission.value = permission;
+    return permission;
+  }
+
+  async function requestPermission(): Promise<string> {
+    if (typeof Notification === 'undefined') return 'denied';
+    if (Notification.permission !== 'default') return syncPermission();
+    try {
+      notifyPermission.value = await Notification.requestPermission();
+    } catch {
+      syncPermission();
+    }
+    return notifyPermission.value;
+  }
+
   async function setNotifyEnabled(on: boolean): Promise<void> {
     if (!on) {
       notifyEnabled.value = false;
       safeSetString(STORAGE_KEYS.notifyEnabled, '0');
       return;
     }
-    if (typeof Notification === 'undefined') return;
-    let perm = Notification.permission;
-    if (perm === 'default') {
-      try {
-        perm = await Notification.requestPermission();
-      } catch {}
-    }
-    notifyPermission.value = perm;
-    if (perm !== 'granted') return;
+    if ((await requestPermission()) !== 'granted') return;
     notifyEnabled.value = true;
     safeSetString(STORAGE_KEYS.notifyEnabled, '1');
   }
@@ -66,11 +75,10 @@ export const useNotificationsStore = defineStore('kimi.notifications', () => {
   function maybeNotify(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
     if (!notifyEnabled.value) return;
     if (typeof Notification === 'undefined') return;
-    const perm = Notification.permission;
+    const perm = syncPermission();
     if (perm === 'denied') return;
     if (perm === 'default') {
-      void Notification.requestPermission().then((p) => {
-        notifyPermission.value = p;
+      void requestPermission().then((p) => {
         if (p === 'granted') fire(ctx, copy, tag);
       });
       return;
@@ -129,6 +137,8 @@ export const useNotificationsStore = defineStore('kimi.notifications', () => {
     notifyEnabled,
     notifySound,
     notifyPermission,
+    syncPermission,
+    requestPermission,
     setNotifyEnabled,
     setNotifySound,
     maybeNotifyCompletion,
