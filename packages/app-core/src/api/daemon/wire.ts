@@ -776,3 +776,8 @@ export type WireEvent =
   | WireCapabilityChangedEvent
   | WireHostChangedEvent
   | WireEventUnknown;
+
+export interface WireMediaSignature {
+  signature: string;
+  expires_at: string;
+}

@@ -111,6 +111,7 @@ const sessionIdAndTailParamSchema = z.object({
 
 const fsDownloadQuerySchema = z.object({
   allow_external_symlinks: z.enum(['true', 'false']).optional(),
+  signature: z.string().min(1).optional(),
 });
 
 const workspaceFsListBodySchema = fsListRequestSchema

@@ -23,6 +23,7 @@ export default {
   actual: 'Actual',
   pdfNoPreview: 'This PDF cannot be embedded here. Download it to view.',
   imageNoPreview: 'Image file · {mime} · {size} · preview unavailable',
+  videoNoPreview: 'Video file · {mime} · {size} · preview unavailable',
   binaryNoPreview: "Can't preview this file ({mime} · {size}). Open with another app",
   unknownType: 'unknown type',
   copyCode: 'Copy code',

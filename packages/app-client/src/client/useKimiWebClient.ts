@@ -3709,6 +3709,7 @@ export function useKimiWebClient() {
     readWorkspaceFileBlob: filesStore().readWorkspaceFileBlob,
     probeWorkspacePath: filesStore().probeWorkspacePath,
     getFileDownloadUrl: filesStore().getFileDownloadUrl,
+    getSignedFileDownloadUrl: filesStore().getSignedFileDownloadUrl,
     openWorkspaceFile: filesStore().openWorkspaceFile,
     revealWorkspaceFile: filesStore().revealWorkspaceFile,
     resolveImageUrl: filesStore().resolveImageUrl,

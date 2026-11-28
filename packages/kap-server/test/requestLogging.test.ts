@@ -74,6 +74,26 @@ describe('requestLogging', () => {
     expect(entry['req']).toMatchObject({ method: 'GET', url: '/api/v1/healthz' });
     expect(typeof entry['responseTime']).toBe('number');
   });
+
+  it('redacts the media signature from logged URLs', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${String(server!.port)}/api/v1/healthz?signature=super-secret`,
+    );
+    expect(res.status).toBe(200);
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const completed = parseEntries(lines).filter((entry) => entry['msg'] === 'request completed');
+    const entry = completed.findLast((candidate) => {
+      const req = candidate['req'] as { url?: string } | undefined;
+      return req?.url?.includes('signature=') === true;
+    });
+    assert(entry !== undefined);
+
+    const req = entry['req'] as { url: string };
+    expect(new URL(req.url, 'http://127.0.0.1').searchParams.get('signature')).toBe('[redacted]');
+    expect(req.url).not.toContain('super-secret');
+  });
 });
 
 describe('extractEnvelopeCode', () => {

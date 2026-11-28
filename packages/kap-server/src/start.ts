@@ -98,6 +98,7 @@ import {
 } from '@moonshot-ai/remote-control';
 
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
+import { createMediaSignatureService } from './services/mediaSignature/mediaSignatureService';
 import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
@@ -200,6 +201,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     authTokenService = createAuthTokenService({ tokenStore, passwordHash });
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
+  const mediaSignatures = createMediaSignatureService();
   const registration: InstanceRegistration =
     opts.socketPath !== undefined || opts.skipInstanceRegistry === true
       ? { serverId: 'socket', update: async () => {}, release: async () => {} }
@@ -350,7 +352,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   if (!disableAuth) {
     app.addHook(
       'onRequest',
-      createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
+      createAuthHook(authTokenService, {
+        limiter: authFailureLimiter,
+        validateCredential,
+        validateMediaSignature: (target, candidate) => mediaSignatures.validate(target, candidate),
+      }),
     );
   } else if (opts.disableAuth === true) {
     logger.warn(
@@ -661,6 +667,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       hostBridges,
       conversations,
       sessionRating,
+      mediaSignatures,
       dangerousBypassAuth: opts.disableAuth === true,
       managedHost: opts.managedBy === 'ensure-daemon',
       webTitle: opts.webTitle,

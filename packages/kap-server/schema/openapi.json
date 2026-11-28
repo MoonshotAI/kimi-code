@@ -15777,6 +15777,15 @@
             }
           },
           {
+            "in": "query",
+            "name": "signature",
+            "required": false,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -16302,6 +16311,101 @@
         },
         "tags": [
           "interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/media-signature": {
+      "get": {
+        "description": "Issue a short-lived signature bound to one workspace file for bearer-less range reads",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "allow_external_symlinks",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "expires_at": {},
+                            "signature": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "signature",
+                            "expires_at"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorWireVersionTooLow"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "fs"
         ]
       }
     },

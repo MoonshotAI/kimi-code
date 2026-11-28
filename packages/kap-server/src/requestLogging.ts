@@ -1,5 +1,16 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
+import { MEDIA_SIGNATURE_QUERY_PARAM } from './services/mediaSignature/constants';
+
+function redactSignature(rawUrl: string): string {
+  const queryIndex = rawUrl.indexOf('?');
+  if (queryIndex < 0) return rawUrl;
+  const params = new URLSearchParams(rawUrl.slice(queryIndex + 1));
+  if (!params.has(MEDIA_SIGNATURE_QUERY_PARAM)) return rawUrl;
+  params.set(MEDIA_SIGNATURE_QUERY_PARAM, '[redacted]');
+  return `${rawUrl.slice(0, queryIndex)}?${params.toString()}`;
+}
+
 export function extractEnvelopeCode(payload: unknown): number | undefined {
   if (typeof payload !== 'string') {
     return undefined;
@@ -28,7 +39,7 @@ export function registerRequestLogging(app: FastifyInstance): void {
       {
         req: {
           method: req.method,
-          url: req.url,
+          url: redactSignature(req.url),
           version: req.headers['accept-version'],
           host: req.host,
           remoteAddress: req.ip,

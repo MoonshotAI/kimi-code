@@ -1,0 +1,5 @@
+export const MEDIA_SIGNATURE_TTL_MS = 30 * 60 * 1000;
+
+export const MEDIA_SIGNATURE_REUSE_THRESHOLD_MS = 29 * 60 * 1000;
+
+export const MEDIA_SIGNATURE_QUERY_PARAM = 'signature';

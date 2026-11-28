@@ -8,6 +8,7 @@ import { FILE_PREVIEW_MAX_BYTES, type FileData, type FilePreviewRequest } from '
 export interface FilePreviewClient {
   status: Ref<{ cwd: string }>;
   getFileDownloadUrl(path: string): string | null;
+  getSignedFileDownloadUrl(path: string): Promise<{ url: string; expiresAt: number } | null>;
   readHostFileContent(path: string): Promise<FileData>;
   readFileContent(path: string): Promise<FileData | null>;
   readWorkspaceFileBlob(path: string, opts?: { prefixBytes?: number }): Promise<Blob | null>;
@@ -18,6 +19,7 @@ export interface FilePreviewClient {
 const FS_PATH_NOT_FOUND = 40409;
 const FS_TOO_LARGE = 41302;
 const FS_TOO_LARGE_SIZE_PATTERN = /\((\d+) bytes >/;
+const MEDIA_SIGNATURE_RENEW_LEAD_MS = 60_000;
 
 function isNotFoundError(err: unknown): boolean {
   return isDaemonApiError(err) && err.code === FS_PATH_NOT_FOUND;
@@ -45,6 +47,11 @@ const MEDIA_PREVIEW_MIME: Readonly<Record<string, string>> = {
   '.ico': 'image/x-icon',
   '.avif': 'image/avif',
   '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/x-m4v',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
 };
 
 function mediaMimeForPath(path: string): string | undefined {
@@ -93,21 +100,41 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
 
   const previewMediaUrl = ref<string | null>(null);
   let previewObjectUrl: string | null = null;
+  let mediaRenewalTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function setMediaBlob(blob: Blob | null): void {
+  function cancelMediaRenewal(): void {
+    if (mediaRenewalTimer !== null) {
+      clearTimeout(mediaRenewalTimer);
+      mediaRenewalTimer = null;
+    }
+  }
+
+  function revokeMediaUrl(): void {
     if (previewObjectUrl !== null) {
       URL.revokeObjectURL(previewObjectUrl);
       previewObjectUrl = null;
     }
-    if (blob !== null && typeof URL.createObjectURL === 'function') {
-      previewObjectUrl = URL.createObjectURL(blob);
+  }
+
+  function setMediaUrl(url: string | null): void {
+    revokeMediaUrl();
+    previewMediaUrl.value = url;
+  }
+
+  function setMediaBlob(blob: Blob | null): void {
+    revokeMediaUrl();
+    if (blob === null || typeof URL.createObjectURL !== 'function') {
+      previewMediaUrl.value = null;
+      return;
     }
+    previewObjectUrl = URL.createObjectURL(blob);
     previewMediaUrl.value = previewObjectUrl;
   }
 
   if (getCurrentScope() !== undefined) {
     onScopeDispose(() => {
       previewRequestSeq += 1;
+      cancelMediaRenewal();
       setMediaBlob(null);
     });
   }
@@ -186,6 +213,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
     opts?: { preserveCurrent?: boolean },
   ): Promise<void> {
     const requestSeq = ++previewRequestSeq;
+    cancelMediaRenewal();
     const preserve = opts?.preserveCurrent === true && previewFile.value !== null;
     if (!preserve) previewRoot.value = root?.value ?? client.status.value.cwd;
     if (preserve) {
@@ -270,7 +298,9 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
 
     const mediaMime = mediaMimeForPath(normalized.path);
     if (mediaMime !== undefined) {
-      await openStreamedMediaPreview(normalized.path, mediaMime, requestSeq, preserve);
+      await (mediaMime.startsWith('video/')
+        ? openSignedMediaPreview(normalized.path, mediaMime, requestSeq, preserve)
+        : openStreamedMediaPreview(normalized.path, mediaMime, requestSeq, preserve));
       return;
     }
 
@@ -318,7 +348,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
       const blob = await client.readWorkspaceFileBlob(toClientPath(path));
       if (requestSeq !== previewRequestSeq) return;
       if (blob) {
-        setMediaBlob(blob);
+        setMediaBlob(blob.slice(0, blob.size, mime));
         previewFile.value = {
           path,
           content: '',
@@ -343,6 +373,63 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
         settleLoadingState(preserve);
       }
     }
+  }
+
+  async function openSignedMediaPreview(
+    path: string,
+    mime: string,
+    requestSeq: number,
+    preserve: boolean,
+  ): Promise<void> {
+    try {
+      const signed = await client.getSignedFileDownloadUrl(toClientPath(path));
+      if (requestSeq !== previewRequestSeq) return;
+      if (signed === null) {
+        await openStreamedMediaPreview(path, mime, requestSeq, preserve);
+        return;
+      }
+      setMediaUrl(signed.url);
+      previewFile.value = {
+        path,
+        content: '',
+        encoding: 'base64',
+        mime,
+        isBinary: true,
+        size: 0,
+      };
+      previewLoadedSeq.value += 1;
+      scheduleMediaRenewal(path, signed.expiresAt, requestSeq);
+    } catch (err) {
+      if (requestSeq !== previewRequestSeq) return;
+      if (!preserve) {
+        previewError.value = isNotFoundError(err)
+          ? workspaceNotFoundMessage(path)
+          : t('filePreview.errors.loadFailed');
+      }
+    } finally {
+      if (requestSeq === previewRequestSeq) {
+        settleLoadingState(preserve);
+      }
+    }
+  }
+
+  function scheduleMediaRenewal(path: string, expiresAt: number, requestSeq: number): void {
+    cancelMediaRenewal();
+    const delay = Math.max(0, expiresAt - Date.now() - MEDIA_SIGNATURE_RENEW_LEAD_MS);
+    mediaRenewalTimer = setTimeout(() => {
+      mediaRenewalTimer = null;
+      void renewMediaSignature(path, requestSeq);
+    }, delay);
+  }
+
+  async function renewMediaSignature(path: string, requestSeq: number): Promise<void> {
+    if (requestSeq !== previewRequestSeq) return;
+    try {
+      const signed = await client.getSignedFileDownloadUrl(toClientPath(path));
+      if (requestSeq !== previewRequestSeq || signed === null) return;
+      setMediaUrl(signed.url);
+      scheduleMediaRenewal(path, signed.expiresAt, requestSeq);
+    } catch {}
   }
 
   async function openTruncatedTextPreview(
@@ -399,6 +486,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
     previewError.value = null;
     previewLoading.value = false;
     previewRefreshing.value = false;
+    cancelMediaRenewal();
     setMediaBlob(null);
   }
 

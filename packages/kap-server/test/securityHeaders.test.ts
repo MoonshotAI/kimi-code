@@ -67,6 +67,13 @@ describe('createSecurityHeadersHook', () => {
     expect(directives.get('connect-src')).toEqual(["'self'", 'data:', 'blob:']);
   });
 
+  it('allows blob-backed media elements to play in the web UI', async () => {
+    const { headers, reply } = captureHeaders();
+    await createSecurityHeadersHook({ tls: false })({} as never, reply as never, 'payload');
+    const directives = parseCsp(headers.get('content-security-policy') ?? '');
+    expect(directives.get('media-src')).toContain('blob:');
+  });
+
   it('emits HSTS only when TLS is terminated at the server', async () => {
     const plain = captureHeaders();
     await createSecurityHeadersHook({ tls: false })({} as never, plain.reply as never, '');

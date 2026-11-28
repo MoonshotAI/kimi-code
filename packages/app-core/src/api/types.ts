@@ -1153,6 +1153,7 @@ export interface KimiWebApi {
   getPullRequestBatch(sessionId: string, input: { roots: string[] }, options?: ReadRequestOptions): Promise<PullRequestBatchResult>;
   getFileDiff(sessionId: string, path: string, input?: { root?: string }, options?: ReadRequestOptions): Promise<{ path: string; diff: string; truncated: boolean }>;
   getFileDownloadUrl(sessionId: string, path: string, opts?: { allowExternalSymlinks?: boolean }): string;
+  getSessionMediaSignature(sessionId: string, path: string, opts?: { allowExternalSymlinks?: boolean }): Promise<{ signature: string; expiresAt: number }>;
   downloadSessionFile(sessionId: string, path: string, opts?: { prefixBytes?: number; allowExternalSymlinks?: boolean }): Promise<Blob>;
   openFile(sessionId: string, input: { path: string; line?: number }): Promise<{ opened: true }>;
   revealFile(sessionId: string, input: { path: string }): Promise<{ revealed: true }>;
