@@ -568,6 +568,17 @@ function failuresOf(screen: Screen): string[] {
   });
 }
 
+function notices(screen: Screen, text: string): number {
+  const rows: string[] = [];
+  let inUserMessage = false;
+  for (const row of screen.transcript) {
+    if (row.startsWith(`${ENTRY_INDENT}${USER_MARK} `)) inUserMessage = true;
+    else if (row.trim() === '' || startsEntry(row)) inUserMessage = false;
+    if (!inUserMessage) rows.push(row);
+  }
+  return squash(rows.join('\n')).split(squash(text)).length - 1;
+}
+
 function userMessages(screen: Screen, text: string): number {
   return blocksOf(screen).filter((block) => block.mark === USER_MARK && squash(block.text).startsWith(squash(text))).length;
 }
@@ -1005,6 +1016,17 @@ class TuiDriver implements SurfaceDriver<'tui'> {
         `expectTranscript() found ${JSON.stringify(text)} ${times} times in the conversation; it must appear exactly once.\n${conversationEntries(settled.found)}`,
         settled.found,
       );
+    }
+  }
+
+  async expectNotice(text: string): Promise<void> {
+    const settled = await this.settle(`a notice showing ${JSON.stringify(text)}`, (screen) => (notices(screen, text) > 0 ? screen : undefined));
+    if ('over' in settled) {
+      throw this.failure(`expectNotice() found no notice showing ${JSON.stringify(text)} in the transcript. It shows:\n${settled.over.transcript.join('\n')}`, settled.over);
+    }
+    const times = notices(settled.found, text);
+    if (times > 1) {
+      throw this.failure(`expectNotice() found ${times} notices showing ${JSON.stringify(text)}; it must appear exactly once.\n${settled.found.transcript.join('\n')}`, settled.found);
     }
   }
 

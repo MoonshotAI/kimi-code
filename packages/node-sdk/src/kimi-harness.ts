@@ -518,6 +518,11 @@ export class KimiHarness {
     return this.rpc.onConfigSectionChanged(listener);
   }
 
+  /** Called with the full current warning list whenever it changes, e.g. after config.toml is edited and reloaded. */
+  onConfigDiagnosticsChanged(listener: (diagnostics: ConfigDiagnostics) => void): Unsubscribe {
+    return this.rpc.onConfigDiagnosticsChanged(listener);
+  }
+
   async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     return this.rpc.getExperimentalFeatures();
   }

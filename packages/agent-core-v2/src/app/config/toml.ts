@@ -1,4 +1,5 @@
 import { TomlError } from 'smol-toml';
+import { z } from 'zod';
 
 import type { IConfigRegistry } from './config';
 import { describeUnknownError, isPlainObject } from './configPure';
@@ -85,6 +86,48 @@ export function applySectionToToml(
   } else {
     delete rawSnake[snakeKey];
   }
+}
+
+export function describeInvalidSection(domain: string, rawSection: unknown, error: unknown): string {
+  const key = tomlKeyText(camelToSnake(domain));
+  const name = isPlainObject(rawSection) ? `[${key}]` : key;
+  return `Ignored invalid config section ${name}: ${describeSectionIssues(rawSection, error)}`;
+}
+
+function describeSectionIssues(rawSection: unknown, error: unknown): string {
+  if (!(error instanceof z.ZodError) || error.issues.length === 0) {
+    return describeUnknownError(error);
+  }
+  return error.issues
+    .map((issue) => {
+      const path = tomlKeyPath(rawSection, issue.path);
+      return path === '' ? issue.message : `${path}: ${issue.message}`;
+    })
+    .join('; ');
+}
+
+function tomlKeyPath(rawSection: unknown, path: readonly PropertyKey[]): string {
+  let node = rawSection;
+  let text = '';
+  for (const segment of path) {
+    if (typeof segment === 'number') {
+      text += `[${String(segment)}]`;
+      node = Array.isArray(node) ? node[segment] : undefined;
+      continue;
+    }
+    const key = tomlKeyIn(node, String(segment));
+    text += text === '' ? tomlKeyText(key) : `.${tomlKeyText(key)}`;
+    node = isPlainObject(node) ? node[key] : undefined;
+  }
+  return text;
+}
+
+function tomlKeyIn(node: unknown, key: string): string {
+  return isPlainObject(node) && Object.hasOwn(node, key) ? key : camelToSnake(key);
+}
+
+function tomlKeyText(key: string): string {
+  return /^[\w-]+$/.test(key) ? key : JSON.stringify(key);
 }
 
 export function describeTomlSyntaxError(error: unknown): string {

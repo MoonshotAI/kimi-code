@@ -549,7 +549,7 @@ function makeCore(
         return { get: async () => ({ root: '/repo/a' }) };
       }
       if (token === IConfigService) {
-        return { ready: Promise.resolve(), getAll: () => ({}) };
+        return { ready: Promise.resolve(), getAll: () => ({}), diagnostics: () => [] };
       }
       if (token === IProjectSessions) {
         return { listRecent: async () => [], count: async () => 3 };
@@ -1007,6 +1007,55 @@ describe('SessionEventBroadcaster', () => {
         warnings,
       });
       expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('replays the current config warnings only to the target that just connected', async () => {
+      const brokenConfigCore = {
+        accessor: {
+          get: (token: unknown) =>
+            token === IConfigService
+              ? {
+                  ready: Promise.resolve(),
+                  getAll: () => ({}),
+                  diagnostics: () => [
+                    { domain: 'permission', severity: 'warning', message: 'Ignored invalid config section [permission]: rules[0]: bad rule' },
+                    { severity: 'warning', message: 'Environment variable OLD_VAR is deprecated; use NEW_VAR instead.' },
+                  ],
+                }
+              : core.accessor.get(token as Parameters<Scope['accessor']['get']>[0]),
+        },
+      } as unknown as Scope;
+      const broadcaster = new SessionEventBroadcaster({ core: brokenConfigCore, conversations: conversationService() });
+      const first = collectingTarget();
+      broadcaster.addGlobalTarget(first.target);
+      await vi.waitFor(() => expect(first.envelopes).toHaveLength(1));
+
+      const second = collectingTarget();
+      broadcaster.addGlobalTarget(second.target);
+      await vi.waitFor(() => expect(second.envelopes).toHaveLength(1));
+      await settle();
+
+      expect(first.envelopes).toHaveLength(1);
+      expect(second.envelopes[0]).toMatchObject({
+        type: 'config',
+        config: { providers: {} },
+        warnings: [
+          { domain: 'permission', message: 'Ignored invalid config section [permission]: rules[0]: bad rule' },
+          { message: 'Environment variable OLD_VAR is deprecated; use NEW_VAR instead.' },
+        ],
+      });
+      expect(second.deliveries).toEqual(['immediate']);
+      await broadcaster.close();
+    });
+
+    it('replays nothing to a connecting target while the config has no warnings', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.plugin.changed', payload: {} });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({ type: 'invalidated', kind: 'plugins' });
     });
 
     it('fans out event.plugin.changed and event.capability.changed to global targets', async () => {

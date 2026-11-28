@@ -86,6 +86,28 @@ describe('warningsStore list operations', () => {
     ]);
   });
 
+  it('syncConfigWarnings shows warnings that appear, keeps closed ones closed and removes fixed ones', () => {
+    const store = warningsStore();
+    const permission = { severity: 'warning' as const, title: 'permission', message: 'Ignored invalid config section [permission]: rules[0]: bad', persistent: true };
+    const loop = { severity: 'warning' as const, title: 'loopControl', message: 'Ignored invalid config section [loop_control]: max_steps_per_turn: bad', persistent: true };
+    store.pushWarning({ severity: 'info', title: 'unrelated' });
+
+    store.syncConfigWarnings([permission]);
+    store.syncConfigWarnings([permission]);
+    expect(store.warnings.map((notice) => notice.title)).toEqual(['unrelated', 'permission']);
+
+    store.dismissWarning(store.warnings[1]);
+    store.syncConfigWarnings([permission, loop]);
+    expect(store.warnings.map((notice) => notice.title)).toEqual(['unrelated', 'loopControl']);
+
+    store.syncConfigWarnings([permission]);
+    expect(store.warnings.map((notice) => notice.title)).toEqual(['unrelated']);
+
+    store.syncConfigWarnings([]);
+    store.syncConfigWarnings([permission]);
+    expect(store.warnings.map((notice) => notice.title)).toEqual(['unrelated', 'permission']);
+  });
+
   it('keeps an explicitly assigned notice position', () => {
     const store = warningsStore();
     store.pushWarning({ severity: 'info', title: 'a', position: 'top-right' });

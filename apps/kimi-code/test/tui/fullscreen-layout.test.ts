@@ -239,7 +239,7 @@ function mountFullscreenKimiTui(): { driver: ActivityDockDriver; vt: VirtualTerm
     workDir: '/tmp/kimi-test',
   };
   const driver = new KimiTUI(
-    { onConfigSectionChanged: () => () => {} } as never,
+    { onConfigSectionChanged: () => () => {}, onConfigDiagnosticsChanged: () => () => {} } as never,
     input,
   ) as unknown as ActivityDockDriver;
   const { state } = driver;

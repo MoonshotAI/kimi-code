@@ -1,6 +1,7 @@
 import type {
   ApprovalRequest,
   ApprovalResponse,
+  ConfigDiagnostic,
   Event2,
   IDisposable,
   Interaction,
@@ -205,6 +206,7 @@ export class SessionEventBroadcaster {
 
   addGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.add(target);
+    this.replayConfigWarnings(target);
   }
 
   removeGlobalTarget(target: BroadcastTarget): void {
@@ -774,27 +776,43 @@ export class SessionEventBroadcaster {
     }
   }
 
+  private replayConfigWarnings(target: BroadcastTarget): void {
+    this.enqueueGlobal(
+      'event.config.warning',
+      async () => {
+        const config = this.opts.core.accessor.get(IConfigService);
+        await config.ready;
+        const warnings = toConfigWarningItems(config.diagnostics());
+        if (warnings.length === 0) return undefined;
+        return { type: 'config', config: await this.currentConfig(), warnings };
+      },
+      target,
+    );
+  }
+
   private enqueueGlobal(
     eventType: string,
     build: () => Event | undefined | Promise<Event | undefined>,
+    onlyTarget?: BroadcastTarget,
   ): void {
     if (this.closed) return;
     this.globalQueue = this.globalQueue
       .then(async () => {
         const event = await build();
         if (event === undefined) return;
-        this.sendGlobal(event);
+        this.sendGlobal(event, onlyTarget);
       })
       .catch((error: unknown) => this.logDispatchError(eventType, error));
   }
 
-  private sendGlobal(event: Event): void {
+  private sendGlobal(event: Event, onlyTarget?: BroadcastTarget): void {
     const { agentId: _agentId, sessionId: _sessionId, time, ...fields } = this.withCurrentPendingInteraction(event);
     const envelope = {
       ...fields,
       event_created_at: time !== undefined ? new Date(time).toISOString() : new Date().toISOString(),
     } as EventEnvelope;
     for (const target of this.globalTargets) {
+      if (onlyTarget !== undefined && target !== onlyTarget) continue;
       try {
         target.send(envelope, 'immediate');
       } catch {
@@ -1081,6 +1099,14 @@ function capabilityChangedPayload(payload: unknown): CapabilityChangedPayload | 
   const percent = (install as { percent?: unknown }).percent;
   if (typeof percent === 'number') out.percent = percent;
   return { capability_id: id, install: out };
+}
+
+export function toConfigWarningItems(diagnostics: readonly ConfigDiagnostic[]): ConfigWarningItem[] {
+  return diagnostics.map((diagnostic) =>
+    diagnostic.domain === undefined
+      ? { message: diagnostic.message }
+      : { domain: diagnostic.domain, message: diagnostic.message },
+  );
 }
 
 function configWarningPayload(payload: unknown): { warnings: ConfigWarningItem[] } | undefined {

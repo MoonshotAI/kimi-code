@@ -90,6 +90,24 @@ describe('AppToasts command items', () => {
 });
 
 describe('AppToasts notice items', () => {
+  it('keeps a persistent notice until the user closes it', async () => {
+    vi.useFakeTimers();
+    warningsStore().setWarnings([
+      { severity: 'warning', title: 'permission', message: 'Ignored invalid config section [permission]: rules[0]: bad', persistent: true },
+      { severity: 'warning', title: 'passing' },
+    ]);
+    await nextTick();
+    expect(count()).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await nextTick();
+    expect(warningsStore().warnings.map((warning) => warning.title)).toEqual(['permission']);
+    expect(texts()).toContain('Ignored invalid config section [permission]: rules[0]: bad');
+
+    host.querySelector<HTMLButtonElement>('.ui-toast__close')?.click();
+    await vi.waitFor(() => expect(warningsStore().warnings).toEqual([]));
+  });
+
   it('keeps the remaining duplicate notice on its own timer', async () => {
     vi.useFakeTimers();
     const warning = { severity: 'info', title: 'duplicate' } as const;

@@ -79,6 +79,7 @@ async function setup() {
   };
   const api = {
     deviceApi: (hostId: string | undefined) => (hostId === 'dev' ? hostApi : api),
+    getMeta: vi.fn(async () => null),
     connectEvents: vi.fn((next: KimiEventHandlers) => {
       handlers = next;
       return {
@@ -172,7 +173,10 @@ async function setup() {
   const goal = (sid: string, next: AppGoal | null) => {
     handlers.onAgentGoal?.(sid, 'main', next);
   };
-  return { client, api, hostApi, clock, scopes, goal, hostEvent, turn, conversation, compaction, waitFor, baselines, event, filesStore, goalStore, approvalsStore, modelsStore, tasksStore, warningsStore, sessionsStore, sessionViewsStore, configStore };
+  const connection = (connected: boolean) => {
+    handlers.onConnectionChange(connected);
+  };
+  return { client, api, hostApi, clock, scopes, goal, hostEvent, connection, turn, conversation, compaction, waitFor, baselines, event, filesStore, goalStore, approvalsStore, modelsStore, tasksStore, warningsStore, sessionsStore, sessionViewsStore, configStore };
 }
 
 async function addRemoteWorkspace() {
@@ -215,6 +219,42 @@ it('applies account events from a host to that host only', async () => {
   expect(h.modelsStore().activeDefaultModel).toBe('remote-next');
   expect(h.modelsStore().defaultModel).toBe('local-model');
   expect(configWrites).not.toHaveBeenCalled();
+});
+
+it('shows config warnings from the list the server sends, and forgets them when the local connection drops', async () => {
+  const h = await setup();
+  const permission = { domain: 'permission', message: 'Ignored invalid config section [permission]: rules[0]: bad' };
+  const configEvent = (warnings: readonly { domain?: string; message: string }[]): AppEvent => ({
+    type: 'configChanged',
+    changedFields: [],
+    config: { providers: {} },
+    warnings,
+  });
+  const shownConfigWarnings = () => h.warningsStore().warnings.filter((notice) => notice.persistent === true).map((notice) => notice.message);
+  await h.client.selectSession('a');
+  h.connection(true);
+
+  h.event('', configEvent([permission]));
+  h.event('', configEvent([permission]));
+  expect(shownConfigWarnings()).toEqual([permission.message]);
+  expect(h.warningsStore().warnings.find((notice) => notice.persistent === true)?.position).toBe('top-right');
+
+  h.connection(true);
+  expect(shownConfigWarnings()).toEqual([permission.message]);
+
+  h.warningsStore().dismissWarning(h.warningsStore().warnings.find((notice) => notice.persistent === true)!);
+  h.connection(false);
+  h.connection(true);
+  h.event('', configEvent([permission]));
+  expect(shownConfigWarnings()).toEqual([permission.message]);
+
+  h.connection(false);
+  h.connection(true);
+  expect(shownConfigWarnings()).toEqual([]);
+
+  h.event('', configEvent([permission]));
+  h.event('', configEvent([]));
+  expect(shownConfigWarnings()).toEqual([]);
 });
 
 it('keeps the order of projects on a host that cannot be reached', async () => {

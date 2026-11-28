@@ -44,6 +44,7 @@ function makeHarness() {
   return {
     getConfig: vi.fn(async () => ({})),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
+    onConfigDiagnosticsChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(),
     resumeSession: vi.fn(),
     listSessions: vi.fn(async () => []),

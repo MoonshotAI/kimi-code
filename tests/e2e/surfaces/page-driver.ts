@@ -153,6 +153,10 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().expectTranscript(text);
   }
 
+  expectNotice(text: string): Promise<void> {
+    return this.window().expectNotice(text);
+  }
+
   undo(): Promise<void> {
     return this.window().undo();
   }

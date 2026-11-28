@@ -378,6 +378,32 @@ describe('server-v2 config changed WS notifications', () => {
     subscription.dispose();
   });
 
+  it('sends the current config warnings to a client that connects after config.toml was broken', async () => {
+    await boot('[permission]\nrules = "deny everything"\n');
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+
+    const frames = await openWs();
+
+    await vi.waitFor(() => expect(frames.filter((frame) => frame.warnings !== undefined)).toHaveLength(1));
+    expect(frames.find((frame) => frame.warnings !== undefined)?.warnings).toEqual([
+      {
+        domain: 'permission',
+        message:
+          'Ignored invalid config section [permission]: rules[0]: Invalid input: expected object, received string',
+      },
+    ]);
+  });
+
+  it('sends no config warnings to a client that connects while config.toml is valid', async () => {
+    await boot('default_permission_mode = "auto"\n');
+    const frames = await openWs();
+
+    await patchConfig({ yolo: true });
+
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1));
+    expect(frames.filter((frame) => frame.warnings !== undefined)).toEqual([]);
+  });
+
   it('closes the config publisher before the app, so a pending change is never delivered during shutdown', async () => {
     await boot();
     const published: string[] = [];

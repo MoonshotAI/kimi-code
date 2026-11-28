@@ -16,6 +16,10 @@ export KIMI_CODE_HOME=/path/to/kimi-home
 TOML 字段名一律用下划线（snake_case），如 `default_model`、`max_context_size`。字段名里若含 `.`，需用引号包住，例如 `[models."gpt-4.1"]`；否则 TOML 会把 `.` 解释为嵌套表分隔符。
 :::
 
+### 某一段写错时
+
+某一段校验不通过时（例如 `[permission]` 下的 `rules` 写成了字符串，而不是规则列表），Kimi Code 会忽略整段、改用这一段的默认值，照常运行。同时给出一条警告，写明是哪一段、哪个键出错，例如 `Ignored invalid config section [permission]: rules[0]: Invalid input: expected object, received string`。终端界面在启动时、以及运行中把文件改错时，把警告显示在对话里；桌面端和 Web 界面显示一条提示，直到你手动关掉。
+
 ## 完整示例
 
 以下示例覆盖最常用的配置项，可直接复制后按需修改：

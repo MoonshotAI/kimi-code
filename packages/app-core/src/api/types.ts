@@ -29,6 +29,7 @@ export interface AppNotice {
   details?: AppNoticeDetail[];
   copyLink?: AppNoticeCopyLink;
   position?: AppNoticePosition;
+  persistent?: boolean;
 }
 
 export type AppWarning = string | AppNotice;

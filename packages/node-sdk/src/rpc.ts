@@ -292,6 +292,8 @@ export abstract class SDKRpcClientBase {
 
   abstract onConfigSectionChanged(listener: (change: ConfigSectionChange) => void): Unsubscribe;
 
+  abstract onConfigDiagnosticsChanged(listener: (diagnostics: ConfigDiagnostics) => void): Unsubscribe;
+
   abstract getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]>;
 
   async getExperimentalBetaState(): Promise<BetaMasterSwitchState> {

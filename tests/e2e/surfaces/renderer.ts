@@ -668,6 +668,18 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
   }
 
+  async expectNotice(text: string): Promise<void> {
+    const shown = this.page.getByRole('status').and(this.page.locator(SHOWN));
+    const settled = await this.settle(`a notice showing ${JSON.stringify(text)}`, async () => (await this.notices(text).count()) > 0, [shown]);
+    if (settled === 'over') {
+      throw new Error(`expectNotice() found no notice showing ${JSON.stringify(text)}; the notices on screen are ${JSON.stringify(await shown.allTextContents())}.\n${await this.describe()}`);
+    }
+    const times = await this.notices(text).count();
+    if (times > 1) {
+      throw new Error(`expectNotice() found ${times} notices showing ${JSON.stringify(text)}; it must appear exactly once.\n${await this.describe()}`);
+    }
+  }
+
   async awaitMessage(text: string): Promise<void> {
     await this.wait(`the conversation to show the user message ${JSON.stringify(text)}`, async () => ((await this.userMessages(1, text).count()) > 0 ? true : undefined));
   }

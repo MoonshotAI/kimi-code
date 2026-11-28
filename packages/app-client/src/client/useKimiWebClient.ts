@@ -978,12 +978,16 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string): vo
   if (event.type === 'configChanged') {
     configStore().noteConfigWrite();
     modelsStore().setDefaultModel(event.config.defaultModel ?? null);
-    for (const warning of event.warnings ?? []) {
-      warningsStore().pushWarning({
-        severity: 'warning',
-        title: warning.domain ?? 'config',
-        message: warning.message,
-      });
+    if (event.warnings !== undefined) {
+      warningsStore().syncConfigWarnings(
+        event.warnings.map((warning) => ({
+          severity: 'warning',
+          title: warning.domain ?? 'config',
+          message: warning.message,
+          persistent: true,
+          position: 'top-right',
+        })),
+      );
     }
     if (event.changedFields.length === 0 || event.changedFields.includes('experimental')) {
       void configStore().refreshServerMeta();
@@ -1402,6 +1406,7 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
     if (connected) {
       const disconnectedAt = connectionStore().markConnected();
       if (disconnectedAt !== null) {
+        warningsStore().forgetConfigWarnings();
         track('connection_restored', {
           duration_ms: Math.min(Date.now() - disconnectedAt, 86_400_000),
         });

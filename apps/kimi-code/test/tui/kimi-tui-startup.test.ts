@@ -261,6 +261,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     resolveSessionEnvironment: vi.fn(async (options: { workDir?: string; environmentId?: string; environmentCwd?: string }) => ({ environmentId: options.environmentId ?? 'local', cwd: options.environmentCwd })),
     resolveWorkLocation: vi.fn(async (cwd: string) => ({ cwd, projectRoot: cwd, isGitRepo: false })),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
+    onConfigDiagnosticsChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(
       async (_options?: {
         environmentId?: string;

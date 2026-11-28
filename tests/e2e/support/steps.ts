@@ -78,6 +78,7 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   resize: (size) => (size === 'narrow' ? '用户把窗口拉窄' : '用户把窗口拉回原来的大小'),
   reloadPage: () => '用户刷新页面',
   expectTranscript: (text) => `检查整段对话里有${quote(text)}`,
+  expectNotice: (text) => `检查有一条提示写着${quote(text)}`,
   exit: () => '用户退出，回到原来的 shell',
   expectTerminalRestored: () => '检查终端回到了正常的输入模式',
   openSession: (title) => `用户回到之前标题为${quote(title)}的会话`,
