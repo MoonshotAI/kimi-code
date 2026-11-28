@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { SearchableList, type SearchableListOptions } from '#/tui/utils/searchable-list';
+import {
+  renderSearchableListStatus,
+  SearchableList,
+  type SearchableListOptions,
+} from '#/tui/utils/searchable-list';
 
 const ESC = String.fromCodePoint(27);
 const UP = `${ESC}[A`;
@@ -142,5 +146,22 @@ describe('SearchableList', () => {
     expect(v.items).toEqual(['item00']);
     expect(v.selectedIndex).toBe(0);
     expect(list.selected()).toBe('item00');
+  });
+
+  it('renderSearchableListStatus renders active query and empty state', () => {
+    const list = make({ searchable: true });
+    expect(renderSearchableListStatus(list.view())).toEqual([]);
+
+    for (const ch of '01') list.handleKey(ch);
+    const matched = renderSearchableListStatus(list.view());
+    expect(matched).toHaveLength(1);
+    expect(matched[0]).toContain('Search: ');
+    expect(matched[0]).toContain('01');
+    expect(renderSearchableListStatus(list.view(), false)).toEqual([]);
+
+    for (const ch of 'zz') list.handleKey(ch);
+    const empty = renderSearchableListStatus(list.view());
+    expect(empty).toHaveLength(2);
+    expect(empty[1]).toContain('No matches');
   });
 });

@@ -795,6 +795,13 @@ export interface AppProviderCopyResult {
   providers: string[];
 }
 
+export type ExperimentalProfile = 'cli' | 'desktop';
+
+export interface AppExperimentalConfig {
+  cli?: Record<string, boolean>;
+  desktop?: Record<string, boolean>;
+}
+
 export interface AppConfig {
   providers: Record<string, AppConfigProvider>;
   defaultProvider?: string;
@@ -820,7 +827,7 @@ export interface AppConfig {
   extraSkillDirs?: string[];
   loopControl?: unknown;
   background?: unknown;
-  experimental?: Record<string, boolean>;
+  experimental?: AppExperimentalConfig;
   telemetry?: boolean;
   disableFeedbackSurvey?: boolean;
   raw?: Record<string, unknown>;
@@ -1038,6 +1045,43 @@ export interface RemoteControlStatus {
   };
 }
 
+export interface ServerExperimentalBeta {
+  profile: ExperimentalProfile;
+  enabled: boolean;
+  source: 'env' | 'config' | 'default';
+  env: string;
+  configValue?: boolean;
+}
+
+export interface ServerExperimentalFeature {
+  id: string;
+  title: string;
+  description: string;
+  stage: 'experimental' | 'beta' | 'ga';
+  effectTiming: 'immediate' | 'next-session' | 'restart';
+  env: string;
+  enabled: boolean;
+  active: boolean;
+  source: 'env' | 'master-env' | 'beta-config' | 'config' | 'default';
+  configValue?: boolean;
+}
+
+export interface ServerMeta {
+  protocolVersion: string;
+  serverVersion: string;
+  serverId: string;
+  startedAt: string;
+  homeDir: string;
+  capabilities: Record<string, boolean>;
+  openInApps: string[];
+  dangerousBypassAuth: boolean;
+  experimentalFlags: Record<string, boolean>;
+  experimentalBeta?: ServerExperimentalBeta;
+  experimentalFeatures?: ServerExperimentalFeature[];
+  backend: 'v1' | 'v2';
+  webTitle: string;
+}
+
 export type PromptPredictionCancelReason =
   | 'input'
   | 'escape'
@@ -1052,7 +1096,7 @@ export type PromptPredictionCancelReason =
 export interface KimiWebApi {
   dispose(): void;
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
-  getMeta(): Promise<{ protocolVersion: string; serverVersion: string; serverId: string; startedAt: string; homeDir: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; experimentalFlags: Record<string, boolean>; backend: 'v1' | 'v2'; webTitle: string }>;
+  getMeta(): Promise<ServerMeta>;
   getRemoteControlStatus(): Promise<RemoteControlStatus>;
   setRemoteControlEnabled(enabled: boolean): Promise<RemoteControlStatus>;
   listRemoteControlDevices(): Promise<RcDeviceList>;

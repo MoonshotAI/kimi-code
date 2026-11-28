@@ -48,7 +48,7 @@ import type { AppConfig, AppModel, ManagedQuotaResult, ManagedUserInfo, Thinking
 import PlanUsageCard from './PlanUsageCard.vue';
 import { SecondaryModelPicker } from '@moonshot-ai/app-components';
 import { PlanUpgradeCard } from '@moonshot-ai/app-components';
-import { Avatar, Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch, Tooltip } from '@moonshot-ai/app-ui';
 import type { BrowserSettingsSection } from '../../../shared/browser-data';
 import {
   visibleSettingsTabs,
@@ -65,8 +65,8 @@ const { t } = useI18n();
 const { vibrancy, setVibrancy } = useVibrancy();
 const { preventSleepState, lidSleepStopped, setPreventSystemSleep, setPreventLidSleep } = usePreventSystemSleep();
 
-const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
-const { contextInspectorEnabled, setContextInspectorEnabled } = useContextInspector();
+const { sidebarTabs } = useSidebarTabs();
+const { contextInspectorEnabled } = useContextInspector();
 
 const { turnFolding, setTurnFolding } = useTurnFolding();
 const { activityRunFolding, setActivityRunFolding } = useActivityRunFolding();
@@ -79,28 +79,121 @@ function onRunningSendModeChange(mode: RunningSendMode): void {
   track('settings_changed', { key: 'running-send-mode', value: mode, source_panel: 'settings' });
 }
 
-function onSidebarTabsChange(on: boolean): void {
-  setSidebarTabs(on);
-  track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
+const { sessionMentions } = useSessionMentions();
+const desktopBridge = hasDesktopBridge();
+
+const betaMasterState = computed(() => configStore().experimentalBeta);
+const betaMasterEnabled = computed(() => betaMasterState.value?.enabled === true);
+const betaMasterLockedByEnv = computed(() => betaMasterState.value?.source === 'env');
+const labProfilePending = computed(() => !desktopBridge && betaMasterState.value === null);
+
+function findExperimentalFeature(id: string) {
+  return configStore().experimentalFeatures.find((feature) => feature.id === id);
 }
 
-const { sessionMentions, setSessionMentions } = useSessionMentions();
+const contextInspectorFeature = computed(() => findExperimentalFeature('context_inspector'));
+const contextInspectorToggleEnabled = computed(
+  () => contextInspectorFeature.value?.enabled ?? contextInspectorEnabled.value,
+);
+const contextInspectorLockedByEnv = computed(
+  () => contextInspectorFeature.value?.source === 'env',
+);
+const contextInspectorLocked = computed(
+  () =>
+    contextInspectorLockedByEnv.value || betaMasterEnabled.value || labProfilePending.value,
+);
 
-function onSessionMentionsChange(on: boolean): void {
-  setSessionMentions(on);
-  track('settings_changed', { key: 'session-mentions', value: on ? 'on' : 'off', source_panel: 'settings' });
+const promptPredictionFeature = computed(() => findExperimentalFeature('prompt_prediction'));
+const promptPredictionEnabled = computed(
+  () =>
+    promptPredictionFeature.value?.enabled ??
+    (betaMasterEnabled.value || configStore().experimentalFlags['prompt_prediction'] === true),
+);
+const promptPredictionLockedByEnv = computed(
+  () => promptPredictionFeature.value?.source === 'env',
+);
+const promptPredictionLocked = computed(
+  () =>
+    promptPredictionLockedByEnv.value || betaMasterEnabled.value || labProfilePending.value,
+);
+
+const notifyUserFeature = computed(() => findExperimentalFeature('notify_user'));
+const notifyUserEnabled = computed(
+  () => notifyUserFeature.value?.enabled ?? configStore().experimentalFlags['notify_user'] === true,
+);
+const notifyUserLockedByEnv = computed(() => notifyUserFeature.value?.source === 'env');
+const notifyUserLocked = computed(() => notifyUserLockedByEnv.value || labProfilePending.value);
+
+const sessionMentionsFeature = computed(() => findExperimentalFeature('session_mentions'));
+const sessionMentionsToggleEnabled = computed(
+  () => sessionMentionsFeature.value?.enabled ?? sessionMentions.value,
+);
+const sessionMentionsLockedByEnv = computed(
+  () => sessionMentionsFeature.value?.source === 'env',
+);
+const sessionMentionsLocked = computed(
+  () => sessionMentionsLockedByEnv.value || labProfilePending.value,
+);
+
+const sidebarTabsFeature = computed(() => findExperimentalFeature('sidebar_multi_tab'));
+const sidebarTabsToggleEnabled = computed(
+  () => sidebarTabsFeature.value?.enabled ?? sidebarTabs.value,
+);
+const sidebarTabsLockedByEnv = computed(
+  () => sidebarTabsFeature.value?.source === 'env',
+);
+const sidebarTabsLocked = computed(() => sidebarTabsLockedByEnv.value || labProfilePending.value);
+
+const towerFeature = computed(() => findExperimentalFeature('tower'));
+const towerToggleEnabled = computed(
+  () => towerFeature.value?.enabled ?? configStore().experimentalFlags['tower'] === true,
+);
+const towerLockedByEnv = computed(() => towerFeature.value?.source === 'env');
+const towerLocked = computed(() => towerLockedByEnv.value || labProfilePending.value);
+const towerPendingRestart = computed(
+  () => towerFeature.value?.enabled === true && !towerFeature.value.active,
+);
+
+async function onBetaMasterChange(on: boolean): Promise<void> {
+  if (await configStore().setBetaFeaturesEnabled(on)) {
+    track('settings_changed', { key: 'beta-features', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
 }
 
-const notifyUserEnabled = computed(() => configStore().experimentalFlags['notify_user'] === true);
-
-async function onNotifyUserChange(on: boolean): Promise<void> {
-  await configStore().setNotifyUserEnabled(on);
+async function onContextInspectorChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('context_inspector', on)) {
+    track('settings_changed', { key: 'context-inspector', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
 }
-
-const promptPredictionEnabled = computed(() => configStore().experimentalFlags['prompt_prediction'] === true);
 
 async function onPromptPredictionChange(on: boolean): Promise<void> {
-  await configStore().setPromptPredictionEnabled(on);
+  if (await configStore().setPromptPredictionEnabled(on)) {
+    track('settings_changed', { key: 'prompt-prediction', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
+async function onNotifyUserChange(on: boolean): Promise<void> {
+  if (await configStore().setNotifyUserEnabled(on)) {
+    track('settings_changed', { key: 'notify-user', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
+async function onSessionMentionsChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('session_mentions', on)) {
+    track('settings_changed', { key: 'session-mentions', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
+async function onSidebarTabsChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('sidebar_multi_tab', on)) {
+    track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
+async function onTowerChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('tower', on)) {
+    track('settings_changed', { key: 'tower', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
 }
 
 function onColorScheme(scheme: ColorScheme): void {
@@ -318,7 +411,6 @@ const remoteControl = useRemoteControl();
 onMounted(() => {
   void probePluginSupport();
 });
-const desktopBridge = hasDesktopBridge();
 const visibleTabs = computed(() => visibleSettingsTabs(desktopBridge, pluginsState.unsupported));
 watch(
   () => pluginsState.unsupported,
@@ -1363,30 +1455,81 @@ defineExpose({ confirmDiscard });
           </section>
         </section>
 
-        <!-- 实验室：early 功能的开关集合。多标签页的会话列表默认关——关掉时侧边栏
-             退回单一会话列表（无 进行中/已完成/工作空间 tabs，归档替代完成）。 -->
         <section v-show="activeTab === 'lab'" class="panel">
           <section class="sec">
-            <h3 class="sec-title">{{ t('settings.tabs.lab') }}</h3>
+            <div class="sec-head lab-sec-head">
+              <div class="lab-sec-heading">
+                <h3 class="sec-title">{{ t('settings.lab.betaGroup') }}</h3>
+                <span class="lab-sec-desc">{{ t('settings.lab.betaGroupHint') }}</span>
+              </div>
+              <Tooltip
+                v-if="betaMasterState !== null"
+                :text="betaMasterLockedByEnv ? t('settings.lab.lockedByEnv', { env: betaMasterState.env }) : null"
+              >
+                <div class="lab-beta-toggle">
+                  <span class="lab-beta-toggle-label">{{ t('settings.lab.enableAll') }}</span>
+                  <Switch
+                    :model-value="betaMasterEnabled"
+                    :disabled="betaMasterLockedByEnv"
+                    :label="t('settings.lab.enableAllBeta')"
+                    @update:model-value="onBetaMasterChange"
+                  />
+                </div>
+              </Tooltip>
+            </div>
             <div class="settings-group">
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.lab.sidebarTabs') }}
-                <span class="hint">{{ t('settings.lab.sidebarTabsHint') }}</span>
+                {{ t('settings.lab.contextInspector') }}
+                <span class="hint">{{ t('settings.lab.contextInspectorHint') }}</span>
+                <span v-if="contextInspectorLockedByEnv && contextInspectorFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: contextInspectorFeature.env }) }}
+                </span>
               </span>
               <Switch
-                :model-value="sidebarTabs"
-                :label="t('settings.lab.sidebarTabs')"
-                @update:model-value="onSidebarTabsChange"
+                :model-value="contextInspectorToggleEnabled"
+                :disabled="contextInspectorLocked"
+                :label="t('settings.lab.contextInspector')"
+                @update:model-value="onContextInspectorChange"
               />
             </div>
             <div class="row">
               <span class="rlabel">
+                {{ t('settings.lab.promptPrediction') }}
+                <span class="hint">{{ t('settings.lab.promptPredictionHint') }}</span>
+                <span v-if="promptPredictionLockedByEnv && promptPredictionFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: promptPredictionFeature.env }) }}
+                </span>
+              </span>
+              <Switch
+                :model-value="promptPredictionEnabled"
+                :disabled="promptPredictionLocked"
+                :label="t('settings.lab.promptPrediction')"
+                @update:model-value="onPromptPredictionChange"
+              />
+            </div>
+            </div>
+          </section>
+
+          <section class="sec">
+            <div class="sec-head lab-sec-head">
+              <div class="lab-sec-heading">
+                <h3 class="sec-title">{{ t('settings.lab.experimentalGroup') }}</h3>
+                <span class="lab-sec-desc">{{ t('settings.lab.experimentalGroupHint') }}</span>
+              </div>
+            </div>
+            <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
                 {{ t('settings.lab.notifyUser') }}
                 <span class="hint">{{ t('settings.lab.notifyUserHint') }}</span>
+                <span v-if="notifyUserLockedByEnv && notifyUserFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: notifyUserFeature.env }) }}
+                </span>
               </span>
               <Switch
                 :model-value="notifyUserEnabled"
+                :disabled="notifyUserLocked"
                 :label="t('settings.lab.notifyUser')"
                 @update:model-value="onNotifyUserChange"
               />
@@ -1395,33 +1538,48 @@ defineExpose({ confirmDiscard });
               <span class="rlabel">
                 {{ t('settings.lab.sessionMentions') }}
                 <span class="hint">{{ t('settings.lab.sessionMentionsHint') }}</span>
+                <span v-if="sessionMentionsLockedByEnv && sessionMentionsFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: sessionMentionsFeature.env }) }}
+                </span>
               </span>
               <Switch
-                :model-value="sessionMentions"
+                :model-value="sessionMentionsToggleEnabled"
+                :disabled="sessionMentionsLocked"
                 :label="t('settings.lab.sessionMentions')"
                 @update:model-value="onSessionMentionsChange"
               />
             </div>
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.lab.contextInspector') }}
-                <span class="hint">{{ t('settings.lab.contextInspectorHint') }}</span>
+                {{ t('settings.sidebarTabs') }}
+                <span class="hint">{{ t('settings.sidebarTabsHint') }}</span>
+                <span v-if="sidebarTabsLockedByEnv && sidebarTabsFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: sidebarTabsFeature.env }) }}
+                </span>
               </span>
               <Switch
-                :model-value="contextInspectorEnabled"
-                :label="t('settings.lab.contextInspector')"
-                @update:model-value="setContextInspectorEnabled"
+                :model-value="sidebarTabsToggleEnabled"
+                :disabled="sidebarTabsLocked"
+                :label="t('settings.sidebarTabs')"
+                @update:model-value="onSidebarTabsChange"
               />
             </div>
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.lab.promptPrediction') }}
-                <span class="hint">{{ t('settings.lab.promptPredictionHint') }}</span>
+                {{ t('settings.lab.tower') }}
+                <span class="hint">{{ t('settings.lab.towerHint') }}</span>
+                <span v-if="towerLockedByEnv && towerFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: towerFeature.env }) }}
+                </span>
+                <span v-else-if="towerPendingRestart" class="hint">
+                  {{ t('settings.lab.towerPendingRestart') }}
+                </span>
               </span>
               <Switch
-                :model-value="promptPredictionEnabled"
-                :label="t('settings.lab.promptPrediction')"
-                @update:model-value="onPromptPredictionChange"
+                :model-value="towerToggleEnabled"
+                :disabled="towerLocked"
+                :label="t('settings.lab.tower')"
+                @update:model-value="onTowerChange"
               />
             </div>
             </div>
@@ -1622,6 +1780,38 @@ defineExpose({ confirmDiscard });
 
 .notification-settings { user-select: none; }
 .sec-head .sec-title { margin-bottom: 0; }
+.lab-sec-head {
+  align-items: center;
+  min-height: 24px;
+}
+.lab-sec-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+  row-gap: var(--space-05);
+  min-width: 0;
+}
+.lab-sec-desc {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-faint);
+}
+.lab-beta-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding-right: var(--space-4);
+}
+.lab-beta-toggle-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
 
 
 
@@ -1739,6 +1929,7 @@ defineExpose({ confirmDiscard });
     flex-direction: column;
   }
   .settings-group { margin-inline: 0; }
+  .lab-beta-toggle { padding-right: 0; }
   .select-wrap {
     width: 100%;
     max-width: none;

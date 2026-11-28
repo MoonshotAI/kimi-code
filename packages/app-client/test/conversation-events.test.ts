@@ -224,7 +224,7 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[]; promptP
   const turnEndReads = { getGitStatus, getSessionWarnings, listSkills, generateSessionTitle };
   const event = (sid: string, appEvent: AppEvent) => handlers!.onEvent(appEvent, { sessionId: sid });
 
-  return { client, submitPrompt, frame, startTurn, endTurn, agentStatus, event, sentPromptId, warningsStore, turnEndReads };
+  return { api, client, submitPrompt, frame, startTurn, endTurn, agentStatus, event, sentPromptId, warningsStore, turnEndReads };
 }
 
 describe('conversation events in the client', () => {
@@ -993,5 +993,54 @@ describe('session continuation', () => {
     });
     h.agentStatus('s1', 'idle');
     await vi.waitFor(() => expect(h.client.working.value).toBe(false));
+  });
+
+  it('refreshes server experimental metadata and context inspector override on configChanged', async () => {
+    const h = await boot();
+    const { configStore } = await import('../src/stores/config');
+    const { useContextInspector } = await import('@moonshot-ai/app-core');
+    useContextInspector().setContextInspectorEnabled(false);
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
+
+    vi.mocked(h.api.getMeta!).mockResolvedValueOnce({
+      serverVersion: '0.0.0',
+      serverId: 'server-1',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      capabilities: {},
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: { notify_user: true },
+      experimentalBeta: {
+        profile: 'cli',
+        enabled: true,
+        source: 'config',
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+        configValue: true,
+      },
+      experimentalFeatures: [
+        {
+          id: 'notify_user',
+          title: 'Notify user',
+          description: 'Progress notifications',
+          stage: 'beta',
+          effectTiming: 'next-session',
+          env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
+          enabled: true,
+          active: true,
+          source: 'beta-config',
+        },
+      ],
+      backend: 'v2',
+    });
+
+    h.event('__global__', {
+      type: 'configChanged',
+      changedFields: [],
+      config: { providers: {}, experimental: { cli: { beta: true } } },
+    });
+
+    await vi.waitFor(() => expect(configStore().experimentalBeta?.enabled).toBe(true));
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(configStore().experimentalFlags['notify_user']).toBe(true);
   });
 });

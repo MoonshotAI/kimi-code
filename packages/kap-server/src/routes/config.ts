@@ -209,18 +209,41 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const MAP_VALUED_CONFIG_KEYS = new Set(['providers', 'models', 'experimental', 'raw']);
+const MAP_VALUED_CONFIG_KEYS = new Set(['providers', 'models']);
+const VERBATIM_SUBTREE_CONFIG_KEYS = new Set(['experimental', 'raw']);
 
-function convertKeysSnakeToCamel(obj: unknown, preserveKeys = false): unknown {
+function convertKeysSnakeToCamel(
+  obj: unknown,
+  mode: 'camel' | 'map-keys' | 'verbatim' = 'camel',
+): unknown {
+  if (mode === 'verbatim') {
+    if (Array.isArray(obj)) {
+      return obj.map((item) => convertKeysSnakeToCamel(item, 'verbatim'));
+    }
+    if (isPlainObject(obj)) {
+      const result: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(obj)) {
+        result[key] = convertKeysSnakeToCamel(value, 'verbatim');
+      }
+      return result;
+    }
+    return obj;
+  }
   if (Array.isArray(obj)) {
-    return obj.map((item) => convertKeysSnakeToCamel(item));
+    return obj.map((item) => convertKeysSnakeToCamel(item, 'camel'));
   }
   if (isPlainObject(obj)) {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      result[preserveKeys ? key : snakeToCamel(key)] = convertKeysSnakeToCamel(
+      const nextMode =
+        mode === 'camel' && VERBATIM_SUBTREE_CONFIG_KEYS.has(key)
+          ? 'verbatim'
+          : mode === 'camel' && MAP_VALUED_CONFIG_KEYS.has(key)
+            ? 'map-keys'
+            : 'camel';
+      result[mode === 'map-keys' ? key : snakeToCamel(key)] = convertKeysSnakeToCamel(
         value,
-        !preserveKeys && MAP_VALUED_CONFIG_KEYS.has(key),
+        nextMode,
       );
     }
     return result;

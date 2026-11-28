@@ -15,6 +15,7 @@ import {
 } from '#/_base/di/scope';
 import { createServices } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ProfileData } from '#/agent/profile/profile';
@@ -626,6 +627,66 @@ describe('AgentToolActivationService', () => {
       await agent.accessor.get(IAgentToolActivationService).activate();
       const registered = agent.accessor.get(IAgentToolRegistryService).list();
       expect(registered.map((tool) => tool.name)).toEqual([SELECT_TOOLS_TOOL_NAME]);
+      app.dispose();
+    });
+
+    it('dynamically registers and unregisters reconcileOnFlagChange contributions when flags change', async () => {
+      let flagEnabled = false;
+      const flagChangeEmitter = new Emitter<void>();
+      registerAgentToolService(IGammaTool, GammaTool, {
+        name: 'Gamma',
+        when: (accessor) => accessor.get(IFlagService).enabled('wait_for'),
+        reconcileOnFlagChange: true,
+      });
+
+      const app = createAppScope({
+        seeds: [
+          [
+            IFlagService,
+            {
+              _serviceBrand: undefined,
+              onDidChangeFlags: flagChangeEmitter.event,
+              enabled: (id: string) => id === 'wait_for' && flagEnabled,
+            } as unknown as IFlagService,
+          ],
+        ],
+      });
+      const session = app.createChild(LifecycleScope.Session, 'session', {
+        seeds: [
+          [
+            ISessionToolPolicyGate,
+            {
+              _serviceBrand: undefined,
+              get disabledTools() {
+                return gateData.disabledTools;
+              },
+              onDidChange: Event.None as Event<void>,
+            } satisfies ISessionToolPolicyGate,
+          ],
+        ],
+      });
+      const agent = session.createChild(LifecycleScope.Agent, 'agent', {
+        seeds: agentSeeds(),
+      });
+
+      const registry = agent.accessor.get(IAgentToolRegistryService);
+      await agent.accessor.get(IAgentToolActivationService).activate();
+      expect(registry.resolve('Gamma')).toBeUndefined();
+
+      flagEnabled = true;
+      flagChangeEmitter.fire();
+      expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+
+      flagEnabled = false;
+      flagChangeEmitter.fire();
+      expect(registry.resolve('Gamma')).toBeUndefined();
+      expect(registry.list().map((tool) => tool.name)).not.toContain('Gamma');
+
+      flagEnabled = true;
+      flagChangeEmitter.fire();
+      expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+
+      flagChangeEmitter.dispose();
       app.dispose();
     });
   });

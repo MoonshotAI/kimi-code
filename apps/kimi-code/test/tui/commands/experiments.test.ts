@@ -10,14 +10,16 @@ import {
 import { darkColors } from '#/tui/theme/colors';
 
 function feature(overrides: Partial<ExperimentalFeatureState> = {}): ExperimentalFeatureState {
+  const enabled = overrides.enabled ?? true;
   return {
-    id: 'micro_compaction',
-    title: 'Micro compaction',
-    description: 'Trim older tool results.',
-    surface: 'core',
-    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    defaultEnabled: true,
-    enabled: true,
+    id: 'prompt_prediction',
+    title: 'Prompt prediction',
+    description: 'Predict the next prompt.',
+    stage: 'experimental',
+    effectTiming: 'immediate',
+    env: 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION',
+    enabled,
+    active: overrides.active ?? enabled,
     source: 'default',
     ...overrides,
   };
@@ -36,8 +38,14 @@ function makeHost() {
     harness: {
       setConfig: vi.fn(async () => ({ providers: {} })),
       getExperimentalFeatures: vi.fn(async () => [
-        feature({ enabled: false, source: 'config', configValue: false }),
+        feature({ enabled: false, active: false, source: 'config', configValue: false }),
       ]),
+      getExperimentalBetaState: vi.fn(async () => ({
+        profile: 'cli' as const,
+        enabled: false,
+        source: 'default' as const,
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+      })),
       reloadSession: vi.fn(async () => session),
     },
     session,
@@ -53,6 +61,7 @@ function makeHost() {
     harness: {
       setConfig: ReturnType<typeof vi.fn>;
       getExperimentalFeatures: ReturnType<typeof vi.fn>;
+      getExperimentalBetaState: ReturnType<typeof vi.fn>;
       reloadSession: ReturnType<typeof vi.fn>;
     };
     refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
@@ -61,6 +70,7 @@ function makeHost() {
     restoreEditor: ReturnType<typeof vi.fn>;
     showStatus: ReturnType<typeof vi.fn>;
     showError: ReturnType<typeof vi.fn>;
+    showNotice: ReturnType<typeof vi.fn>;
     track: ReturnType<typeof vi.fn>;
     session: typeof session;
   };
@@ -72,16 +82,16 @@ describe('experimental feature command handlers', () => {
     setExperimentalFeatures([]);
   });
 
-  it('persists config overrides, refreshes command flags, closes the panel, and reloads', async () => {
+  it('persists config overrides, refreshes command flags, closes the panel, and reloads immediate features', async () => {
     const host = makeHost();
 
-    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
+    await applyExperimentalFeatureChanges(host, [{ id: 'prompt_prediction', enabled: false }]);
 
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      experimental: { micro_compaction: false },
+      experimental: { cli: { prompt_prediction: false } },
     });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
-    expect(isExperimentalFlagEnabled('micro_compaction')).toBe(false);
+    expect(isExperimentalFlagEnabled('prompt_prediction')).toBe(false);
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalled();
     expect(host.restoreEditor).toHaveBeenCalled();
     expect(host.harness.reloadSession).toHaveBeenCalledWith({ id: host.session.id });
@@ -90,54 +100,50 @@ describe('experimental feature command handlers', () => {
       host.session,
       'Experimental features updated. Session reloaded.',
     );
-    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
     expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
       changed: 1,
       flags: '',
     });
-    expect(host.showStatus).not.toHaveBeenCalledWith(
-      'Experimental features updated.',
-      darkColors.success,
-    );
   });
 
   it.each([true, false])(
-    'toggles notification display without reloading the session: %s',
+    'skips session reload for next-session features and notices when enabled: %s',
     async (enabled) => {
       const host = makeHost();
       host.harness.getExperimentalFeatures.mockResolvedValue([
-        feature({ id: 'notify_user', enabled }),
+        feature({
+          id: 'notify_user',
+          title: 'Updates',
+          stage: 'beta',
+          effectTiming: 'next-session',
+          enabled,
+          active: enabled,
+        }),
       ]);
       await applyExperimentalFeatureChanges(host, [{ id: 'notify_user', enabled }]);
       expect(host.harness.setConfig).toHaveBeenCalledWith({
-        experimental: { notify_user: enabled },
+        experimental: { cli: { notify_user: enabled } },
       });
       expect(isExperimentalFlagEnabled('notify_user')).toBe(enabled);
-      expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
       expect(host.harness.reloadSession).not.toHaveBeenCalled();
-      expect(host.reloadCurrentSessionView).not.toHaveBeenCalled();
-      expect(host.showError).not.toHaveBeenCalled();
+      expect(host.showNotice.mock.calls).toEqual(
+        enabled
+          ? [['Start a new session to use Updates if this session was created with the feature disabled.']]
+          : [],
+      );
     },
   );
 
-  it('still reloads when another experimental feature changes alongside notifications', async () => {
-    const host = makeHost();
-    await applyExperimentalFeatureChanges(host, [
-      { id: 'notify_user', enabled: false },
-      { id: 'micro_compaction', enabled: false },
-    ]);
-    expect(host.harness.reloadSession).toHaveBeenCalledOnce();
-  });
-
-  it('reports the post-apply enabled flag set in telemetry', async () => {
+  it('excludes GA features from experimental_features_apply telemetry', async () => {
     const host = makeHost();
     host.harness.getExperimentalFeatures.mockResolvedValue([
-      feature({ id: 'wait_for', enabled: true }),
-      feature({ id: 'prompt_prediction', enabled: true }),
-      feature({ id: 'tower', enabled: false }),
+      feature({ id: 'notify_user', stage: 'ga', enabled: true, active: true }),
+      feature({ id: 'wait_for', stage: 'experimental', enabled: true, active: true }),
+      feature({ id: 'prompt_prediction', stage: 'experimental', enabled: true, active: true }),
+      feature({ id: 'tower', stage: 'experimental', enabled: false, active: false }),
     ]);
 
-    await applyExperimentalFeatureChanges(host, [{ id: 'prompt_prediction', enabled: true }]);
+    await applyExperimentalFeatureChanges(host, [{ id: 'wait_for', enabled: true }]);
 
     expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
       changed: 1,
@@ -157,21 +163,42 @@ describe('experimental feature command handlers', () => {
     );
   });
 
-  it('notices that tower mode needs a restart when the tower flag changes', async () => {
+  it('shows restart notice without reloading session when a restart-timed feature changes, and keeps active false until restart', async () => {
     const host = makeHost();
+    host.harness.getExperimentalFeatures.mockResolvedValue([
+      feature({
+        id: 'tower',
+        title: 'Tower mode',
+        stage: 'experimental',
+        effectTiming: 'restart',
+        enabled: true,
+        active: false,
+      }),
+    ]);
 
     await applyExperimentalFeatureChanges(host, [{ id: 'tower', enabled: true }]);
 
+    expect(host.harness.reloadSession).not.toHaveBeenCalled();
+    expect(isExperimentalFlagEnabled('tower')).toBe(false);
     expect(host.showNotice).toHaveBeenCalledWith(
       'Tower mode takes effect after restarting Kimi Code.',
     );
-  });
 
-  it('does not show the restart notice for non-tower changes', async () => {
-    const host = makeHost();
+    host.showNotice.mockClear();
+    host.harness.getExperimentalFeatures.mockResolvedValue([
+      feature({
+        id: 'tower',
+        title: 'Tower mode',
+        stage: 'experimental',
+        effectTiming: 'restart',
+        enabled: false,
+        active: false,
+      }),
+    ]);
 
-    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
+    await applyExperimentalFeatureChanges(host, [{ id: 'tower', enabled: false }]);
 
+    expect(isExperimentalFlagEnabled('tower')).toBe(false);
     expect(host.showNotice).not.toHaveBeenCalled();
   });
 });

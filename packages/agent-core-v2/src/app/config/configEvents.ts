@@ -36,6 +36,11 @@ export interface ProviderConfigResponse {
   has_api_key: boolean;
 }
 
+export interface ExperimentalConfigResponse {
+  cli?: Record<string, boolean>;
+  desktop?: Record<string, boolean>;
+}
+
 export interface ConfigResponse {
   providers: Record<string, ProviderConfigResponse>;
   default_provider?: string;
@@ -53,7 +58,7 @@ export interface ConfigResponse {
   extra_skill_dirs?: string[];
   loop_control?: unknown;
   background?: unknown;
-  experimental?: Record<string, boolean>;
+  experimental?: ExperimentalConfigResponse;
   telemetry?: boolean;
   raw?: Record<string, unknown>;
   [key: string]: unknown;

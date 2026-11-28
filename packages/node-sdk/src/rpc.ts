@@ -15,7 +15,7 @@ import type {
   Event,
   QuestionHandler,
 } from '#/events';
-import type { ExperimentalFeatureState } from '#/flag';
+import { MASTER_ENV, type BetaMasterSwitchState, type ExperimentalFeatureState } from '#/flag';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -293,6 +293,10 @@ export abstract class SDKRpcClientBase {
   abstract onConfigSectionChanged(listener: (change: ConfigSectionChange) => void): Unsubscribe;
 
   abstract getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]>;
+
+  async getExperimentalBetaState(): Promise<BetaMasterSwitchState> {
+    return { profile: 'cli', enabled: false, source: 'default', env: MASTER_ENV };
+  }
 
   abstract setConfig(input: KimiConfigPatch): Promise<KimiConfig>;
 

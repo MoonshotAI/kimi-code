@@ -59,7 +59,7 @@ describe('mergeShellEnv', () => {
     expect(applied).toEqual(['GH_TOKEN']);
   });
 
-  it('imports power-user KIMI_* config (home, endpoints, flags, logging)', () => {
+  it('imports power-user KIMI_* config while isolating Desktop from login-shell KIMI_CODE_EXPERIMENTAL_*', () => {
     const target: Record<string, string | undefined> = {};
     const applied = mergeShellEnv(target, {
       KIMI_CODE_HOME: '/Users/x/.kimi-code-2',
@@ -67,6 +67,7 @@ describe('mergeShellEnv', () => {
       KIMI_OAUTH_HOST: 'https://auth-test.example.com',
       KIMI_CODE_BASE_URL: 'https://api-test.example.com/coding/v1',
       KIMI_CODE_EXPERIMENTAL_FLAG: '1',
+      KIMI_CODE_EXPERIMENTAL_NOTIFY_USER: '1',
       KIMI_LOG_LEVEL: 'debug',
       KIMI_CODE_DEBUG: '1',
       KIMI_DISABLE_TELEMETRY: '1',
@@ -76,12 +77,21 @@ describe('mergeShellEnv', () => {
       'KIMI_CODE_OAUTH_HOST',
       'KIMI_OAUTH_HOST',
       'KIMI_CODE_BASE_URL',
-      'KIMI_CODE_EXPERIMENTAL_FLAG',
       'KIMI_LOG_LEVEL',
       'KIMI_CODE_DEBUG',
       'KIMI_DISABLE_TELEMETRY',
     ]);
     expect(target['KIMI_CODE_HOME']).toBe('/Users/x/.kimi-code-2');
+    expect(target['KIMI_CODE_EXPERIMENTAL_FLAG']).toBeUndefined();
+    expect(target['KIMI_CODE_EXPERIMENTAL_NOTIFY_USER']).toBeUndefined();
+  });
+
+  it('preserves explicit KIMI_CODE_EXPERIMENTAL_* variables already present in Desktop launch env', () => {
+    const target: Record<string, string | undefined> = {
+      KIMI_CODE_EXPERIMENTAL_FLAG: '1',
+    };
+    mergeShellEnv(target, { KIMI_CODE_EXPERIMENTAL_FLAG: '0' });
+    expect(target['KIMI_CODE_EXPERIMENTAL_FLAG']).toBe('1');
   });
 
   it('blacklists KIMI_* secrets and out-of-band endpoint overrides', () => {

@@ -1,5 +1,7 @@
 import { fuzzyFilter, Key, matchesKey } from '@moonshot-ai/pi-tui';
 
+import { currentTheme } from '#/tui/theme';
+
 import { pageView, type PageView } from './paging';
 import { printableChar } from './printable-key';
 
@@ -183,4 +185,18 @@ export class SearchableList<T> {
     if (remaining.length > 0) this.handleKey(remaining);
     return true;
   }
+}
+
+export function renderSearchableListStatus(
+  view: SearchableListView<unknown>,
+  searchable = true,
+): string[] {
+  const lines: string[] = [];
+  if (searchable && view.query.length > 0) {
+    lines.push(currentTheme.fg('primary', ' Search: ') + currentTheme.fg('text', view.query));
+  }
+  if (view.items.length === 0) {
+    lines.push(currentTheme.fg('textMuted', '   No matches'));
+  }
+  return lines;
 }

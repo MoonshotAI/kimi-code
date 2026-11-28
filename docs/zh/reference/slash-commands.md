@@ -19,7 +19,7 @@
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
 | `/secondary-model` | `/subagent-model` | 选择 subagent 的默认模型（写入 `[secondary_model] default_model`，详见[subagent 模型池](../configuration/config-files.md#subagent-模型池)） | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
-| `/experiments` | `/experimental` | 打开实验功能面板 | 是 |
+| `/lab` | `/experiments`, `/experimental` | 打开实验室功能面板 | 否 |
 | `/permission` | — | 选择权限模式 | 是 |
 | `/editor` | — | 配置 `Ctrl-G` 调起的外部编辑器 | 是 |
 | `/theme` | — | 切换终端 UI 配色主题 | 是 |

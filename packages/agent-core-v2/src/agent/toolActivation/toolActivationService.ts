@@ -1,10 +1,11 @@
 import { type CollectionView } from '#/_base/di/collection';
-import { IInstantiationService } from '#/_base/di/instantiation';
-import { type IDisposable } from '#/_base/di/lifecycle';
+import { IInstantiationService, ref, type LiveRef } from '#/_base/di/instantiation';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
@@ -30,11 +31,30 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IEventBus eventBus: IEventBus,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
+    @ref(IFlagService) private readonly flags: LiveRef<IFlagService>,
   ) {
     super();
     this._register(
       eventBus.subscribe(AgentStatusUpdated, () => {
         void this.activate();
+      }),
+    );
+    let flagSubscription = toDisposable(() => {});
+    const bindFlagSubscription = () => {
+      flagSubscription.dispose();
+      const currentFlags = this.flags.current;
+      flagSubscription =
+        currentFlags !== undefined && typeof currentFlags.onDidChangeFlags === 'function'
+          ? currentFlags.onDidChangeFlags(() => {
+              void this.activate();
+            })
+          : toDisposable(() => {});
+    };
+    bindFlagSubscription();
+    this._register(this.flags.onDidChange(bindFlagSubscription));
+    this._register(
+      toDisposable(() => {
+        flagSubscription.dispose();
       }),
     );
     this._register(
@@ -62,13 +82,22 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
       for (const record of records) {
         const { id, options } = record;
         const source = options.source ?? 'builtin';
-        if (this.toolRegistry.resolve(options.name) !== undefined) continue;
-        if (!isToolActive(workspaceVeto, options.name, source)) continue;
+        const allowedByVeto = isToolActive(workspaceVeto, options.name, source);
         const activeByProfile =
           options.name === SELECT_TOOLS_TOOL_NAME
             ? isToolActive(disclosurePolicy, options.name, source)
             : isToolActive(policy, options.name, source);
-        if (!activeByProfile) continue;
+        if (this.registrations.has(record)) {
+          if (
+            options.reconcileOnFlagChange === true &&
+            (!allowedByVeto || !activeByProfile || !isToolAvailable(options, accessor, this.environment))
+          ) {
+            this.deactivateRecord(record);
+          }
+          continue;
+        }
+        if (this.toolRegistry.resolve(options.name) !== undefined) continue;
+        if (!allowedByVeto || !activeByProfile) continue;
         if (!isToolAvailable(options, accessor, this.environment)) continue;
         const tool = accessor.get(id);
         const registration = this.toolRegistry.register(tool, {

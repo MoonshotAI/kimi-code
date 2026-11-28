@@ -19,7 +19,10 @@ import type {
   IOAuthService,
   OAuthLoginOptions,
 } from '@moonshot-ai/agent-core-v2/app/auth/auth';
-import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
+import type {
+  BetaMasterSwitchState,
+  ExperimentalFeatureState,
+} from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type {
   FsBrowseResponse,
   FsHomeResponse,
@@ -173,6 +176,7 @@ export interface GlobalAuthFacade {
 }
 
 export interface GlobalFlagsFacade {
+  betaState(): Promise<BetaMasterSwitchState>;
   list(): Promise<readonly ExperimentalFeatureState[]>;
   enabled(id: string): Promise<boolean>;
   enabledIds(): Promise<readonly string[]>;
@@ -453,6 +457,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     },
 
     flags: {
+      betaState: () => call('flagService', 'betaState', []) as Promise<BetaMasterSwitchState>,
       list: () => call('flagService', 'explainAll', []) as Promise<readonly ExperimentalFeatureState[]>,
       enabled: (id) => call('flagService', 'enabled', [id]) as Promise<boolean>,
       enabledIds: () => call('flagService', 'enabledIds', []) as Promise<readonly string[]>,

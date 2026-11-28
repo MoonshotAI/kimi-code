@@ -1,16 +1,15 @@
-import { ref } from 'vue';
-import { STORAGE_KEYS, safeGetString, safeSetString } from '../lib/storage';
+import { readonly, ref } from 'vue';
+import { STORAGE_KEYS, safeGetString } from '../lib/storage';
 
-const sessionMentions = ref<boolean>(safeGetString(STORAGE_KEYS.sessionMentions) === '1');
+const sessionMentionsState = ref(safeGetString(STORAGE_KEYS.sessionMentions) === '1');
 
-function setSessionMentions(on: boolean): void {
-  sessionMentions.value = on;
-  safeSetString(STORAGE_KEYS.sessionMentions, on ? '1' : '0');
+export function setSessionMentions(on: boolean): void {
+  sessionMentionsState.value = on;
 }
 
 export function useSessionMentions() {
   return {
-    sessionMentions,
+    sessionMentions: readonly(sessionMentionsState),
     setSessionMentions,
   };
 }
