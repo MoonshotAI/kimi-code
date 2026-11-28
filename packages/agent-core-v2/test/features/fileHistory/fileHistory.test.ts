@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 
+import { edit, read, say, write } from '@moonshot-ai/testkit/model';
 import { Immer } from 'immer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { popConstructionFrame, pushConstructionFrame } from '#/_base/di/fiber';
@@ -12,9 +13,8 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentFileHistoryService, type FileBackupEntry, type FileHistoryState } from '#/features/fileHistory/fileHistory';
@@ -54,7 +54,12 @@ import type { RunnableToolExecution } from '#/tool/toolContract';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { registerTestAgentWire, registerTestEventDispatcher, testWireScope } from '../../wire/stubs';
-import { createTestAgent, homeDirServices } from '../../harness';
+import {
+  createTestAgent,
+  homeDirServices,
+  testkitAgentFixtures,
+  type TestkitAgentFixtures,
+} from '../../harness';
 
 const SCOPE = 'wire';
 const KEY = 'file-history-test';
@@ -214,14 +219,20 @@ describe('AgentFileHistoryService', () => {
 
   function startTurn(turnId: number): void {
     eventBus.publish(
-      new TurnStarted({ agentId: 'main', turnId, origin: USER_PROMPT_ORIGIN }),
+      new CoreLoopEvent({
+        agentId: 'main',
+        event: { type: 'step.started', turnId, step: 1, stepId: `step-${String(turnId)}` },
+      }),
       scopeCtx.agentContext,
     );
   }
 
   function endTurn(turnId: number): void {
     eventBus.publish(
-      new TurnEnded({ agentId: 'main', turnId, reason: 'completed' }),
+      new CoreLoopEvent({
+        agentId: 'main',
+        event: { type: 'turn.ended', turnId, outcome: { type: 'done' } },
+      }),
       scopeCtx.agentContext,
     );
   }
@@ -819,8 +830,86 @@ describe('file history through real scripted turns', () => {
   });
 });
 
-describe('displacedCheckpoints', () => {
-  function record(turnId: number, phase: 'start' | 'end') {
+const fileHistoryEngineTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+describe('AgentFileHistoryService turn lifecycle (testkit engine)', () => {
+  fileHistoryEngineTest(
+    'attributes checkpoints to the active core turn across steps and skips gate-blocked turns',
+    async ({ agent, model }) => {
+      const dir = await realpath(await mkdtemp(join(tmpdir(), 'file-history-testkit-')));
+      try {
+        const notes = join(dir, 'notes.txt');
+        const created = join(dir, 'created.txt');
+        await writeFile(notes, 'alpha\nbeta\n');
+        await agent.restorePersisted();
+        await agent.rpc.setPermission({ mode: 'yolo' });
+        const service = agent.get(IAgentFileHistoryService);
+        const loop = agent.get(IAgentLoopService);
+
+        model.script(
+          read(notes),
+          edit({ path: notes, old_string: 'beta', new_string: 'gamma' }),
+          say('Edited notes.'),
+        );
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'Read then edit notes' }] });
+        await agent.untilTurnEnd();
+        await service.settled();
+
+        expect(service.history().checkpoints.map((c) => ({ turnId: c.turnId, phase: c.phase }))).toEqual([
+          { turnId: 0, phase: 'start' },
+          { turnId: 0, phase: 'end' },
+        ]);
+        expect(await service.changes(0)).toEqual([
+          { path: notes, status: 'modified', additions: 1, deletions: 1 },
+        ]);
+
+        const gate = loop.hooks.onBeforeSubmitPrompt.register('test-block-file-history', async (ctx, next) => {
+          ctx.block = true;
+          await next();
+        });
+        try {
+          await expect(
+            loop.submit({ input: [{ type: 'text', text: 'blocked' }], promptId: 'blocked-fh' }),
+          ).resolves.toBeUndefined();
+          await expect(loop.promptHandle('blocked-fh')!.completion).resolves.toMatchObject({ state: 'blocked' });
+        } finally {
+          gate.dispose();
+        }
+        await service.settled();
+        expect(service.history().checkpoints.some((c) => c.turnId === 1)).toBe(false);
+
+        model.script(
+          write({ path: created, content: 'fresh\n' }),
+          say('Created file.'),
+        );
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'Create a file' }] });
+        await agent.untilTurnEnd();
+        await service.settled();
+
+        expect(
+          service.history().checkpoints.some(
+            (c) => c.turnId === 2 && c.phase === 'start' && c.entries[created] !== undefined,
+          ),
+        ).toBe(true);
+        expect(service.history().checkpoints.some((c) => c.turnId === 2 && c.phase === 'end')).toBe(true);
+        expect(await service.changes(2)).toEqual([
+          { path: created, status: 'added', additions: 1, deletions: 0 },
+        ]);
+        expect((await service.contentAt(0, notes))?.content).toBe('alpha\nbeta\n');
+        expect((await service.contentAt(0, notes, 'end'))?.content).toBe('alpha\ngamma\n');
+        expect(await service.turnRecorded(0)).toBe(true);
+        expect(await service.turnRecorded(1)).toBe(false);
+        expect(await service.turnRecorded(2)).toBe(true);
+
+        await agent.expectResumeMatches();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe('displacedCheckpoints', () => {  function record(turnId: number, phase: 'start' | 'end') {
     return { turnId, phase, entries: {} };
   }
 
