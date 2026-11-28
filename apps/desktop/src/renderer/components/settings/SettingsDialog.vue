@@ -80,10 +80,12 @@ function onRunningSendModeChange(mode: RunningSendMode): void {
 }
 
 const { sessionMentions } = useSessionMentions();
+const desktopBridge = hasDesktopBridge();
 
 const betaMasterState = computed(() => configStore().experimentalBeta);
 const betaMasterEnabled = computed(() => betaMasterState.value?.enabled === true);
 const betaMasterLockedByEnv = computed(() => betaMasterState.value?.source === 'env');
+const labProfilePending = computed(() => !desktopBridge && betaMasterState.value === null);
 
 function findExperimentalFeature(id: string) {
   return configStore().experimentalFeatures.find((feature) => feature.id === id);
@@ -97,7 +99,8 @@ const contextInspectorLockedByEnv = computed(
   () => contextInspectorFeature.value?.source === 'env',
 );
 const contextInspectorLocked = computed(
-  () => contextInspectorLockedByEnv.value || betaMasterEnabled.value,
+  () =>
+    contextInspectorLockedByEnv.value || betaMasterEnabled.value || labProfilePending.value,
 );
 
 const promptPredictionFeature = computed(() => findExperimentalFeature('prompt_prediction'));
@@ -110,7 +113,8 @@ const promptPredictionLockedByEnv = computed(
   () => promptPredictionFeature.value?.source === 'env',
 );
 const promptPredictionLocked = computed(
-  () => promptPredictionLockedByEnv.value || betaMasterEnabled.value,
+  () =>
+    promptPredictionLockedByEnv.value || betaMasterEnabled.value || labProfilePending.value,
 );
 
 const notifyUserFeature = computed(() => findExperimentalFeature('notify_user'));
@@ -118,6 +122,7 @@ const notifyUserEnabled = computed(
   () => notifyUserFeature.value?.enabled ?? configStore().experimentalFlags['notify_user'] === true,
 );
 const notifyUserLockedByEnv = computed(() => notifyUserFeature.value?.source === 'env');
+const notifyUserLocked = computed(() => notifyUserLockedByEnv.value || labProfilePending.value);
 
 const sessionMentionsFeature = computed(() => findExperimentalFeature('session_mentions'));
 const sessionMentionsToggleEnabled = computed(
@@ -125,6 +130,9 @@ const sessionMentionsToggleEnabled = computed(
 );
 const sessionMentionsLockedByEnv = computed(
   () => sessionMentionsFeature.value?.source === 'env',
+);
+const sessionMentionsLocked = computed(
+  () => sessionMentionsLockedByEnv.value || labProfilePending.value,
 );
 
 const sidebarTabsFeature = computed(() => findExperimentalFeature('sidebar_multi_tab'));
@@ -134,12 +142,14 @@ const sidebarTabsToggleEnabled = computed(
 const sidebarTabsLockedByEnv = computed(
   () => sidebarTabsFeature.value?.source === 'env',
 );
+const sidebarTabsLocked = computed(() => sidebarTabsLockedByEnv.value || labProfilePending.value);
 
 const towerFeature = computed(() => findExperimentalFeature('tower'));
 const towerToggleEnabled = computed(
   () => towerFeature.value?.enabled ?? configStore().experimentalFlags['tower'] === true,
 );
 const towerLockedByEnv = computed(() => towerFeature.value?.source === 'env');
+const towerLocked = computed(() => towerLockedByEnv.value || labProfilePending.value);
 const towerPendingRestart = computed(
   () => towerFeature.value?.enabled === true && !towerFeature.value.active,
 );
@@ -401,7 +411,6 @@ const remoteControl = useRemoteControl();
 onMounted(() => {
   void probePluginSupport();
 });
-const desktopBridge = hasDesktopBridge();
 const visibleTabs = computed(() => visibleSettingsTabs(desktopBridge, pluginsState.unsupported));
 watch(
   () => pluginsState.unsupported,
@@ -1520,7 +1529,7 @@ defineExpose({ confirmDiscard });
               </span>
               <Switch
                 :model-value="notifyUserEnabled"
-                :disabled="notifyUserLockedByEnv"
+                :disabled="notifyUserLocked"
                 :label="t('settings.lab.notifyUser')"
                 @update:model-value="onNotifyUserChange"
               />
@@ -1535,7 +1544,7 @@ defineExpose({ confirmDiscard });
               </span>
               <Switch
                 :model-value="sessionMentionsToggleEnabled"
-                :disabled="sessionMentionsLockedByEnv"
+                :disabled="sessionMentionsLocked"
                 :label="t('settings.lab.sessionMentions')"
                 @update:model-value="onSessionMentionsChange"
               />
@@ -1550,7 +1559,7 @@ defineExpose({ confirmDiscard });
               </span>
               <Switch
                 :model-value="sidebarTabsToggleEnabled"
-                :disabled="sidebarTabsLockedByEnv"
+                :disabled="sidebarTabsLocked"
                 :label="t('settings.sidebarTabs')"
                 @update:model-value="onSidebarTabsChange"
               />
@@ -1568,7 +1577,7 @@ defineExpose({ confirmDiscard });
               </span>
               <Switch
                 :model-value="towerToggleEnabled"
-                :disabled="towerLockedByEnv"
+                :disabled="towerLocked"
                 :label="t('settings.lab.tower')"
                 @update:model-value="onTowerChange"
               />

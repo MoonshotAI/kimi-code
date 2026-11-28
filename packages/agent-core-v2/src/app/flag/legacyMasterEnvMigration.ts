@@ -65,6 +65,26 @@ export type MigrateLegacyMasterEnvTowerOutcome =
 const EXISTING_INSTALL_MARKERS = ['sessions', 'credentials', 'user-history'] as const;
 const MAX_MIGRATION_WRITE_ATTEMPTS = 3;
 const EXPERIMENTAL_PROFILE_SET: ReadonlySet<string> = new Set(EXPERIMENTAL_PROFILES);
+const SYNC_LOCK_WAIT_ARRAY = new Int32Array(new SharedArrayBuffer(4));
+const SYNC_LOCK_MAX_ATTEMPTS = 50;
+const SYNC_LOCK_RETRY_MS = 10;
+
+function acquireSyncFileLock(filePath: string): () => void {
+  const lockfilePath = `${filePath}.lock`;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return lockfile.lockSync(filePath, { realpath: false, lockfilePath });
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException)?.code !== 'ELOCKED' ||
+        attempt + 1 >= SYNC_LOCK_MAX_ATTEMPTS
+      ) {
+        throw error;
+      }
+      Atomics.wait(SYNC_LOCK_WAIT_ARRAY, 0, 0, SYNC_LOCK_RETRY_MS);
+    }
+  }
+}
 
 function safeLstat(filePath: string): Stats | undefined {
   try {
@@ -197,7 +217,10 @@ function stampMigrationMarker(
   configKey: string,
   isDefaultConfig: boolean,
 ): boolean {
+  let releaseLock: (() => void) | undefined;
   try {
+    mkdirSync(dirname(markerPath), { recursive: true, mode: 0o700 });
+    releaseLock = acquireSyncFileLock(markerPath);
     const latest = readMigrationsRecord(markerPath);
     if (latest === undefined) return false;
     const mergedProfiles = mergeProfileRecords(
@@ -236,6 +259,10 @@ function stampMigrationMarker(
     return true;
   } catch {
     return false;
+  } finally {
+    try {
+      releaseLock?.();
+    } catch {}
   }
 }
 
@@ -428,10 +455,7 @@ export function migrateLegacyMasterEnvTower(
 
   let releaseLock: (() => void) | undefined;
   try {
-    releaseLock = lockfile.lockSync(initial.targetPath, {
-      realpath: false,
-      lockfilePath: `${initial.targetPath}.lock`,
-    });
+    releaseLock = acquireSyncFileLock(initial.targetPath);
   } catch {
     return 'fallback-env';
   }

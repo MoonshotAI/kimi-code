@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -907,5 +909,75 @@ describe('migrateLegacyMasterEnvTower', () => {
     const bothText = readFileSync(configPath, 'utf8');
     expect(bothText).toContain('[experimental.cli]');
     expect(bothText).toContain('[experimental.desktop]');
+  });
+
+  it('serializes concurrent fresh-install marker stamps so neither cli nor desktop loses its stamp', async () => {
+    const markerPath = join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
+    const canonicalConfigKey = join(realpathSync(tempDir), 'config.toml');
+    const syncState = new Int32Array(new SharedArrayBuffer(8));
+
+    const worker = new Worker(
+      `
+      const { writeFileSync } = require('node:fs');
+      const { workerData } = require('node:worker_threads');
+      const lockfile = require('proper-lockfile');
+      const state = new Int32Array(workerData.buffer);
+      const release = lockfile.lockSync(workerData.markerPath, {
+        realpath: false,
+        lockfilePath: workerData.markerPath + '.lock',
+      });
+      writeFileSync(
+        workerData.markerPath,
+        JSON.stringify({
+          legacyMasterEnvTowerMigratedProfiles: {
+            desktop: { [workerData.configKey]: true },
+          },
+        }, null, 2) + '\\n',
+        'utf8',
+      );
+      Atomics.store(state, 0, 1);
+      Atomics.notify(state, 0);
+      Atomics.wait(state, 1, 0, 25);
+      release();
+      `,
+      {
+        eval: true,
+        workerData: {
+          buffer: syncState.buffer,
+          markerPath,
+          configKey: canonicalConfigKey,
+        },
+      },
+    );
+
+    try {
+      while (Atomics.load(syncState, 0) === 0) {
+        Atomics.wait(syncState, 0, 0, 10);
+      }
+      expect(
+        migrateLegacyMasterEnvTower({
+          homeDir: tempDir,
+          profile: 'cli',
+        }),
+      ).toBe('stamped-fresh-install');
+    } finally {
+      await worker.terminate();
+    }
+
+    mkdirSync(join(tempDir, 'sessions'));
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+        profile: 'cli',
+      }),
+    ).toBe('already-migrated');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+        profile: 'desktop',
+      }),
+    ).toBe('already-migrated');
   });
 });

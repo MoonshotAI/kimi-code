@@ -299,5 +299,10 @@ describe('SettingsDialog Lab two-tier layout', () => {
     expect(
       document.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="开启全部 Beta 功能"]'),
     ).toBeNull();
+    expect(contextSwitch.disabled).toBe(true);
+    expect(notifySwitch.disabled).toBe(true);
+    expect(sessionMentionsSwitch.disabled).toBe(true);
+    expect(sidebarTabsSwitch.disabled).toBe(true);
+    expect(towerSwitch.disabled).toBe(true);
   }, 60_000);
 });

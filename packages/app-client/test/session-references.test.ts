@@ -106,6 +106,12 @@ describe('session mentions lab switch', () => {
       openInApps: [],
       dangerousBypassAuth: false,
       experimentalFlags: { session_mentions: true },
+      experimentalBeta: {
+        profile: 'cli' as const,
+        enabled: false,
+        source: 'default' as const,
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+      },
       experimentalFeatures: [
         {
           id: 'session_mentions',
@@ -128,6 +134,12 @@ describe('session mentions lab switch', () => {
       api: () => ({ listSessions, setConfig, getMeta }) as unknown as KimiWebApi,
       t: (key) => key,
     });
+    configStore().experimentalBeta = {
+      profile: 'cli',
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    };
     sessionsStore().setSessions([session('loaded')]);
     const client = useKimiWebClient();
     const signal = new AbortController().signal;

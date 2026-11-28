@@ -5915,18 +5915,35 @@ describe('setNotifyUserEnabled', () => {
   beforeEach(() => {
     apiMock.setConfig.mockReset();
     apiMock.getMeta.mockReset();
+    vi.unstubAllGlobals();
     configStore().resetConfig();
   });
 
   it('does not update notify_user flag when the config write fails', async () => {
+    configStore().experimentalBeta = {
+      profile: 'cli',
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    };
     apiMock.setConfig.mockRejectedValueOnce(new Error('write conflict'));
     expect(await configStore().setNotifyUserEnabled(true)).toBe(false);
     expect(configStore().experimentalFlags['notify_user']).toBeUndefined();
   });
 
-  it('writes notify_user into the active profile bucket (cli vs desktop)', async () => {
+  it('refuses web writes while experimentalBeta is unresolved and writes into the active profile once resolved', async () => {
     apiMock.setConfig.mockResolvedValue({ providers: {}, defaultModel: 'model-new' });
     apiMock.getMeta.mockResolvedValue(null);
+
+    expect(await configStore().setNotifyUserEnabled(true)).toBe(false);
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
+
+    configStore().experimentalBeta = {
+      profile: 'cli',
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    };
     expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
     expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { cli: { notify_user: true } } });
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
@@ -5944,6 +5961,14 @@ describe('setNotifyUserEnabled', () => {
       experimental: { desktop: { notify_user: true } },
     });
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
+
+    configStore().resetConfig();
+    vi.stubGlobal('kimiDesktop', {});
+    apiMock.setConfig.mockClear();
+    expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
+    expect(apiMock.setConfig).toHaveBeenCalledWith({
+      experimental: { desktop: { notify_user: true } },
+    });
   });
 
   it('keeps restart-timed tower inactive in experimentalFlags until server restart while updating beta master non-destructively', async () => {
@@ -6317,7 +6342,7 @@ describe('setNotifyUserEnabled', () => {
     expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
   });
 
-  it('retains local toggle state when toggling against a server whose meta omits experimentalFeatures', async () => {
+  it('retains local toggle state on native desktop when meta omits experimentalFeatures while refusing unprofiled web writes', async () => {
     const { useContextInspector, useSessionMentions } = await import('@moonshot-ai/app-core');
     apiMock.setConfig.mockResolvedValue({ providers: {} });
     apiMock.getMeta.mockResolvedValue({
@@ -6330,7 +6355,14 @@ describe('setNotifyUserEnabled', () => {
       homeDir: '/tmp/home',
     });
 
+    expect(await configStore().setExperimentalFlag('context_inspector', true)).toBe(false);
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
+
+    vi.stubGlobal('kimiDesktop', {});
     expect(await configStore().setExperimentalFlag('context_inspector', true)).toBe(true);
+    expect(apiMock.setConfig).toHaveBeenLastCalledWith({
+      experimental: { desktop: { context_inspector: true } },
+    });
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
     expect(globalThis.localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('true');
 
@@ -6505,6 +6537,12 @@ describe('setPromptPredictionEnabled', () => {
     apiMock.setConfig.mockReset();
     apiMock.getMeta.mockReset();
     configStore().resetConfig();
+    configStore().experimentalBeta = {
+      profile: 'cli',
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    };
   });
 
   it('does not update prompt_prediction flag when the config write fails', async () => {

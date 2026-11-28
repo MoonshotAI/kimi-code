@@ -224,8 +224,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
     }
   }
 
-  function activeExperimentalProfile(): ExperimentalProfile {
-    return experimentalBeta.value?.profile ?? (hasDesktopBridge() ? 'desktop' : 'cli');
+  function activeExperimentalProfile(): ExperimentalProfile | null {
+    return experimentalBeta.value?.profile ?? (hasDesktopBridge() ? 'desktop' : null);
   }
 
   function enqueueLegacyLocalExperimentalMigration(patch: Record<string, boolean>): void {
@@ -243,6 +243,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
     task = (async () => {
       try {
         while (epochAtStart === storeEpoch) {
+          const profile = activeExperimentalProfile();
+          if (profile === null) break;
           const batch = pendingLegacyMigrationPatch;
           pendingLegacyMigrationPatch = {};
           const activePatch: Record<string, boolean> = {};
@@ -257,7 +259,6 @@ export const useConfigStore = defineStore('kimi.config', () => {
             }
           }
           if (Object.keys(activePatch).length === 0) break;
-          const profile = activeExperimentalProfile();
           const saved = await updateConfig({ experimental: { [profile]: activePatch } });
           if (!saved || epochAtStart !== storeEpoch) break;
           for (const key of keysToRemove) {
@@ -354,6 +355,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
 
   async function setExperimentalFlag(id: string, on: boolean): Promise<boolean> {
     const profile = activeExperimentalProfile();
+    if (profile === null) return false;
     const saved = await updateConfig({ experimental: { [profile]: { [id]: on } } });
     if (!saved) return false;
     const existing = experimentalFeatures.value.find((feature) => feature.id === id);
@@ -386,7 +388,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
 
   async function setBetaFeaturesEnabled(on: boolean): Promise<boolean> {
     if (experimentalBeta.value === null) return false;
-    const profile = activeExperimentalProfile();
+    const profile = experimentalBeta.value.profile;
     const saved = await updateConfig({ experimental: { [profile]: { beta: on } } });
     if (!saved) return false;
     metaCommittedGeneration = ++metaRequestGeneration;
