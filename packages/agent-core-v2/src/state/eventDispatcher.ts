@@ -40,6 +40,7 @@ export interface IEventDispatcher extends DurableRuntimeParticipantHost {
   readonly restorePhase: RestorePhase;
 
   dispatch(event: Event2<any>): Promise<void>;
+  onDidCommit<P, E extends Event2<P>>(cls: Event2Class<P, E>, listener: (event: E) => void): IDisposable;
   attachLate(participant: DurableAgentRuntimeParticipant): Promise<IDisposable>;
   restore(): Promise<void>;
   flush(): Promise<void>;

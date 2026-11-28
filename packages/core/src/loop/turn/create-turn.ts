@@ -4,7 +4,14 @@ import type { UserMessage } from '#/llm/message';
 import type { LlmOutcome, LlmTiming } from '#/llm/response';
 import { withAbort, type AbortScope } from '#/utils/abort';
 import type { LlmMessageTiming } from '../contract/emitted';
-import { convergeTurnOutcome, STEERED, type Cause, type StepOutcome, type TurnOutcome } from '../contract/outcome';
+import {
+  convergeTurnOutcome,
+  STEERED,
+  type Cause,
+  type StepOutcome,
+  type TerminalTurnOutcome,
+  type TurnOutcome,
+} from '../contract/outcome';
 import type { LoopProfile } from '../contract/profile';
 import { hookFailureReports, runtimeFailure } from '#/hook/loop/failure';
 import {
@@ -75,6 +82,7 @@ class ActorTurn implements Turn {
   private requestId: string | undefined;
   private toolsSettled = false;
   private filtered = false;
+  private terminal: TerminalTurnOutcome | undefined;
   private started = false;
   private abortFrom: 'created' | TurnPhase | undefined;
   private abortSettling = false;
@@ -360,6 +368,7 @@ class ActorTurn implements Turn {
       );
       if (starting.blocked !== undefined) {
         step.outcome = { type: 'blocked', at: 'step.starting', cause: starting.blocked };
+        this.terminal ??= starting.turnOutcome;
         this.setOutcome(proc, step.outcome);
       } else {
         this.setPhase(proc, 'requesting');
@@ -488,6 +497,7 @@ class ActorTurn implements Turn {
     if (!this.accepts(step)) return;
     this.runtime.transition(() => {
       step.outcome = ending.outcome;
+      this.terminal ??= ending.turnOutcome;
       if (ending.outcome.type !== 'continue') this.setOutcome(proc, ending.outcome);
       for (const { point, failure } of ending.failures) {
         this.runtime.report(point, this.point, hookFailureReports(point, [failure]), true);
@@ -772,7 +782,10 @@ class ActorTurn implements Turn {
         }
         this.finalizeStep(proc, step);
       }
-      const outcome = convergeTurnOutcome(this.state.outcome ?? { type: 'aborted' as const }, this.filtered);
+      const outcome = convergeTurnOutcome(this.state.outcome ?? { type: 'aborted' as const }, {
+        filtered: this.filtered,
+        terminal: this.terminal,
+      });
       this.setOutcome(proc, outcome);
       this.setPhase(proc, 'finished');
     });

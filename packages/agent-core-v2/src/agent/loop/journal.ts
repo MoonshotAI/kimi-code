@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { freeze } from 'immer';
 
+import type { IDisposable } from '#/_base/di/lifecycle';
 import { toKimiErrorPayload } from '#/errors';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { IWireService } from '#/wire/wire';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
+import type { IEventBus } from '#/app/event/eventBus';
+import type { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { ProfileBindingSnapshot } from '#/agent/profile/profile';
@@ -26,9 +29,10 @@ import {
 } from '#/agent/contextMemory/loopEventFold';
 import type { AssistantMessage, Message, ToolDescription, UserMessage } from '@moonshot-ai/core/llm/message';
 
-import { turnOutcomeReason } from './coreLoopEvent';
+import { CoreLoopEvent, turnOutcomeReason } from './coreLoopEvent';
 import { contextFromHistoryEntry, historyFromContext } from './history';
-import { ToolsSettled, TurnCancel, TurnPrompt } from './turnOps';
+import type { TurnResult } from './loop';
+import { ToolsSettled, TurnCancel, TurnEnded, TurnPrompt, turnInterruptReason, type TurnReplyModel } from './turnOps';
 import type {
   LoopEmitted,
   LoopInput,
@@ -40,6 +44,19 @@ export interface LoopJournalSnapshot {
   readonly input: LoopInput;
   readonly profile?: ProfileBindingSnapshot;
   readonly profileBound: boolean;
+}
+
+export interface LoopJournalCommitOptions {
+  readonly events: IEventBus;
+  readonly attribution: ISessionRequestAttributionService;
+}
+
+export interface TurnEndedCommit {
+  readonly event: Extract<LoopEmitted, { type: 'turn.ended' }>;
+  readonly result: TurnResult;
+  readonly durationMs: number;
+  readonly requestId: string | undefined;
+  readonly replyModel?: { readonly requestId?: string; readonly model: TurnReplyModel };
 }
 
 interface TurnClock {
@@ -306,11 +323,13 @@ function toolArguments(entry: AssistantMessage, toolCallId: string): { args: unk
   }
 }
 
-export class LoopJournal {
+export class LoopJournal implements IDisposable {
   private readonly normal: UserMessage[] = [];
   private readonly notify: UserMessage[] = [];
   private readonly steps = new Map<string, StepJournal>();
   private readonly toolCallUuids = new Map<string, string>();
+  private readonly turnEndedEvents = new Map<number, Extract<LoopEmitted, { type: 'turn.ended' }>>();
+  private readonly commitSubscription: IDisposable | undefined;
   private turn: PendingTurn | undefined;
   private requestingStep: { readonly turnId: number; readonly step: number } | undefined;
   private settledToolsJson: string | undefined;
@@ -319,7 +338,56 @@ export class LoopJournal {
     private readonly wire: IWireService,
     private readonly agentId: string,
     private readonly dispatcher?: IEventDispatcher,
-  ) {}
+    private readonly commit?: LoopJournalCommitOptions,
+  ) {
+    if (dispatcher === undefined || commit === undefined) return;
+    this.commitSubscription = dispatcher.onDidCommit(TurnEnded, (committed) => {
+      const event = this.turnEndedEvents.get(committed.turnId);
+      if (event === undefined) return;
+      this.turnEndedEvents.delete(committed.turnId);
+      commit.events.publish(new CoreLoopEvent({ agentId: this.agentId, event }));
+    });
+  }
+
+  dispose(): void {
+    this.commitSubscription?.dispose();
+    this.turnEndedEvents.clear();
+  }
+
+  commitTurnEnded({ event, result, durationMs, requestId, replyModel }: TurnEndedCommit): Promise<void> {
+    this.writeTurnPrompt();
+    this.turn = undefined;
+    const dispatcher = this.dispatcher;
+    if (dispatcher === undefined) {
+      this.writeStandaloneTurnEnded(event);
+      return Promise.resolve();
+    }
+    const modelSteps = this.commit?.attribution.finishModelSteps(this.agentId, event.turnId);
+    this.turnEndedEvents.set(event.turnId, event);
+    let dispatched: Promise<void>;
+    try {
+      dispatched = dispatcher.dispatch(new TurnEnded({
+        agentId: this.agentId,
+        turnId: event.turnId,
+        reason: result.type,
+        error: result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined,
+        durationMs,
+        interruptReason: result.type === 'completed' ? undefined : turnInterruptReason(result),
+        stopReason: result.type === 'completed' ? result.stopReason : undefined,
+        requestId,
+        replyModel: modelSteps !== undefined && replyModel?.requestId === requestId ? replyModel?.model : undefined,
+        modelSteps,
+        continuation: event.continuation,
+      }));
+    } catch (error) {
+      this.turnEndedEvents.delete(event.turnId);
+      throw error;
+    }
+    void dispatched.catch(() => {
+      this.turnEndedEvents.delete(event.turnId);
+    });
+    return dispatched;
+  }
 
   settleTools(tools: readonly ToolDescription[]): void {
     const normalized = tools.map((tool) => ({
@@ -511,22 +579,7 @@ export class LoopJournal {
         this.writeTurnPrompt();
         this.turn = undefined;
         if (this.dispatcher !== undefined) return;
-        const record: WireRecord = {
-          type: 'turn.ended',
-          agentId: this.agentId,
-          turnId: event.turnId,
-          reason: turnOutcomeReason(event.outcome),
-          error: event.outcome.type === 'failed' && event.outcome.error !== undefined
-            ? toKimiErrorPayload(event.outcome.error)
-            : undefined,
-          durationMs: event.durationMs,
-          stopReason: event.stopReason,
-          requestId: event.requestId,
-          continuation: event.continuation,
-        };
-        this.write(record['requestId'] === undefined
-          ? Object.fromEntries(Object.entries(record).filter(([key]) => key !== 'requestId')) as WireRecord
-          : record);
+        this.writeStandaloneTurnEnded(event);
         return;
       }
       case 'context.settled':
@@ -666,6 +719,25 @@ export class LoopJournal {
   }
 
   private turnId = 0;
+
+  private writeStandaloneTurnEnded(event: Extract<LoopEmitted, { type: 'turn.ended' }>): void {
+    const record: WireRecord = {
+      type: 'turn.ended',
+      agentId: this.agentId,
+      turnId: event.turnId,
+      reason: turnOutcomeReason(event.outcome),
+      error: event.outcome.type === 'failed' && event.outcome.error !== undefined
+        ? toKimiErrorPayload(event.outcome.error)
+        : undefined,
+      durationMs: event.durationMs,
+      stopReason: event.stopReason,
+      requestId: event.requestId,
+      continuation: event.continuation,
+    };
+    this.write(record['requestId'] === undefined
+      ? Object.fromEntries(Object.entries(record).filter(([key]) => key !== 'requestId')) as WireRecord
+      : record);
+  }
 
   private settleContext(messages: readonly Message[], reason: string | undefined): void {
     if (reason === 'compaction') return;

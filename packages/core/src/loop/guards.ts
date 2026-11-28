@@ -1,7 +1,7 @@
 import type { AssistantMessage, Message, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import type { HookToolResult } from './contract/hook';
-import type { Cause } from './contract/outcome';
+import type { Cause, TerminalTurnOutcome } from './contract/outcome';
 
 export type Fields = Record<string, unknown>;
 
@@ -17,6 +17,10 @@ export function isCause(value: unknown): value is Cause {
     (value['message'] === undefined || typeof value['message'] === 'string') &&
     (value['details'] === undefined || isObject(value['details']))
   );
+}
+
+export function isTerminalTurnOutcome(value: unknown): value is TerminalTurnOutcome {
+  return isObject(value) && (value['type'] === 'failed' || value['type'] === 'aborted');
 }
 
 export function isHookToolResult(value: unknown): value is HookToolResult {

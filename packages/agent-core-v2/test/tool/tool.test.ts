@@ -5093,8 +5093,8 @@ describe('Agent tools', () => {
         [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 150, "time": "<time>" }
         [emit] core.loop.event             { "time": "<time>", "agentId": "main", "event": { "type": "step.ended", "turnId": 0, "step": 2, "outcome": { "type": "done" }, "timing": {}, "llmTiming": {} } }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-        [emit] core.loop.event             { "time": "<time>", "agentId": "main", "event": { "type": "turn.ended", "turnId": 0, "outcome": { "type": "done" }, "continuation": "none", "stopReason": "completed" } }
         [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "continuation": "none", "time": "<time>" }
+        [emit] core.loop.event             { "time": "<time>", "agentId": "main", "event": { "type": "turn.ended", "turnId": 0, "outcome": { "type": "done" }, "continuation": "none", "stopReason": "completed" } }
         [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "continuation": "none" }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -5152,8 +5152,8 @@ describe('Agent tools', () => {
         [wire] token_counting.measured        { "agentId": "main", "length": 8, "tokens": 252, "time": "<time>" }
         [emit] core.loop.event                { "time": "<time>", "agentId": "main", "event": { "type": "step.ended", "turnId": 1, "step": 1, "outcome": { "type": "done" }, "timing": {}, "llmTiming": {} } }
         [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-        [emit] core.loop.event                { "time": "<time>", "agentId": "main", "event": { "type": "turn.ended", "turnId": 1, "outcome": { "type": "done" }, "continuation": "none", "stopReason": "completed" } }
         [wire] turn.ended                     { "agentId": "main", "turnId": 1, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ], "continuation": "none", "time": "<time>" }
+        [emit] core.loop.event                { "time": "<time>", "agentId": "main", "event": { "type": "turn.ended", "turnId": 1, "outcome": { "type": "done" }, "continuation": "none", "stopReason": "completed" } }
         [emit] turn.ended                     { "time": "<time>", "agentId": "main", "turnId": 1, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ], "continuation": "none" }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`

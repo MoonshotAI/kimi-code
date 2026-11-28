@@ -806,27 +806,108 @@ describe('loop terminal outcome convergence', () => {
       cause: { by: 'max-steps', reason: 'max_steps' },
     };
 
-    expect(convergeTurnOutcome(doneOutcome, false)).toBe(doneOutcome);
-    expect(convergeTurnOutcome(aborted, true)).toBe(aborted);
-    expect(convergeTurnOutcome(failed, true)).toBe(failed);
-    expect(convergeTurnOutcome(gateBlocked, false)).toBe(gateBlocked);
-    expect(convergeTurnOutcome(stepBlocked, false)).toBe(stepBlocked);
-    expect(convergeTurnOutcome(doneOutcome, true)).toEqual({
+    expect(convergeTurnOutcome(doneOutcome)).toBe(doneOutcome);
+    expect(convergeTurnOutcome(aborted, { filtered: true })).toBe(aborted);
+    expect(convergeTurnOutcome(failed, { filtered: true })).toBe(failed);
+    expect(convergeTurnOutcome(gateBlocked)).toBe(gateBlocked);
+    expect(convergeTurnOutcome(stepBlocked)).toBe(stepBlocked);
+    expect(convergeTurnOutcome(doneOutcome, { filtered: true })).toEqual({
       type: 'failed',
       error: createProviderFilteredError(),
     });
-    expect(convergeTurnOutcome(maxSteps, true)).toEqual({
+    expect(convergeTurnOutcome(maxSteps, { filtered: true })).toEqual({
       type: 'failed',
       error: createProviderFilteredError(),
     });
-    expect(convergeTurnOutcome(maxSteps, false)).toEqual({
+    expect(convergeTurnOutcome(maxSteps)).toEqual({
       type: 'failed',
       error: createMaxStepsExceededError(3),
     });
-    expect(convergeTurnOutcome(maxStepsWithoutDetails, false)).toEqual({
+    expect(convergeTurnOutcome(maxStepsWithoutDetails)).toEqual({
       type: 'failed',
       error: createMaxStepsExceededError(0),
     });
+  });
+
+  it('prioritizes step-hook terminal outcomes over draft failures, filtered finishes, and max_steps', () => {
+    const hookError = new Error('hook failed');
+    const hookAbort = new Error('hook aborted');
+    const terminalFailed = { type: 'failed' as const, error: hookError };
+    const terminalAborted = { type: 'aborted' as const, reason: hookAbort };
+    const maxSteps: TurnOutcome = {
+      type: 'blocked',
+      at: 'step.continuing',
+      cause: { by: 'max-steps', reason: 'max_steps', details: { maxSteps: 2 } },
+    };
+
+    expect(convergeTurnOutcome({ type: 'done' }, { filtered: true, terminal: terminalFailed })).toBe(terminalFailed);
+    expect(convergeTurnOutcome(maxSteps, { terminal: terminalFailed })).toBe(terminalFailed);
+    expect(convergeTurnOutcome({ type: 'failed', error: new Error('llm') }, { terminal: terminalFailed })).toBe(terminalFailed);
+    expect(convergeTurnOutcome({ type: 'done' }, { filtered: true, terminal: terminalAborted })).toBe(terminalAborted);
+    expect(convergeTurnOutcome({ type: 'failed', error: hookError }, { terminal: terminalAborted })).toBe(terminalAborted);
+
+    const actorAborted: TurnOutcome = { type: 'aborted', reason: 'actor' };
+    expect(convergeTurnOutcome(actorAborted, { filtered: true, terminal: terminalFailed })).toBe(actorAborted);
+  });
+
+  it('converges step.starting and step.stopping turnOutcome at the turn boundary while preserving step.ended', async () => {
+    const startingError = new Error('before step failed');
+    const startingLoop = createLoop({
+      requester: fullRequester(() => ({
+        type: 'done',
+        message: createAssistantMessage([{ type: 'text', text: 'unreached' }]),
+      })),
+      executor,
+      hook: {
+        'step.starting': () => ({
+          blocked: { by: 'step', reason: 'step_hook_failed', message: startingError.message },
+          turnOutcome: { type: 'failed', error: startingError },
+        }),
+      },
+    });
+    const startingEvents: LoopEmitted[] = [];
+    startingLoop.subscribe((event) => startingEvents.push(event));
+    await expect(startingLoop.runTurn(createUserMessage('hello'))).resolves.toEqual({
+      type: 'failed',
+      error: startingError,
+    });
+    expect(startingEvents.find((event) => event.type === 'step.ended')).toMatchObject({
+      outcome: { type: 'blocked', at: 'step.starting', cause: { by: 'step', reason: 'step_hook_failed' } },
+    });
+    expect(startingEvents.find((event) => event.type === 'turn.ended')).toMatchObject({
+      outcome: { type: 'failed', error: startingError },
+    });
+    await startingLoop.close();
+
+    const abortReason = new Error('after step aborted');
+    const stoppingLoop = createLoop({
+      requester: fullRequester(() => ({
+        type: 'done',
+        message: createAssistantMessage([{ type: 'text', text: 'partial' }]),
+        finish: { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+      })),
+      executor,
+      hook: {
+        'step.stopping': () => ({
+          type: 'done',
+          cause: { by: 'afterStep', reason: 'step_hook_failed' },
+          turnOutcome: { type: 'aborted', reason: abortReason },
+        }),
+      },
+    });
+    const stoppingEvents: LoopEmitted[] = [];
+    stoppingLoop.subscribe((event) => stoppingEvents.push(event));
+    await expect(stoppingLoop.runTurn(createUserMessage('hello'))).resolves.toEqual({
+      type: 'aborted',
+      reason: abortReason,
+    });
+    expect(stoppingEvents.find((event) => event.type === 'step.ended')).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'afterStep', reason: 'step_hook_failed' } },
+    });
+    expect(stoppingEvents.find((event) => event.type === 'turn.ended')).toMatchObject({
+      outcome: { type: 'aborted', reason: abortReason },
+    });
+    await stoppingLoop.close();
   });
 
   it('serializes LoopError with its coded payload through JSON', () => {

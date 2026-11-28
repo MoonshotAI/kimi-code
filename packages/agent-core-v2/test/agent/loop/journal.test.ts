@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TestInstantiationService } from '#/_base/di/test';
 
+import { CoreLoopEvent } from '#/agent/loop/coreLoopEvent';
 import {
   dehydrateLoopJournalRecord,
   LoopJournal,
@@ -10,12 +11,18 @@ import {
   createLoop,
   createMaxStepsExceededError,
   createProviderFilteredError,
+  type LoopEmitted,
 } from '@moonshot-ai/core/loop/index';
 import { successfulExecutor } from './core/executor';
 import { usableOutputOf } from '@moonshot-ai/core/llm/policy/settle';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
 import { createAssistantMessage, createUserMessage, type ToolCall, type UserMessage } from '@moonshot-ai/core/llm/message';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { TurnCancel, TurnEnded } from '#/agent/loop/turnOps';
+import { PromptCompleted } from '#/agent/prompt/promptEvents';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { AgentEventBusView, EventBusService } from '#/app/event/eventBusService';
+import type { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import type { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
@@ -594,5 +601,117 @@ describe('loop journal terminal records', () => {
       { turnId: 2, reason: 'blocked' },
     ]);
     expect(records.filter((record) => record.type === 'turn.ended')[2]?.['error']).toBeUndefined();
+  });
+
+  it('commits TurnEnded through the dispatcher and publishes CoreLoopEvent after wire enqueue before drain and flush', async () => {
+    const persisted: WireRecord[] = [];
+    const sessionBus = new EventBusService();
+    const ix = new TestInstantiationService();
+    ix.stub(ISessionEventBus, sessionBus);
+    try {
+      const wire = registerTestAgentWire(ix, 'wire/loop-journal-commit', {
+        log: recordingWireLog(persisted),
+        agentId: 'main',
+        eventBus: sessionBus,
+      });
+      const bus = ix.createInstance(AgentEventBusView);
+      ix.stub(IEventBus, bus);
+      const dispatcher = registerTestEventDispatcher(ix);
+      const modelSteps = [{
+        step: 1,
+        role: 'step' as const,
+        model: 'test-model',
+        provider: 'test',
+        isKfc: false,
+        requestId: 'req-1',
+      }];
+      const attribution = {
+        finishModelSteps: vi.fn(() => modelSteps),
+      } as unknown as ISessionRequestAttributionService;
+      const journal = new LoopJournal(wire, 'main', dispatcher, { events: bus, attribution });
+      const order: string[] = [];
+      const enqueued: string[] = [];
+      let flushes = 0;
+      const originalAppendRecord = wire.appendRecord.bind(wire);
+      vi.spyOn(wire, 'appendRecord').mockImplementation((record, dehydrate) => {
+        enqueued.push(record.type);
+        order.push(`wire:${record.type}`);
+        originalAppendRecord(record, dehydrate);
+      });
+      vi.spyOn(wire, 'flush').mockImplementation(async () => {
+        flushes += 1;
+      });
+      let corePublications = 0;
+      bus.subscribe(CoreLoopEvent, (envelope) => {
+        if (envelope.event.type !== 'turn.ended') return;
+        corePublications += 1;
+        expect(enqueued).toEqual(['turn.prompt', 'turn.ended']);
+        expect(flushes).toBe(0);
+        order.push('core:turn.ended');
+        void dispatcher.dispatch(new TurnCancel({ agentId: 'main', turnId: 0, target: 'active', reason: 'aborted' }));
+      });
+      bus.subscribe(TurnEnded, (event) => {
+        order.push(`v2:TurnEnded:${event.reason}`);
+        void dispatcher.dispatch(new TurnCancel({ agentId: 'main', turnId: 1, target: 'active', reason: 'aborted' }));
+      });
+      bus.subscribe(PromptCompleted, () => order.push('v2:PromptCompleted'));
+
+      const event: Extract<LoopEmitted, { type: 'turn.ended' }> = {
+        type: 'turn.ended',
+        turnId: 0,
+        outcome: { type: 'done' },
+        stopReason: 'completed',
+        requestId: 'req-1',
+        continuation: 'none',
+      };
+      journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal', message: prompt('p0') });
+      const committed = journal.commitTurnEnded({
+        event,
+        result: { type: 'completed', steps: 1, truncated: false, stopReason: 'guard_stop' },
+        durationMs: 42,
+        requestId: 'req-1',
+        replyModel: { requestId: 'req-1', model: { provider: 'test', model: 'test-model' } },
+      });
+      await dispatcher.dispatch(new PromptCompleted({
+        agentId: 'main',
+        promptId: 'p0',
+        finishedAt: new Date(0).toISOString(),
+        reason: 'completed',
+      }));
+      await committed;
+      journal.append(event);
+      await wire.settled();
+
+      expect(corePublications).toBe(1);
+      expect(order).toEqual([
+        'wire:turn.prompt',
+        'wire:turn.ended',
+        'core:turn.ended',
+        'v2:TurnEnded:completed',
+        'wire:turn.cancel',
+        'wire:turn.cancel',
+        'wire:prompt.completed',
+        'v2:PromptCompleted',
+      ]);
+      expect(flushes).toBe(0);
+      expect(persisted.filter((record) => record.type === 'turn.ended')).toEqual([
+        expect.objectContaining({
+          type: 'turn.ended',
+          agentId: 'main',
+          turnId: 0,
+          reason: 'completed',
+          durationMs: 42,
+          stopReason: 'guard_stop',
+          requestId: 'req-1',
+          replyModel: { provider: 'test', model: 'test-model' },
+          modelSteps,
+          continuation: 'none',
+        }),
+      ]);
+      journal.dispose();
+    } finally {
+      ix.dispose();
+      sessionBus.dispose();
+    }
   });
 });

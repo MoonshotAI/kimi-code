@@ -88,6 +88,10 @@ class DispatcherStub implements IEventDispatcher {
     }
   }
 
+  onDidCommit(): IDisposable {
+    return { dispose: () => {} };
+  }
+
   async restore(): Promise<void> {
     this.replayRecords(this.persisted);
     this.restorePhase = 'ready';

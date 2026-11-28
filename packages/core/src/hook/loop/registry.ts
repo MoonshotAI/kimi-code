@@ -138,7 +138,11 @@ const chains: HookChains<LoopHooks> = {
       const decided = run.decision?.blocked;
       const blocked = decided === undefined ? run.blocked : signed(decided, item);
       if (blocked !== undefined) {
-        return wrapHookChainResult({ decision: { blocked }, failures });
+        const turnOutcome = run.decision?.turnOutcome;
+        return wrapHookChainResult({
+          decision: { blocked, ...(turnOutcome === undefined ? {} : { turnOutcome }) },
+          failures,
+        });
       }
     }
     return wrapHookChainResult({ failures });

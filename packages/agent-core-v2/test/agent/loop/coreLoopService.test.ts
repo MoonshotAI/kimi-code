@@ -1,6 +1,8 @@
 import { createControlledPromise } from '@antfu/utils';
-import { batch, call, httpError, say, streamError, withUsage } from '@moonshot-ai/testkit/model';
+import { batch, call, finishWith, httpError, say, streamError, withUsage } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
+
+import { abortError } from '#/_base/utils/abort';
 
 import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
@@ -1408,7 +1410,162 @@ pairedTestkitTest(
 );
 
 testkitTest(
-  'publishes enriched core loop events synchronously on the agent bus before journal append and wire writes',
+  'converges onWillBeginStep failures and aborts into core turn.ended without changing step.ended or wire finishReason',
+  async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    const bus = agent.get(IEventBus);
+    const hookError = new Error('before step exploded');
+    const abortReason = abortError('before step aborted');
+    let mode: 'fail' | 'abort' | 'pass' = 'fail';
+    const hook = loop.hooks.onWillBeginStep.register('test-before-step-terminal', async () => {
+      if (mode === 'pass') return;
+      throw mode === 'fail' ? hookError : abortReason;
+    });
+    const coreSteps: Array<Extract<LoopEmitted, { type: 'step.ended' }>> = [];
+    const coreEnds: Array<Extract<LoopEmitted, { type: 'turn.ended' }>> = [];
+    const v2Ends: TurnEnded[] = [];
+    bus.subscribe(CoreLoopEvent, (envelope) => {
+      if (envelope.event.type === 'step.ended') coreSteps.push(envelope.event);
+      if (envelope.event.type === 'turn.ended') coreEnds.push(envelope.event);
+    });
+    bus.subscribe(TurnEnded, (event) => v2Ends.push(event));
+    try {
+      const failed = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'fail before step' }] }).turn;
+      await expect(failed.result).resolves.toEqual({ type: 'failed', steps: 1, error: hookError });
+      mode = 'abort';
+      const aborted = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'abort before step' }] }).turn;
+      await expect(aborted.result).resolves.toEqual({ type: 'cancelled', steps: 1, reason: abortReason });
+      mode = 'pass';
+      model.script(say('recovered after step hooks'));
+      const recovered = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'pass before step' }] }).turn;
+      await expect(recovered.result).resolves.toEqual({ type: 'completed', steps: 1, truncated: false });
+      await loop.settled();
+
+      expect(model.requests('main')).toHaveLength(1);
+      expect(coreSteps).toHaveLength(3);
+      expect(coreSteps[0]!.outcome.type).toBe('blocked');
+      expect(coreSteps[1]!.outcome.type).toBe('blocked');
+      expect(coreSteps[2]!.outcome.type).toBe('done');
+      expect(coreEnds).toHaveLength(3);
+      expect(coreEnds[0]!.outcome).toEqual({ type: 'failed', error: hookError });
+      expect(coreEnds[1]!.outcome).toEqual({ type: 'aborted', reason: abortReason });
+      expect(coreEnds[2]!.outcome.type).toBe('done');
+      expect(v2Ends.map((event) => event.reason)).toEqual(['failed', 'cancelled', 'completed']);
+      expect(v2Ends[0]!.error).toMatchObject({ code: 'internal', message: 'before step exploded' });
+
+      const records = await agent.persistedWireRecords();
+      const stepEnds = records
+        .filter((record) => record.type === 'context.append_loop_event')
+        .map((record) => record['event'] as LoopRecordedEvent)
+        .filter((event) => event.type === 'step.end');
+      expect(stepEnds.map((event) => event.finishReason)).toEqual(['error', 'error', 'end_turn']);
+      await agent.expectResumeMatches();
+    } finally {
+      hook.dispose();
+    }
+  },
+);
+
+testkitTest(
+  'converges onDidFinishStep failures and aborts into core turn.ended while preserving filtered and end_turn step.finishReason',
+  async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    const bus = agent.get(IEventBus);
+    const hookError = new Error('after step exploded');
+    const abortReason = abortError('after step aborted');
+    let mode: 'fail' | 'abort' = 'fail';
+    const hook = loop.hooks.onDidFinishStep.register('test-after-step-terminal', async () => {
+      throw mode === 'fail' ? hookError : abortReason;
+    });
+    const coreSteps: Array<Extract<LoopEmitted, { type: 'step.ended' }>> = [];
+    const coreEnds: Array<Extract<LoopEmitted, { type: 'turn.ended' }>> = [];
+    const v2Ends: TurnEnded[] = [];
+    bus.subscribe(CoreLoopEvent, (envelope) => {
+      if (envelope.event.type === 'step.ended') coreSteps.push(envelope.event);
+      if (envelope.event.type === 'turn.ended') coreEnds.push(envelope.event);
+    });
+    bus.subscribe(TurnEnded, (event) => v2Ends.push(event));
+    try {
+      model.script(finishWith('filtered', say('partial')));
+      const failed = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'fail after step' }] }).turn;
+      await expect(failed.result).resolves.toEqual({ type: 'failed', steps: 1, error: hookError });
+      mode = 'abort';
+      model.script(say('complete text'));
+      const aborted = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'abort after step' }] }).turn;
+      await expect(aborted.result).resolves.toEqual({ type: 'cancelled', steps: 1, reason: abortReason });
+      await loop.settled();
+
+      expect(coreSteps).toHaveLength(2);
+      for (const step of coreSteps) {
+        expect(step.outcome).toMatchObject({ type: 'done', cause: { by: 'afterStep', reason: 'step_hook_failed' } });
+      }
+      expect(coreEnds).toHaveLength(2);
+      expect(coreEnds[0]!.outcome).toEqual({ type: 'failed', error: hookError });
+      expect(coreEnds[1]!.outcome).toEqual({ type: 'aborted', reason: abortReason });
+      expect(v2Ends.map((event) => event.reason)).toEqual(['failed', 'cancelled']);
+      expect(v2Ends[0]!.error).toMatchObject({ code: 'internal', message: 'after step exploded' });
+
+      const records = await agent.persistedWireRecords();
+      const stepEnds = records
+        .filter((record) => record.type === 'context.append_loop_event')
+        .map((record) => record['event'] as LoopRecordedEvent)
+        .filter((event) => event.type === 'step.end');
+      expect(stepEnds.map((event) => event.finishReason)).toEqual(['filtered', 'end_turn']);
+      await agent.expectResumeMatches();
+    } finally {
+      hook.dispose();
+    }
+  },
+);
+
+testkitTest(
+  'converges loop error handler failures and aborts into core turn.ended with the handler reason',
+  async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    const bus = agent.get(IEventBus);
+    await agent.get(IConfigService).set(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1 });
+    const handlerError = new Error('recovery exploded');
+    const abortReason = abortError('recovery aborted');
+    let mode: 'fail' | 'abort' = 'fail';
+    const registration = loop.registerLoopErrorHandler({
+      id: 'test-handler-terminal',
+      match: () => true,
+      handle: async () => {
+        throw mode === 'fail' ? handlerError : abortReason;
+      },
+    });
+    const coreEnds: Array<Extract<LoopEmitted, { type: 'turn.ended' }>> = [];
+    const v2Ends: TurnEnded[] = [];
+    bus.subscribe(CoreLoopEvent, (envelope) => {
+      if (envelope.event.type === 'turn.ended') coreEnds.push(envelope.event);
+    });
+    bus.subscribe(TurnEnded, (event) => v2Ends.push(event));
+    try {
+      model.script(httpError(400, { message: 'bad request one' }), httpError(400, { message: 'bad request two' }));
+      const failed = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'fail recovery' }] }).turn;
+      await expect(failed.result).resolves.toEqual({ type: 'failed', steps: 1, error: handlerError });
+      mode = 'abort';
+      const aborted = submitPromptTurn(loop, { role: 'user', content: [{ type: 'text', text: 'abort recovery' }] }).turn;
+      await expect(aborted.result).resolves.toEqual({ type: 'cancelled', steps: 1, reason: abortReason });
+      await loop.settled();
+
+      expect(coreEnds).toHaveLength(2);
+      expect(coreEnds[0]!.outcome).toEqual({ type: 'failed', error: handlerError });
+      expect(coreEnds[1]!.outcome).toEqual({ type: 'aborted', reason: abortReason });
+      expect(v2Ends.map((event) => event.reason)).toEqual(['failed', 'cancelled']);
+      expect(v2Ends[0]!.error).toMatchObject({ code: 'internal', message: 'recovery exploded' });
+      await agent.expectResumeMatches();
+    } finally {
+      registration.dispose();
+    }
+  },
+);
+
+testkitTest(
+  'publishes streaming core events before journal append and publishes turn.ended at the durable commit boundary',
   async ({ agent, model }) => {
     const bus = agent.get(IEventBus);
     const sessionBus = agent.get(ISessionEventBus);
@@ -1484,6 +1641,7 @@ testkitTest(
       ]);
 
       for (const [index, entry] of observed.entries()) {
+        if (entry.type === 'turn.ended') continue;
         expect(entry.journaledTypes).toEqual(types.slice(0, index));
       }
       expect(observed[0]).toMatchObject({ type: 'prompt.submitted', journalCalls: 0, wireCalls: 0 });
@@ -1491,7 +1649,8 @@ testkitTest(
       expect(stepObservation.wireJson).not.toContain('"step.begin"');
       const endedObservation = observed.find((entry) => entry.type === 'turn.ended')!;
       expect(endedObservation.journaledTypes).not.toContain('turn.ended');
-      expect(endedObservation.wireJson).not.toContain('"turn.ended"');
+      expect(endedObservation.wireJson).toContain('"turn.ended"');
+      expect(endedObservation.wireJson).not.toContain('"prompt.completed"');
 
       expect(turnStarted).toHaveLength(1);
       expect(turnStarted[0]!.message?.content).toEqual([{ type: 'text', text: 'hi core bus' }]);
