@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Keep fullscreen transcript selections and copied text limited to message content, excluding bullets, tree guides, tool-detail indentation, input-frame decorations, and the dedicated scrollbar column.
+Allow fullscreen transcript drags to start from the left gutter and preserve expanded detail indentation in copied text while excluding decorative bullets, tree guides, input frames, and the scrollbar.

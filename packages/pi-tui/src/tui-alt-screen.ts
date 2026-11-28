@@ -113,6 +113,7 @@ interface VisualSelectionPoint {
 	col: number;
 	scrollView?: ScrollView;
 	boundary?: boolean;
+	fromRegionGutter?: boolean;
 }
 
 interface LogicalSelectionPoint extends EditorSelectionPoint {
@@ -1685,7 +1686,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const region = lines[continuing ? row : contentRow]?.selectionRegion;
 			if (!region) return continuing ? { mode: "visual", row, col: 0, scrollView } : undefined;
 			const regionColumn = col - region.column;
-			if (!continuing && (regionColumn < 0 || regionColumn >= region.width)) return undefined;
+			if (!continuing && regionColumn < 0) {
+				return { mode: "visual", row, col: 0, scrollView, fromRegionGutter: true };
+			}
+			if (!continuing && regionColumn >= region.width) return undefined;
 			col = Math.max(0, Math.min(region.width, regionColumn));
 		}
 		return { mode: "visual", row, col, scrollView };
@@ -2216,7 +2220,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			}
 		}
 		const anchor = this.getSelectionPoint(event, scrollView);
-		const word = this.getWordSelection(anchor);
+		const word = anchor.mode === "visual" && anchor.fromRegionGutter
+			? undefined
+			: this.getWordSelection(anchor);
 		const clickCount = this.getClickCount(anchor, word);
 		const range = clickCount === 2 ? word : clickCount === 3 ? this.getLineSelection(anchor) : undefined;
 		this.selectionGranularity = range ? (clickCount === 2 ? "word" : "line") : "character";

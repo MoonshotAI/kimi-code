@@ -702,7 +702,7 @@ describe('fullscreen layout', () => {
     thinking.dispose();
   });
 
-  it('keeps expanded Thought indentation out of selections and copied blank lines', async () => {
+  it('copies expanded Thought indentation while leaving copied blank lines empty', async () => {
     clipboardText.copyTextToClipboard.mockClear();
     const source = 'alpha\n\nbeta';
     const thinking = new ThinkingComponent(source, true, 'finalized');
@@ -736,9 +736,9 @@ describe('fullscreen layout', () => {
       const emptyHighlight = emptyLine.indexOf('\u001B[7m');
       expect(emptyHighlight).toBeGreaterThanOrEqual(0);
       expect(stripAnsi(emptyLine.slice(0, emptyHighlight))).toHaveLength(firstColumn);
-      expect(highlightedText(alt.getScreenLines()[lastRow]!)).toEqual(['beta']);
+      expect(highlightedText(alt.getScreenLines()[lastRow]!)).toEqual(['  beta']);
       expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
-      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith(source);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('alpha\n\n  beta');
     } finally {
       state.ui.stop();
     }
@@ -1162,6 +1162,51 @@ describe('fullscreen layout', () => {
     }
   });
 
+  it('copies expanded row details with indentation and without tree guides', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const first = new ToolCallComponent(
+      { id: 'indent-bash-first', name: 'Bash', args: { command: 'git status' } },
+      { tool_call_id: 'indent-bash-first', output: 'one\ntwo', is_error: false },
+    );
+    const second = new ToolCallComponent(
+      { id: 'indent-bash-second', name: 'Bash', args: { command: 'pnpm test' } },
+      { tool_call_id: 'indent-bash-second', output: 'passed', is_error: false },
+    );
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(first);
+      state.transcriptContainer.addChild(second);
+      state.transcriptContainer.toggleToolOutputExpansion();
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('├ Bash git status'));
+      const lastRow = rows.findIndex((row) => row.includes('passed'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      const firstColumn = rows[firstRow]!.indexOf('Bash git status');
+      const lastColumn = rows[lastRow]!.indexOf('passed') + 'passed'.length - 1;
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith(
+          'Bash git status\n  one\n  two\nBash pnpm test\n  passed',
+        );
+      });
+      expect(highlightedText(alt.getScreenLines()[firstRow]!).join('')).not.toContain('├');
+      expect(highlightedText(alt.getScreenLines()[lastRow]!).join('')).not.toContain('└');
+    } finally {
+      first.dispose();
+      second.dispose();
+      state.ui.stop();
+    }
+  });
+
   it('copies group tail content without highlighting its tree guide', async () => {
     clipboardText.copyTextToClipboard.mockClear();
     const { state, vt } = await mountFullscreen();
@@ -1197,7 +1242,7 @@ describe('fullscreen layout', () => {
     }
   });
 
-  it('keeps left-gutter drags out of selection while clicks toggle a group', async () => {
+  it('starts left-gutter drags at the content boundary while clicks toggle a group', async () => {
     clipboardText.copyTextToClipboard.mockClear();
     const thinking = new ThinkingComponent('reasoning', true, 'finalized');
     thinking.finalize({ known: true, ms: 3000 });
@@ -1208,18 +1253,24 @@ describe('fullscreen layout', () => {
       const alt = state.ui as TuiAltScreen;
       alt.renderNow();
       await vt.flush();
-      let rows = screenRows(vt);
-      let titleRow = rows.findIndex((row) => row.includes('Thought for 3s'));
+      const rows = screenRows(vt);
+      const titleRow = rows.findIndex((row) => row.includes('Thought for 3s'));
       expect(titleRow).toBeGreaterThanOrEqual(0);
       expect(rows.some((row) => row.includes('reasoning'))).toBe(false);
-      let gutterColumn = CHROME_GUTTER;
+      const gutterColumn = CHROME_GUTTER;
+      const titleColumn = rows[titleRow]!.indexOf('Thought for 3s');
+      const dragColumn = titleColumn + 'Thought'.length - 1;
 
       vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
-      vt.sendInput(`\u001B[<32;${gutterColumn + 8};${titleRow + 1}M`);
-      vt.sendInput(`\u001B[<0;${gutterColumn + 8};${titleRow + 1}m`);
-      await vt.waitForRender();
-      expect(alt.hasActiveSelection()).toBe(false);
-      expect(clipboardText.copyTextToClipboard).not.toHaveBeenCalled();
+      vt.sendInput(`\u001B[<32;${dragColumn + 1};${titleRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${dragColumn + 1};${titleRow + 1}m`);
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith('Thought');
+      });
+      alt.renderNow();
+      await vt.flush();
+      expect(alt.hasActiveSelection()).toBe(true);
+      expect(highlightedText(alt.getScreenLines()[titleRow]!).join('')).toBe('Thought');
       expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(false);
 
       vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
@@ -1228,21 +1279,11 @@ describe('fullscreen layout', () => {
       expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(true);
       expect(alt.hasActiveSelection()).toBe(false);
 
-      rows = screenRows(vt);
-      titleRow = rows.findIndex((row) => row.includes('Thought for 3s'));
-      gutterColumn = CHROME_GUTTER;
-      vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
-      vt.sendInput(`\u001B[<32;${gutterColumn + 8};${titleRow + 2}M`);
-      vt.sendInput(`\u001B[<0;${gutterColumn + 8};${titleRow + 2}m`);
-      await vt.waitForRender();
-      expect(alt.hasActiveSelection()).toBe(false);
-      expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(true);
-
       vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
       vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}m`);
       await vt.waitForRender();
       expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(false);
-      expect(clipboardText.copyTextToClipboard).not.toHaveBeenCalled();
+      expect(clipboardText.copyTextToClipboard).toHaveBeenCalledTimes(1);
     } finally {
       state.ui.stop();
     }
@@ -1292,7 +1333,7 @@ describe('fullscreen layout', () => {
       });
       const copied = clipboardText.copyTextToClipboard.mock.calls.at(-1)?.[0];
       expect(copied).toBe(
-        'thought alpha\n\nthought beta\nRead /work/a.ts\nBash pnpm test\n\nassistant alpha\n\nassistant beta',
+        'thought alpha\n\n  thought beta\nRead /work/a.ts\nBash pnpm test\n\nassistant alpha\n\nassistant beta',
       );
     } finally {
       read.dispose();

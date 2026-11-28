@@ -4,6 +4,7 @@ import {
   renderComponentLines,
   renderLineTexts,
   sliceByColumn,
+  stripTerminalSequences,
   textRenderLine,
   visibleWidth,
   withRenderLineSelectionRegion,
@@ -60,11 +61,11 @@ export function flattenTranscriptRow(parts: TranscriptRowParts, width: number): 
       ? sliceByColumn(gutterText, 0, gutterWidth, true)
       : gutterText;
     const blankContent = parts.contentLines[index] !== undefined &&
-      visibleWidth(content.text) === 0 &&
+      stripTerminalSequences(content.text).trim().length === 0 &&
       renderedGutter.trim().length === 0;
     let selectionColumn = gutterWidth;
     if (blankContent && gutterWidth === 0) {
-      blankColumn ??= firstContentGutterWidth(parts, lineCount);
+      blankColumn ??= firstContentColumn(parts, lineCount);
       selectionColumn = Math.min(blankColumn, Math.max(0, width - 1));
     }
     const paddingWidth = blankContent ? 0 : Math.max(0, gutterWidth - visibleWidth(renderedGutter));
@@ -79,12 +80,14 @@ export function flattenTranscriptRow(parts: TranscriptRowParts, width: number): 
   return lines;
 }
 
-function firstContentGutterWidth(parts: TranscriptRowParts, lineCount: number): number {
+function firstContentColumn(parts: TranscriptRowParts, lineCount: number): number {
   for (let index = 0; index < lineCount; index++) {
     const content = parts.contentLines[index];
-    if (content !== undefined && visibleWidth(content.text) > 0) {
-      return Math.max(0, parts.gutterWidths?.[index] ?? parts.gutterWidth);
-    }
+    if (content === undefined) continue;
+    const text = stripTerminalSequences(content.text);
+    if (text.trim().length === 0) continue;
+    const indent = text.match(/^ */)?.[0].length ?? 0;
+    return Math.max(0, parts.gutterWidths?.[index] ?? parts.gutterWidth) + indent;
   }
   return 0;
 }

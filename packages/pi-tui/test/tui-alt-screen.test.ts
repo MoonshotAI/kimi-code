@@ -1993,7 +1993,7 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("does not start region selection from gutters, unmarked rows, or beyond the content region", async () => {
+	it("starts left-gutter drags at the content boundary and rejects other invalid region presses", async () => {
 		const terminal = new RecordingTerminal(20, 3);
 		const copied: string[] = [];
 		const scroll = new ScrollView(
@@ -2015,22 +2015,27 @@ describe("TuiAltScreen", () => {
 		tui.start();
 		try {
 			await terminal.waitForRender();
-			for (const [row, column] of [[0, 0], [1, 0], [0, 7]] as const) {
+			await selectRows(terminal, 0, 0, 0, 4);
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			assert.deepStrictEqual(copied, ["alp"]);
+			assert.deepStrictEqual(highlightedText(tui.getScreenLines()[0]!), ["alp"]);
+
+			for (const [row, column] of [[1, 0], [0, 7]] as const) {
 				tui.resetTextSelection();
 				await selectRows(terminal, row, 2, column, 3);
 				assert.strictEqual(tui.hasActiveSelection(), false);
 			}
-			assert.deepStrictEqual(copied, []);
+			assert.deepStrictEqual(copied, ["alp"]);
 
 			await selectRows(terminal, 0, 2, 2, 19);
 			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
-			assert.deepStrictEqual(copied, ["alpha\n\nomega"]);
+			assert.deepStrictEqual(copied, ["alp", "alpha\n\nomega"]);
 		} finally {
 			tui.stop();
 		}
 	});
 
-	it("dispatches clicks for rejected region presses only when no drag follows", async () => {
+	it("dispatches left-gutter clicks without multi-click expansion and suppresses clicks after drags", async () => {
 		const terminal = new RecordingTerminal(20, 2);
 		let clicks = 0;
 		const target = new MouseRegion(
@@ -2061,14 +2066,17 @@ describe("TuiAltScreen", () => {
 				terminal.sendInput("\x1b[<0;4;1m");
 				await terminal.waitForRender();
 				assert.strictEqual(clicks, 1);
-				assert.strictEqual(tui.hasActiveSelection(), false);
+				assert.strictEqual(tui.hasActiveSelection(), true);
+				tui.resetTextSelection();
 			}
 
-			terminal.sendInput("\x1b[<0;1;1M");
-			terminal.sendInput("\x1b[<0;1;1m");
-			await terminal.waitForRender();
-			assert.strictEqual(clicks, 2);
-			assert.strictEqual(tui.hasActiveSelection(), false);
+			for (let click = 0; click < 2; click++) {
+				terminal.sendInput("\x1b[<0;1;1M");
+				terminal.sendInput("\x1b[<0;1;1m");
+				await terminal.waitForRender();
+				assert.strictEqual(clicks, click + 2);
+				assert.strictEqual(tui.hasActiveSelection(), false);
+			}
 		} finally {
 			tui.stop();
 		}

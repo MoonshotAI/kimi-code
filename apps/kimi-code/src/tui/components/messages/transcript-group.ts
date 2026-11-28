@@ -4,6 +4,7 @@ import {
   RENDER_LINES,
   renderComponentLines,
   renderLineTexts,
+  stripTerminalSequences,
   Text,
   textRenderLine,
   visibleWidth,
@@ -371,19 +372,30 @@ export class TranscriptGroupComponent implements Component {
       }
       const prefix = prefixFor(branch, guide);
       const rowCount = member.row.lines.length;
+      const detailPrefixWidth = visibleWidth(prefix(rowCount === 0));
+      const detailIndentWidth = Math.min(
+        member.detail?.gutterWidth ?? 0,
+        Math.max(0, width - detailPrefixWidth - 1),
+      );
+      const detailIndent = ' '.repeat(detailIndentWidth);
       const sourceLines = [...member.row.lines, ...(member.detail?.lines ?? [])];
       const lines = sourceLines.map((line, lineIndex) => prefixRenderLine(line, prefix(lineIndex === 0)));
       const gutterLines = sourceLines.map((_, lineIndex) => {
         const alignment = lineIndex < rowCount
           ? member.row.gutterLines[lineIndex]?.text ?? ''
-          : ' '.repeat(member.detail?.gutterWidth ?? 0);
+          : '';
         return textRenderLine(`${prefix(lineIndex === 0)}${alignment}`);
       });
-      const contentLines = [...member.row.contentLines, ...(member.detail?.lines ?? [])];
+      const contentLines = [
+        ...member.row.contentLines,
+        ...(member.detail?.lines ?? []).map((line) =>
+          stripTerminalSequences(line.text).trim().length === 0 ? line : prefixRenderLine(line, detailIndent)
+        ),
+      ];
       const gutterWidths = sourceLines.map((_, lineIndex) => {
         const alignment = lineIndex < rowCount
           ? member.row.gutterWidths[lineIndex] ?? 0
-          : member.detail?.gutterWidth ?? 0;
+          : 0;
         return visibleWidth(prefix(lineIndex === 0)) + alignment;
       });
       return { ...member, branch, lines, gutterLines, contentLines, gutterWidths };
