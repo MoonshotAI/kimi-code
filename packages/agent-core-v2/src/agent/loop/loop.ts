@@ -222,6 +222,7 @@ export interface PromptSubmitContext {
   readonly promptMessage: ContextMessage;
   readonly isSteer: boolean;
   readonly hookParts: TextPart[];
+  readonly signal: AbortSignal;
   block: boolean;
 }
 

@@ -1,4 +1,4 @@
-export { KapInvariantError, TestkitError, WaitTimeoutError } from '#/errors';
+export { KapInvariantError, KapSchemaError, TestkitError, WaitTimeoutError } from '#/errors';
 export {
   KapClient,
   type CreateSessionOptions,
@@ -40,6 +40,7 @@ export {
   type KapReplayCheckpoint,
   type KapStreamPages,
 } from '#/kap/recording';
-export { KapEnvelopeError, KapRest, type KapRequest, type QueryValue } from '#/kap/rest';
+export { KapEnvelopeError, KapRest, type KapExchange, type KapExchangeRecorder, type KapRequest, type QueryValue } from '#/kap/rest';
+export { verifyKapSchemas } from '#/kap/schemas';
 export { KapCommandError, KapSocket, WS_BEARER_PROTOCOL_PREFIX, type FrameWaitOptions, type KapUnsubscription, type SubscribeOptions } from '#/kap/socket';
 export type * from '#/kap/types';

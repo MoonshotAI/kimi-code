@@ -5,7 +5,8 @@ import { experimentalFeatureMap } from '#/utils/experimental-features';
 let snapshot: ExperimentalFlagMap = {};
 
 export function setExperimentalFeatures(
-  features: readonly Pick<ExperimentalFeatureState, 'id' | 'enabled'>[],
+  features: readonly (Pick<ExperimentalFeatureState, 'id' | 'enabled'> &
+    Partial<Pick<ExperimentalFeatureState, 'active'>>)[],
 ): void {
   snapshot = experimentalFeatureMap(features);
 }

@@ -295,9 +295,9 @@ export const BUILTIN_SLASH_COMMANDS = [
     completeArgs: addDirArgumentCompletions,
   },
   {
-    name: 'experiments',
-    aliases: ['experimental'],
-    description: 'Manage experimental features',
+    name: 'lab',
+    aliases: ['experiments', 'experimental'],
+    description: 'Open Lab to manage Beta and Experimental features',
     priority: 60,
     availability: 'idle-only',
   },

@@ -28,6 +28,10 @@ import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import {
+  isExperimentalFlagEnabled,
+  setExperimentalFeatures,
+} from '#/tui/commands/experimental-flags';
 import { StatusMessageComponent } from '#/tui/components/messages/status-message';
 import { OAUTH_LOGIN_REQUIRED_CODE } from '#/tui/constant/kimi-tui';
 import { CacheHintDialogComponent } from '#/tui/components/dialogs/cache-hint-dialog';
@@ -16879,6 +16883,46 @@ describe('KimiTUI session rating survey', () => {
       ['Ignored invalid config section [loop_control]: max_steps_per_turn: bad', 'warning'],
     ]);
     expect(unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('refreshes experimental feature snapshot when the experimental config section changes', async () => {
+    let listener: ((change: { domain: string; value: unknown }) => void) | undefined;
+    let promptPredictionEnabled = false;
+    const getExperimentalFeatures = vi.fn(async () => [
+      {
+        id: 'prompt_prediction',
+        title: 'Prompt prediction',
+        description: 'Predict the next prompt.',
+        stage: 'experimental' as const,
+        effectTiming: 'immediate' as const,
+        env: 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION',
+        enabled: promptPredictionEnabled,
+        active: promptPredictionEnabled,
+        source: promptPredictionEnabled ? ('config' as const) : ('default' as const),
+      },
+    ]);
+    try {
+      await makeDriver(makeSession(), {
+        getExperimentalFeatures,
+        onConfigSectionChanged: vi.fn(
+          (fn: (change: { domain: string; value: unknown }) => void) => {
+            listener = fn;
+            return vi.fn();
+          },
+        ),
+      });
+      expect(isExperimentalFlagEnabled('prompt_prediction')).toBe(false);
+
+      promptPredictionEnabled = true;
+      listener?.({ domain: 'experimental', value: { prompt_prediction: true } });
+      await vi.waitFor(() => expect(isExperimentalFlagEnabled('prompt_prediction')).toBe(true));
+
+      promptPredictionEnabled = false;
+      listener?.({ domain: 'experimental', value: { prompt_prediction: false } });
+      await vi.waitFor(() => expect(isExperimentalFlagEnabled('prompt_prediction')).toBe(false));
+    } finally {
+      setExperimentalFeatures([]);
+    }
   });
 });
 

@@ -9,8 +9,10 @@ export const waitForFlag: FlagDefinitionInput = {
   description:
     'Give the model the WaitFor tool so it can wait for background tasks inside the current turn instead of ending the turn and being re-invoked.',
   env: WAIT_FOR_FLAG_ENV,
-  default: true,
-  surface: 'core',
+  stages: {
+    tui: 'experimental',
+  },
+  effectTiming: 'immediate',
 };
 
 registerFlagDefinition(waitForFlag);

@@ -2736,7 +2736,7 @@ describe('AgentGoalService fork boundaries', () => {
 
 describe('AgentGoalService WaitFor regression', () => {
   it('does not launch a goal continuation while WaitFor is pending', async () => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag((id) => id === 'wait_for')));
     try {
       ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
       installControlledTask(ctx);
@@ -2854,6 +2854,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
   it('dispatches a background bash task, waits for it, and completes the goal without a goal continuation', async () => {
     const sh = controllableSpawn();
     const ctx = createTestAgent(
+      appService(IFlagService, stubFlag((id) => id === 'wait_for')),
       execEnvServices({ processRunner: { spawn: sh.spawn } }),
       permissionModeServices('yolo'),
     );
@@ -2906,7 +2907,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
   });
 
   it('waits for a dispatched controlled background task and completes the goal without a goal continuation', async () => {
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(appService(IFlagService, stubFlag((id) => id === 'wait_for')));
     try {
       ctx.configure();
       installControlledTask(ctx);
@@ -2956,6 +2957,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
   it('waits again after a WaitFor timeout and still completes the goal without continuations', async () => {
     const sh = controllableSpawn();
     const ctx = createTestAgent(
+      appService(IFlagService, stubFlag((id) => id === 'wait_for')),
       execEnvServices({ processRunner: { spawn: sh.spawn } }),
       permissionModeServices('yolo'),
     );
@@ -3019,6 +3021,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
   it('runs a ten-turn goal chain with WaitFor in a continuation turn', async () => {
     const sh = controllableSpawn();
     const ctx = createTestAgent(
+      appService(IFlagService, stubFlag((id) => id === 'wait_for')),
       execEnvServices({ processRunner: { spawn: sh.spawn } }),
       permissionModeServices('yolo'),
     );
@@ -3075,8 +3078,8 @@ describe('AgentGoalService WaitFor background scenarios', () => {
 });
 
 describe('AgentGoalService WaitFor flag', () => {
-  it('does not offer WaitFor when the flag is off', async () => {
-    const ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
+  it('does not offer WaitFor by default when the experimental flag is unset', async () => {
+    const ctx = createTestAgent();
     try {
       ctx.configure();
       await ctx.restorePersisted();

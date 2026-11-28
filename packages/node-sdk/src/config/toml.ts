@@ -2,6 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import {
+  experimentalFromToml,
+  experimentalToToml as coreExperimentalToToml,
+} from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { parse as parseToml, stringify as stringifyToml, TomlError } from 'smol-toml';
 
 import { ErrorCodes, KimiError } from '#/errors';
@@ -276,7 +280,7 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
     } else if (targetKey === 'image' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
-      result[targetKey] = cloneRecord(value);
+      result[targetKey] = experimentalFromToml(value);
     } else if (targetKey === 'environments' && isPlainObject(value)) {
       result[targetKey] = transformRecord(value, transformPlainObject);
     } else if (targetKey === 'subagent' && isPlainObject(value)) {
@@ -693,13 +697,9 @@ function imageToToml(image: ImageConfig, rawImage: unknown): Record<string, unkn
 
 function experimentalToToml(
   experimental: ExperimentalConfig,
-  _rawExperimental: unknown,
+  rawExperimental: unknown,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(experimental)) {
-    setDefined(out, key, value);
-  }
-  return out;
+  return coreExperimentalToToml(experimental, rawExperimental) as Record<string, unknown>;
 }
 
 function setHooks(out: Record<string, unknown>, hooks: readonly HookDefConfig[] | undefined): void {

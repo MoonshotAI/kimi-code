@@ -10,6 +10,16 @@ export interface KapRequest {
   readonly signal?: AbortSignal;
 }
 
+export interface KapExchange {
+  readonly method: string;
+  readonly path: string;
+  readonly status: number;
+  readonly json: boolean;
+  readonly body: string | undefined;
+}
+
+export type KapExchangeRecorder = (exchange: Promise<KapExchange>) => void;
+
 export class KapEnvelopeError extends TestkitError {
   constructor(
     readonly method: string,
@@ -28,6 +38,7 @@ export class KapRest {
     readonly origin: string,
     private readonly token: () => string | undefined,
     private readonly fetchImpl: typeof fetch = globalThis.fetch,
+    private readonly onExchange?: KapExchangeRecorder,
   ) {}
 
   async raw(path: string, request: KapRequest = {}): Promise<Response> {
@@ -40,12 +51,11 @@ export class KapRest {
       body = JSON.stringify(request.body);
     }
     const fetchImpl = this.fetchImpl;
-    return fetchImpl(this.url(path, request.query), {
-      method: request.method ?? (request.body === undefined ? 'GET' : 'POST'),
-      headers,
-      body,
-      signal: request.signal,
-    });
+    const url = this.url(path, request.query);
+    const method = request.method ?? (request.body === undefined ? 'GET' : 'POST');
+    const response = await fetchImpl(url, { method, headers, body, signal: request.signal });
+    this.onExchange?.(exchangeOf(method, new URL(url).pathname, response));
+    return response;
   }
 
   async request<T>(path: string, request: KapRequest = {}): Promise<T> {
@@ -91,4 +101,11 @@ export class KapRest {
     }
     return url.toString();
   }
+}
+
+async function exchangeOf(method: string, path: string, response: Response): Promise<KapExchange> {
+  const json = /\bjson\b/i.test(response.headers.get('content-type') ?? '');
+  const copy = json ? response.clone() : undefined;
+  const body = await copy?.text().catch(() => undefined);
+  return { method, path, status: response.status, json, body };
 }

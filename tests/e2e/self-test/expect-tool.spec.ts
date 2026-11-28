@@ -13,6 +13,14 @@ const TWO_WAITS = [
   waitFor({ timeout: 90 }),
   held('reported', say('The build finished.')),
 ] as const;
+const WAIT_FOR_CONFIG = {
+  extra: {
+    experimental: {
+      cli: { wait_for: true },
+      desktop: { wait_for: true },
+    },
+  },
+} as const;
 const ONLY_OVER_ACP = {
   tui: 'This case waits for the usage updates that only an ACP editor receives; the case before it covers the other surfaces.',
   desktop: 'This case waits for the usage updates that only an ACP editor receives; the case before it covers the other surfaces.',
@@ -27,7 +35,7 @@ const DISMISSED_WITHOUT_QUESTION_ON_TUI = 'The terminal UI shows a dismissed que
 
 selfTest('expectTool', {
   positive: {
-    'finds a wait that timed out, then one that saw its task finish': selfTestCase({ except: { acp: FINISHED_WAIT_ON_ACP } }, async ({ product, model, workspace }) => {
+    'finds a wait that timed out, then one that saw its task finish': selfTestCase({ config: WAIT_FOR_CONFIG, except: { acp: FINISHED_WAIT_ON_ACP } }, async ({ product, model, workspace }) => {
       model.script(...TWO_WAITS);
       await product.send('Run the slow build and wait for it.');
       await product.approve();
@@ -40,7 +48,7 @@ selfTest('expectTool', {
       await product.expectReply('The build finished.');
       await product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'finished' });
     }),
-    'finds a wait that timed out, then one that saw its task finish, over ACP': selfTestCase({ except: ONLY_OVER_ACP }, async ({ product, model, workspace }) => {
+    'finds a wait that timed out, then one that saw its task finish, over ACP': selfTestCase({ config: WAIT_FOR_CONFIG, except: ONLY_OVER_ACP }, async ({ product, model, workspace }) => {
       model.script(...TWO_WAITS);
       await product.send('Run the slow build and wait for it.');
       await product.approve();
@@ -53,7 +61,7 @@ selfTest('expectTool', {
       await product.expectTool({ name: 'WaitFor', status: 'done', outcome: 'finished' });
       await product.expectTranscript('The build finished.');
     }),
-    'finds a wait that new input interrupted, before the message that interrupted it': selfTestCase({ except: { acp: NO_STEER_ON_ACP } }, async ({ product, model }) => {
+    'finds a wait that new input interrupted, before the message that interrupted it': selfTestCase({ config: WAIT_FOR_CONFIG, except: { acp: NO_STEER_ON_ACP } }, async ({ product, model }) => {
       model.script(bash({ command: LONG_BUILD, description: 'Run the long build', run_in_background: true }), waitFor({ timeout: 90 }), say('Looking at the logs.'));
       await product.send('Run the long build and wait for it.');
       await product.approve();
@@ -175,7 +183,7 @@ selfTest('expectTool', {
     },
   },
   negative: {
-    'fails when the wait is over, or ended in another way': selfTestCase({ except: { acp: FINISHED_WAIT_ON_ACP } }, async ({ product, model, workspace }) => {
+    'fails when the wait is over, or ended in another way': selfTestCase({ config: WAIT_FOR_CONFIG, except: { acp: FINISHED_WAIT_ON_ACP } }, async ({ product, model, workspace }) => {
       model.script(...TWO_WAITS);
       await product.send('Run the slow build and wait for it.');
       await product.approve();
@@ -188,7 +196,7 @@ selfTest('expectTool', {
       await product.expectReply('The build finished.');
       await expect(product.expectTool({ name: 'WaitFor', status: 'running' })).rejects.toThrow('WaitFor still waiting');
     }),
-    'fails when the wait is over, or ended in another way, over ACP': selfTestCase({ except: ONLY_OVER_ACP }, async ({ product, model, workspace }) => {
+    'fails when the wait is over, or ended in another way, over ACP': selfTestCase({ config: WAIT_FOR_CONFIG, except: ONLY_OVER_ACP }, async ({ product, model, workspace }) => {
       model.script(...TWO_WAITS);
       await product.send('Run the slow build and wait for it.');
       await product.approve();

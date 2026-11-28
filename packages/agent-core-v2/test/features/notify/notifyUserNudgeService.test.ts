@@ -62,7 +62,7 @@ describe('AgentNotifyUserNudgeService', () => {
   async function start(uiCapabilities: readonly HostUiCapability[]): Promise<void> {
     telemetry = [];
     ctx = createTestAgent({ autoConfigure: false, telemetry: recordingTelemetry(telemetry) });
-    Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities });
+    Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities, surface: 'desktop' });
     context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
     flags = ctx.get(IFlagService) as FlagService;

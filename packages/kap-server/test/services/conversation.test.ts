@@ -745,6 +745,20 @@ describe('conversation fold', () => {
     expect(new Set(ordinals).size).toBe(ordinals.length);
   });
 
+  it('reports a turn stopped without a turn.cancel record as cancelled by the user', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'go'),
+      stepBegin(0, 1, 's1'),
+      stepEnd(0, 1, 's1', { finishReason: 'interrupted' }),
+      record('turn.step.interrupted', { turnId: 0, step: 1, stepId: 's1', reason: 'aborted' }),
+      turnEnded(0, 'cancelled'),
+    ]);
+
+    expect(state.turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted', end_reason: 'user_cancelled' });
+    expect(state.turns[0]?.steps.map((step) => step.outcome)).toEqual(['interrupted']);
+  });
+
   it('keeps the newer turn open when a cancelled turn it interleaved with ends', () => {
     const state = fold([
       turnPrompt(0, 'p1'),

@@ -13,6 +13,7 @@ import {
   IAgentStateService,
   ISessionContext,
   IAppendLogStore,
+  IFlagService,
   ISessionIndexMirror,
   logSeed,
   MAIN_AGENT_ID,
@@ -69,6 +70,7 @@ export async function runAcpServerWithStream(
     {
       homeDir,
       configPath,
+      env: process.env,
       clientIdentity: {
         productName: opts.agentInfo?.name ?? 'kimi-code-acp',
         version: opts.agentInfo?.version ?? '0.0.0',
@@ -77,6 +79,7 @@ export async function runAcpServerWithStream(
     },
     [...logSeed(logging), ...(opts.extraSeeds ?? [])],
   );
+  await core.accessor.get(IFlagService).ready;
 
   const klient = createKlient({ scope: core });
   const acpConnection = core.accessor.get(IAcpConnection);

@@ -5,7 +5,11 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
-import { NOTIFY_USER_FLAG_ENV, NOTIFY_USER_FLAG_ID, notifyUserFlag } from '#/features/notify/flag';
+import {
+  NOTIFY_USER_FLAG_ENV,
+  NOTIFY_USER_FLAG_ID,
+  notifyUserFlag,
+} from '#/features/notify/flag';
 import {
   NOTIFY_USER_UI_CAPABILITY,
   notifyUserAvailable,
@@ -39,7 +43,10 @@ describe('NotifyUserTool', () => {
     telemetry = [];
     ctx = createTestAgent({ telemetry: recordingTelemetry(telemetry) });
     ctx.get(IFlagService).setConfigOverrides({ notify_user: true });
-    Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [NOTIFY_USER_UI_CAPABILITY] });
+    Object.assign(ctx.get(IBootstrapService).args, {
+      uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
+      surface: 'desktop',
+    });
     await ctx.restorePersisted();
   });
 
@@ -80,19 +87,29 @@ describe('NotifyUserTool', () => {
     ]);
   });
 
-  it('is off by default, can be turned on, and the default profile allows it', () => {
+  it('is Experimental across tui, desktop, and web using canonical notify_user flag', () => {
     expect(ctx.get(IAgentToolPolicyService).isToolActive(NOTIFY_USER_TOOL_NAME)).toBe(true);
     expect(notifyUserFlag.id).toBe(NOTIFY_USER_FLAG_ID);
     expect(notifyUserFlag.env).toBe(NOTIFY_USER_FLAG_ENV);
-    expect(notifyUserFlag.default).toBe(false);
+    expect(notifyUserFlag.stages).toEqual({
+      tui: 'experimental',
+      desktop: 'experimental',
+      web: 'experimental',
+    });
 
+    const bootstrap = ctx.get(IBootstrapService);
     const flags = ctx.get(IFlagService);
     flags.setConfigOverrides({});
-    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(false);
+    expect(notifyUserAvailable(flags, bootstrap)).toBe(false);
+
+    flags.setConfigOverrides({ beta: true });
+    expect(notifyUserAvailable(flags, bootstrap)).toBe(false);
+
     flags.setConfigOverrides({ notify_user: true });
-    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(true);
-    flags.setConfigOverrides({ notify_user: false });
-    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(false);
+    expect(notifyUserAvailable(flags, bootstrap)).toBe(true);
+
+    Object.assign(bootstrap.args, { surface: 'tui' });
+    expect(notifyUserAvailable(flags, bootstrap)).toBe(true);
   });
 
   it('is offered only when the flag is on and the host renders the update panel', () => {

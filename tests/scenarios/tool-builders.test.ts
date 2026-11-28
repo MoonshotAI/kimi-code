@@ -43,6 +43,11 @@ const test = base.extend<ScenarioFixtures>(
     config: {
       models: { [SECOND_MODEL]: { provider: FAKE_PROVIDER_DEFAULTS.alias, model: 'testkit-model-2', maxContextSize: FAKE_PROVIDER_DEFAULTS.maxContextSize } },
       extra: {
+        experimental: {
+          cli: {
+            wait_for: true,
+          },
+        },
         secondary_model: {
           default_model: FAKE_PROVIDER_DEFAULTS.alias,
           models: { [FAKE_PROVIDER_DEFAULTS.alias]: 'the default model', [SECOND_MODEL]: 'a second model' },

@@ -68,6 +68,10 @@ vi.mock('#/utils/clipboard/clipboard-text', () => ({
   copyTextToClipboard: vi.fn(async () => {}),
 }));
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
+vi.mock('#/utils/process/fd-detect', () => ({
+  detectFdPath: vi.fn(() => null),
+  ensureFdPath: vi.fn(async () => null),
+}));
 const modelMigrationState = vi.hoisted(() => ({ acknowledged: {} as Record<string, string> }));
 vi.mock('#/utils/model-migration-state', () => ({
   readModelMigrationAcknowledgements: vi.fn(async () => ({ ...modelMigrationState.acknowledged })),

@@ -479,12 +479,12 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   async dismissQuestion(): Promise<void> {
     const card = await this.pendingQuestion('dismissQuestion()');
-    const dismissed = (await this.unansweredQuestions()).length;
+    const dismissed = await this.dismissedQuestions();
     const pressed = await card.getByRole('button', { name: DISMISS, exact: true }).last().elementHandle({ timeout: TIMEOUTS.wait });
     if (pressed === null) throw new Error(`dismissQuestion() lost the question before it could dismiss it.\n${await this.describe()}`);
     await pressed.click({ timeout: TIMEOUTS.wait });
     await pressed.waitForElementState('hidden', { timeout: TIMEOUTS.server });
-    await this.wait('the conversation to record that the question was dismissed', async () => ((await this.unansweredQuestions()).length > dismissed ? true : undefined));
+    await this.wait('the conversation to record that the question was dismissed', async () => ((await this.dismissedQuestions()) > dismissed ? true : undefined));
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
@@ -1459,7 +1459,13 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   }
 
   private async collectedAnswers(answer: string): Promise<number> {
+    await this.unfoldGroups();
     return (await this.askedAnswers()).filter((row) => row.answer === answer).length;
+  }
+
+  private async dismissedQuestions(): Promise<number> {
+    await this.unfoldGroups();
+    return (await this.unansweredQuestions()).length;
   }
 
   private async unansweredQuestions(): Promise<string[]> {
