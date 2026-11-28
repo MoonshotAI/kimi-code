@@ -5,3 +5,4 @@
 "NSCameraUsageDescription" = "只有当你允许内嵌浏览器中的网站使用摄像头时，Kimi Code 才会访问你的摄像头。";
 "NSMicrophoneUsageDescription" = "只有当你允许内嵌浏览器中的网站使用麦克风时，Kimi Code 才会访问你的麦克风。";
 "NSLocationUsageDescription" = "只有当你允许内嵌浏览器中的网站使用你的位置时，Kimi Code 才会访问你的位置。";
+"NSLocalNetworkUsageDescription" = "只有当 Agent 通过 Bash 或终端连接本地网络设备（如 NAS、服务器或开发板），或内置浏览器打开本地网络网页时，Kimi Code 才会访问你的本地网络。";

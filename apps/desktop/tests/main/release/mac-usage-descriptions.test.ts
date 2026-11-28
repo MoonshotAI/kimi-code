@@ -17,9 +17,10 @@ function usageKeys(): string[] {
 }
 
 describe('macOS usage descriptions', () => {
-  it('declares the macOS keys for browser camera, microphone and location access', () => {
+  it('declares the macOS keys for browser media, location and local network access', () => {
     expect(usageKeys()).toEqual(expect.arrayContaining([
       'NSCameraUsageDescription',
+      'NSLocalNetworkUsageDescription',
       'NSLocationUsageDescription',
       'NSMicrophoneUsageDescription',
     ]));

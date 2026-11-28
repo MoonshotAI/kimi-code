@@ -176,6 +176,8 @@ module.exports = {
         'Kimi Code only accesses your microphone when you allow a website in the built-in browser to use it.',
       NSLocationUsageDescription:
         'Kimi Code only accesses your location when you allow a website in the built-in browser to use it.',
+      NSLocalNetworkUsageDescription:
+        'Kimi Code only accesses your local network when agents use Bash or the terminal to connect to devices such as a NAS, server, or development board, or when the built-in browser opens webpages on your local network.',
     },
   },
 
