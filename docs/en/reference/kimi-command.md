@@ -30,7 +30,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--worktree [name]` | `-w` | Start a new session in a fresh [Git worktree](../guides/worktrees.md). Generates a name when omitted |
 | `--worktree-base <ref>` | | Starting commit, branch, or tag for the new worktree. Requires `--worktree` |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
+`-r` / `--resume` is an alias for `--session` and is shown in help output: resume a session by ID, or interactively pick when omitted. `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
