@@ -132,6 +132,7 @@ export interface ExperimentalFeatureState {
 export interface IFlagService {
   readonly _serviceBrand: undefined;
 
+  readonly ready: Promise<void>;
   readonly registry: IFlagRegistry;
   readonly profile: ExperimentalProfile;
   readonly onDidChangeFlags: Event<void>;

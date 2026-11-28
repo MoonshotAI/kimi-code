@@ -13,11 +13,11 @@ import {
   IAgentStateService,
   ISessionContext,
   IAppendLogStore,
+  IFlagService,
   ISessionIndexMirror,
   logSeed,
   MAIN_AGENT_ID,
   planKey,
-  resolveBootstrapEnvWithLegacyTowerMigration,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -65,17 +65,12 @@ export async function runAcpServerWithStream(
 ): Promise<RunningAcpServer> {
   const homeDir = resolveKimiHome(opts.homeDir);
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
-  const bootstrapEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-    homeDir,
-    configPath,
-    env: process.env,
-  });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   const { app: core } = bootstrap(
     {
       homeDir,
       configPath,
-      env: bootstrapEnv,
+      env: process.env,
       clientIdentity: {
         productName: opts.agentInfo?.name ?? 'kimi-code-acp',
         version: opts.agentInfo?.version ?? '0.0.0',
@@ -84,6 +79,7 @@ export async function runAcpServerWithStream(
     },
     [...logSeed(logging), ...(opts.extraSeeds ?? [])],
   );
+  await core.accessor.get(IFlagService).ready;
 
   const klient = createKlient({ scope: core });
   const acpConnection = core.accessor.get(IAcpConnection);

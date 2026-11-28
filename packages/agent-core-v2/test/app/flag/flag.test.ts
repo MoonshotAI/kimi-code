@@ -1,19 +1,15 @@
 import {
-  chmodSync,
-  linkSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  realpathSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Worker } from 'node:worker_threads';
+import { basename, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -39,15 +35,16 @@ import {
   type FlagDefinitionInput,
 } from '#/app/flag/flagRegistry';
 import { FlagRegistryService } from '#/app/flag/flagRegistryService';
-import { FlagService, MASTER_ENV } from '#/app/flag/flagService';
 import {
   EXPERIMENTAL_MIGRATIONS_FILENAME,
-  migrateLegacyMasterEnvTower,
-  resolveBootstrapEnvWithLegacyTowerMigration,
-} from '#/app/flag/legacyMasterEnvMigration';
+  FlagService,
+  MASTER_ENV,
+} from '#/app/flag/flagService';
+import { TOWER_FLAG_ENV, TOWER_FLAG_ID } from '#/features/tower/tower';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -417,591 +414,169 @@ describe('FlagService', () => {
   });
 });
 
-describe('migrateLegacyMasterEnvTower', () => {
+const towerTestFlag: FlagDefinitionInput = {
+  id: TOWER_FLAG_ID,
+  title: 'Tower',
+  description: 'Multi-session git coordinator.',
+  env: TOWER_FLAG_ENV,
+  stages: { tui: 'experimental', desktop: 'experimental', web: 'experimental' },
+  effectTiming: 'restart',
+};
+
+describe('FlagService legacy tower migration', () => {
+  let disposables: DisposableStore;
   let tempDir: string;
 
   beforeEach(() => {
+    disposables = new DisposableStore();
     tempDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-tower-migration-'));
   });
 
   afterEach(() => {
+    disposables.dispose();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('stamps fresh installations without creating tower = true even when KIMI_CODE_EXPERIMENTAL_FLAG=1', () => {
-    const outcome = migrateLegacyMasterEnvTower({
-      homeDir: tempDir,
-      env: { [MASTER_ENV]: '1' },
+  function bootDiskFlags(options: {
+    readonly homeDir?: string;
+    readonly configPath?: string;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly profile?: ExperimentalProfile;
+  } = {}) {
+    const targetHome = options.homeDir ?? tempDir;
+    const targetConfigPath = options.configPath ?? join(targetHome, 'config.toml');
+    const profile = options.profile ?? 'cli';
+    const surface: ExperimentalSurface = profile === 'desktop' ? 'desktop' : 'tui';
+    const base = stubBootstrap(targetHome, options.env ?? {}, {
+      surface,
+      experimentalProfile: profile,
     });
-    expect(outcome).toBe('stamped-fresh-install');
-    expect(() => readFileSync(join(tempDir, 'config.toml'), 'utf8')).toThrow();
-    const marker = JSON.parse(
-      readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
-    ) as { legacyMasterEnvTowerMigrated?: boolean };
-    expect(marker.legacyMasterEnvTowerMigrated).toBe(true);
-  });
+    const store = new DisposableStore();
+    disposables.add(store);
+    const ix = store.add(new TestInstantiationService());
+    ix.stub(IBootstrapService, {
+      ...base,
+      configPath: targetConfigPath,
+      configKey: basename(targetConfigPath),
+    });
+    ix.stub(ILogService, stubLog());
+    ix.stub(IFileSystemStorageService, new FileStorageService(targetHome));
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix.set(IFlagRegistry, new SyncDescriptor(FlagRegistryService));
+    ix.set(IFlagService, new SyncDescriptor(FlagService));
+    ix.get(IFlagRegistry).register(towerTestFlag);
+    const flags = ix.get(IFlagService);
+    return { store, flags, startupTowerEnabled: flags.enabled(TOWER_FLAG_ID) };
+  }
 
-  it('stamps both cli and desktop profiles when a fresh installation starts on Desktop first', () => {
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        profile: 'desktop',
-      }),
-    ).toBe('stamped-fresh-install');
+  it('stamps both profiles on fresh install without enabling tower', async () => {
+    const first = bootDiskFlags({ env: { [MASTER_ENV]: '1' }, profile: 'desktop' });
+    expect(first.startupTowerEnabled).toBe(false);
+    await first.flags.ready;
+    expect(existsSync(join(tempDir, 'config.toml'))).toBe(false);
 
     mkdirSync(join(tempDir, 'sessions'));
     writeFileSync(join(tempDir, 'config.toml'), 'default_model = "kimi-k2"\n', 'utf8');
 
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-        profile: 'cli',
-      }),
-    ).toBe('already-migrated');
+    const second = bootDiskFlags({ env: { [MASTER_ENV]: '1' }, profile: 'cli' });
+    expect(second.startupTowerEnabled).toBe(false);
+    await second.flags.ready;
     expect(readFileSync(join(tempDir, 'config.toml'), 'utf8')).toBe('default_model = "kimi-k2"\n');
   });
 
-  it('migrates existing installations with KIMI_CODE_EXPERIMENTAL_FLAG=1 once while preserving comments', () => {
-    writeFileSync(
-      join(tempDir, 'config.toml'),
-      '# user comment\ndefault_model = "kimi-k2"\n',
-      'utf8',
-    );
-    const first = migrateLegacyMasterEnvTower({
-      homeDir: tempDir,
-      env: { [MASTER_ENV]: '1' },
+  it('migrates existing installations per profile via ConfigService while preserving comments and subsequent opt-outs', async () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, '# user comment\ndefault_model = "kimi-k2"\n', 'utf8');
+
+    const pendingRun = bootDiskFlags({ env: { [MASTER_ENV]: '0' } });
+    await pendingRun.flags.ready;
+    expect(existsSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME))).toBe(false);
+
+    const cliRun = bootDiskFlags({ env: { [MASTER_ENV]: '1' }, profile: 'cli' });
+    expect(cliRun.startupTowerEnabled).toBe(true);
+    await cliRun.flags.ready;
+    expect(cliRun.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'config',
+      configValue: true,
     });
-    expect(first).toBe('migrated-tower');
-    const migratedText = readFileSync(join(tempDir, 'config.toml'), 'utf8');
-    expect(migratedText).toContain('# user comment');
-    expect(migratedText).toContain('default_model = "kimi-k2"');
-    expect(migratedText).toContain('tower = true');
-
-    writeFileSync(
-      join(tempDir, 'config.toml'),
-      '[experimental]\ntower = false\n',
-      'utf8',
-    );
-    const second = migrateLegacyMasterEnvTower({
-      homeDir: tempDir,
-      env: { [MASTER_ENV]: '1' },
-    });
-    expect(second).toBe('already-migrated');
-    expect(readFileSync(join(tempDir, 'config.toml'), 'utf8')).toContain('tower = false');
-  });
-
-  it('preserves explicit tower = false or KIMI_CODE_EXPERIMENTAL_TOWER=0 on first run', () => {
-    writeFileSync(
-      join(tempDir, 'config.toml'),
-      '[experimental]\ntower = false\n',
-      'utf8',
-    );
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('stamped-noop');
-    expect(readFileSync(join(tempDir, 'config.toml'), 'utf8')).toContain('tower = false');
-
-    const envBlockedDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-tower-env0-'));
-    try {
-      mkdirSync(join(envBlockedDir, 'sessions'));
-      expect(
-        migrateLegacyMasterEnvTower({
-          homeDir: envBlockedDir,
-          env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '0' },
-        }),
-      ).toBe('stamped-noop');
-    } finally {
-      rmSync(envBlockedDir, { recursive: true, force: true });
-    }
-  });
-
-  it('falls back to env override without stamping marker when config.toml has syntax errors, allowing retry after fix', () => {
-    const configPath = join(tempDir, 'config.toml');
-    writeFileSync(configPath, '[experimental\nbroken =', 'utf8');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: {},
-      }),
-    ).toBe('skipped-error');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('fallback-env');
-    const resolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-      homeDir: tempDir,
-      env: { [MASTER_ENV]: '1' },
-    });
-    expect(resolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
-    expect(() =>
-      readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
-    ).toThrow();
-
-    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('migrated-tower');
-    expect(readFileSync(configPath, 'utf8')).toContain('tower = true');
-  });
-
-  it('keeps migration pending when master env is absent or false so a later master-enabled launch still migrates tower', () => {
-    const configPath = join(tempDir, 'config.toml');
-    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: {},
-      }),
-    ).toBe('pending-master-env');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '0' },
-      }),
-    ).toBe('pending-master-env');
-    expect(() =>
-      readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
-    ).toThrow();
-    expect(readFileSync(configPath, 'utf8')).not.toContain('tower');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('migrated-tower');
-    expect(readFileSync(configPath, 'utf8')).toContain('tower = true');
-  });
-
-  it('falls back to process env Tower override when config.toml cannot be written', () => {
-    mkdirSync(join(tempDir, 'sessions'));
-    const blockerFile = join(tempDir, 'readonly-parent');
-    writeFileSync(blockerFile, 'not-a-directory', 'utf8');
-    const unwritableConfigPath = join(blockerFile, 'config.toml');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        configPath: unwritableConfigPath,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('fallback-env');
-
-    const resolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-      homeDir: tempDir,
-      configPath: unwritableConfigPath,
-      env: { [MASTER_ENV]: '1' },
-    });
-    expect(resolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
-
-    const emptyTowerEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-      homeDir: tempDir,
-      configPath: unwritableConfigPath,
-      env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '' },
-    });
-    expect(emptyTowerEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
-
-    const unparsedTowerEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-      homeDir: tempDir,
-      configPath: unwritableConfigPath,
-      env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: 'placeholder' },
-    });
-    expect(unparsedTowerEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
-  });
-
-  it('updates the symlink target and preserves symlinked config.toml during migration', () => {
-    const dotfilesDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-dotfiles-'));
-    try {
-      const targetConfigPath = join(dotfilesDir, 'config.toml');
-      writeFileSync(targetConfigPath, 'default_model = "kimi-k2"\n', 'utf8');
-      const linkConfigPath = join(tempDir, 'config.toml');
-      symlinkSync(targetConfigPath, linkConfigPath);
-
-      expect(
-        migrateLegacyMasterEnvTower({
-          homeDir: tempDir,
-          env: { [MASTER_ENV]: '1' },
-        }),
-      ).toBe('migrated-tower');
-
-      expect(lstatSync(linkConfigPath).isSymbolicLink()).toBe(true);
-      const targetText = readFileSync(targetConfigPath, 'utf8');
-      expect(targetText).toContain('default_model = "kimi-k2"');
-      expect(targetText).toContain('tower = true');
-
-      writeFileSync(
-        targetConfigPath,
-        'default_model = "kimi-k2.5"\n[experimental]\ntower = true\n',
-        'utf8',
-      );
-      expect(readFileSync(linkConfigPath, 'utf8')).toContain('default_model = "kimi-k2.5"');
-    } finally {
-      rmSync(dotfilesDir, { recursive: true, force: true });
-    }
-  });
-
-  it('preserves read-only and dangling config.toml symlinks and falls back to env override', () => {
-    const readonlyStoreDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-readonly-link-'));
-    const danglingHomeDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-dangling-link-'));
-    const readonlyTarget = join(readonlyStoreDir, 'config.toml');
-    try {
-      writeFileSync(readonlyTarget, 'default_model = "kimi-k2"\n', 'utf8');
-      chmodSync(readonlyTarget, 0o444);
-      const readonlyLink = join(tempDir, 'config.toml');
-      symlinkSync(readonlyTarget, readonlyLink);
-
-      const readonlyResolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      });
-      expect(readonlyResolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
-      expect(lstatSync(readonlyLink).isSymbolicLink()).toBe(true);
-      expect(readFileSync(readonlyTarget, 'utf8')).not.toContain('tower');
-
-      const missingTarget = join(readonlyStoreDir, 'missing-config.toml');
-      const danglingLink = join(danglingHomeDir, 'config.toml');
-      symlinkSync(missingTarget, danglingLink);
-
-      const danglingResolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: danglingHomeDir,
-        env: { [MASTER_ENV]: '1' },
-      });
-      expect(danglingResolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
-      expect(lstatSync(danglingLink).isSymbolicLink()).toBe(true);
-      expect(() =>
-        readFileSync(join(danglingHomeDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
-      ).toThrow();
-
-      writeFileSync(missingTarget, 'default_model = "kimi-k2"\n', 'utf8');
-      expect(
-        migrateLegacyMasterEnvTower({
-          homeDir: danglingHomeDir,
-          env: { [MASTER_ENV]: '1' },
-        }),
-      ).toBe('migrated-tower');
-      expect(lstatSync(danglingLink).isSymbolicLink()).toBe(true);
-      expect(readFileSync(missingTarget, 'utf8')).toContain('tower = true');
-    } finally {
-      try {
-        chmodSync(readonlyTarget, 0o644);
-      } catch {}
-      rmSync(readonlyStoreDir, { recursive: true, force: true });
-      rmSync(danglingHomeDir, { recursive: true, force: true });
-    }
-  });
-
-  it('tracks migration independently per configPath within the same homeDir', () => {
-    const defaultConfig = join(tempDir, 'config.toml');
-    const secondaryConfig = join(tempDir, 'secondary.toml');
-    writeFileSync(defaultConfig, 'default_model = "kimi-k2"\n', 'utf8');
-    writeFileSync(secondaryConfig, 'default_model = "kimi-k2.5"\n', 'utf8');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('migrated-tower');
-    expect(readFileSync(defaultConfig, 'utf8')).toContain('tower = true');
-    expect(readFileSync(secondaryConfig, 'utf8')).not.toContain('tower');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        configPath: secondaryConfig,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('migrated-tower');
-    expect(readFileSync(secondaryConfig, 'utf8')).toContain('tower = true');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        configPath: secondaryConfig,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('already-migrated');
-  });
-
-  it('rejects schema-invalid experimental values without stamping and falls back to env when master flag is set', () => {
-    const configPath = join(tempDir, 'config.toml');
-    writeFileSync(configPath, '[experimental]\ntower = "yes"\n', 'utf8');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: {},
-      }),
-    ).toBe('skipped-error');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('fallback-env');
-    expect(
-      resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
-    ).toBe('1');
-    expect(() =>
-      readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
-    ).toThrow();
-
-    writeFileSync(configPath, '[experimental]\nother = 123\n', 'utf8');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('fallback-env');
-    expect(readFileSync(configPath, 'utf8')).not.toContain('tower');
-    expect(() =>
-      readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
-    ).toThrow();
-
-    writeFileSync(configPath, '[experimental]\nnotify_user = true\n', 'utf8');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('migrated-tower');
-    expect(readFileSync(configPath, 'utf8')).toContain('tower = true');
-  });
-
-  it('falls back to env override when experimental-migrations.json is malformed while honoring explicit tower opt-outs', () => {
-    const configPath = join(tempDir, 'config.toml');
-    const markerPath = join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
-    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
-    writeFileSync(markerPath, '{truncated', 'utf8');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: {},
-      }),
-    ).toBe('skipped-error');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('fallback-env');
-    expect(
-      resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
-    ).toBe('1');
-    expect(readFileSync(configPath, 'utf8')).not.toContain('tower');
-    expect(readFileSync(markerPath, 'utf8')).toBe('{truncated');
-
-    expect(
-      resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '0' },
-      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
-    ).toBe('0');
-
-    writeFileSync(configPath, '[experimental]\ntower = false\n', 'utf8');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('skipped-error');
-    expect(
-      resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
-    ).toBeUndefined();
-  });
-
-  it('falls back to env override without breaking hard-linked config.toml', () => {
-    const configPath = join(tempDir, 'config.toml');
-    const dotfileLinkPath = join(tempDir, 'dotfiles-config.toml');
-    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
-    linkSync(configPath, dotfileLinkPath);
-    const originalIno = statSync(configPath).ino;
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('fallback-env');
-    expect(
-      resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
-    ).toBe('1');
-    expect(statSync(configPath).ino).toBe(originalIno);
-    expect(statSync(dotfileLinkPath).ino).toBe(originalIno);
-    expect(readFileSync(dotfileLinkPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
-  });
-
-  it('re-reads config.toml and preserves concurrent edits made before committing the tower migration', () => {
-    const configPath = join(tempDir, 'config.toml');
-    writeFileSync(configPath, 'default_model = "kimi-old"\n', 'utf8');
-
-    const outcome = migrateLegacyMasterEnvTower({
-      homeDir: tempDir,
-      env: { [MASTER_ENV]: '1' },
-      onBeforeWrite: (attempt) => {
-        if (attempt === 0) {
-          writeFileSync(
-            configPath,
-            'default_model = "kimi-new"\ntelemetry = false\n',
-            'utf8',
-          );
-        }
-      },
-    });
-
-    expect(outcome).toBe('migrated-tower');
-    const finalText = readFileSync(configPath, 'utf8');
-    expect(finalText).toContain('default_model = "kimi-new"');
-    expect(finalText).toContain('telemetry = false');
-    expect(finalText).toContain('tower = true');
-  });
-
-  it('does not persist tower = true into config.toml when KIMI_CODE_EXPERIMENTAL_TOWER=1 is explicitly set', () => {
-    const configPath = join(tempDir, 'config.toml');
-    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '1' },
-      }),
-    ).toBe('stamped-noop');
-    expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
-    expect(
-      resolveBootstrapEnvWithLegacyTowerMigration({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '1' },
-      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
-    ).toBe('1');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-      }),
-    ).toBe('already-migrated');
-    expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
-  });
-
-  it('migrates cli and desktop profiles into their own [experimental.<profile>] buckets independently', () => {
-    const configPath = join(tempDir, 'config.toml');
-    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
-
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-        profile: 'cli',
-      }),
-    ).toBe('migrated-tower');
     const cliText = readFileSync(configPath, 'utf8');
+    expect(cliText).toContain('# user comment');
     expect(cliText).toContain('[experimental.cli]');
     expect(cliText).not.toContain('[experimental.desktop]');
 
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-        profile: 'desktop',
-      }),
-    ).toBe('migrated-tower');
-    const bothText = readFileSync(configPath, 'utf8');
-    expect(bothText).toContain('[experimental.cli]');
-    expect(bothText).toContain('[experimental.desktop]');
+    const desktopRun = bootDiskFlags({ env: { [MASTER_ENV]: '1' }, profile: 'desktop' });
+    expect(desktopRun.startupTowerEnabled).toBe(true);
+    await desktopRun.flags.ready;
+    expect(readFileSync(configPath, 'utf8')).toContain('[experimental.desktop]');
+
+    writeFileSync(configPath, '[experimental]\ntower = false\n', 'utf8');
+    const afterOptOut = bootDiskFlags({ env: { [MASTER_ENV]: '1' }, profile: 'cli' });
+    expect(afterOptOut.startupTowerEnabled).toBe(false);
+    await afterOptOut.flags.ready;
+    expect(readFileSync(configPath, 'utf8')).toContain('tower = false');
   });
 
-  it('serializes concurrent fresh-install marker stamps so neither cli nor desktop loses its stamp', async () => {
-    const markerPath = join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
-    const canonicalConfigKey = join(realpathSync(tempDir), 'config.toml');
-    const syncState = new Int32Array(new SharedArrayBuffer(8));
+  it('respects explicit tower config and TOWER env overrides without rewriting config.toml', async () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
 
-    const worker = new Worker(
-      `
-      const { writeFileSync } = require('node:fs');
-      const { workerData } = require('node:worker_threads');
-      const lockfile = require('proper-lockfile');
-      const state = new Int32Array(workerData.buffer);
-      const release = lockfile.lockSync(workerData.markerPath, {
-        realpath: false,
-        lockfilePath: workerData.markerPath + '.lock',
-      });
-      writeFileSync(
-        workerData.markerPath,
-        JSON.stringify({
-          legacyMasterEnvTowerMigratedProfiles: {
-            desktop: { [workerData.configKey]: true },
-          },
-        }, null, 2) + '\\n',
-        'utf8',
-      );
-      Atomics.store(state, 0, 1);
-      Atomics.notify(state, 0);
-      Atomics.wait(state, 1, 0, 25);
-      release();
-      `,
-      {
-        eval: true,
-        workerData: {
-          buffer: syncState.buffer,
-          markerPath,
-          configKey: canonicalConfigKey,
-        },
-      },
-    );
+    const envOn = bootDiskFlags({ env: { [MASTER_ENV]: '1', [TOWER_FLAG_ENV]: '1' } });
+    expect(envOn.startupTowerEnabled).toBe(true);
+    await envOn.flags.ready;
+    expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
 
-    try {
-      while (Atomics.load(syncState, 0) === 0) {
-        Atomics.wait(syncState, 0, 0, 10);
-      }
-      expect(
-        migrateLegacyMasterEnvTower({
-          homeDir: tempDir,
-          profile: 'cli',
-        }),
-      ).toBe('stamped-fresh-install');
-    } finally {
-      await worker.terminate();
-    }
+    const nextRun = bootDiskFlags({ env: { [MASTER_ENV]: '1' } });
+    expect(nextRun.startupTowerEnabled).toBe(false);
+    await nextRun.flags.ready;
+    expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
+  });
 
-    mkdirSync(join(tempDir, 'sessions'));
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-        profile: 'cli',
-      }),
-    ).toBe('already-migrated');
-    expect(
-      migrateLegacyMasterEnvTower({
-        homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
-        profile: 'desktop',
-      }),
-    ).toBe('already-migrated');
+  it('keeps tower active in memory without stamping when config.toml is invalid or symlinked, and recovers once fixed', async () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, '[experimental\nbroken =', 'utf8');
+
+    const broken = bootDiskFlags({ env: { [MASTER_ENV]: '1' } });
+    expect(broken.startupTowerEnabled).toBe(true);
+    await broken.flags.ready;
+    expect(broken.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'env',
+      configValue: undefined,
+    });
+    expect(existsSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME))).toBe(false);
+
+    rmSync(configPath);
+    const dotfileTarget = join(tempDir, 'dotfiles-config.toml');
+    writeFileSync(dotfileTarget, 'default_model = "kimi-k2"\n', 'utf8');
+    symlinkSync(dotfileTarget, configPath);
+
+    const symlinked = bootDiskFlags({ env: { [MASTER_ENV]: '1' } });
+    expect(symlinked.startupTowerEnabled).toBe(true);
+    await symlinked.flags.ready;
+    expect(lstatSync(configPath).isSymbolicLink()).toBe(true);
+    expect(readFileSync(dotfileTarget, 'utf8')).toBe('default_model = "kimi-k2"\n');
+
+    rmSync(configPath);
+    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
+    const fixed = bootDiskFlags({ env: { [MASTER_ENV]: '1' } });
+    await fixed.flags.ready;
+    expect(readFileSync(configPath, 'utf8')).toContain('tower = true');
+  });
+
+  it('aborts background writes cleanly if disposed before ConfigService.ready settles', async () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
+
+    const run = bootDiskFlags({ env: { [MASTER_ENV]: '1' } });
+    expect(run.startupTowerEnabled).toBe(true);
+    run.store.dispose();
+    await run.flags.ready;
+
+    expect(existsSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME))).toBe(false);
+    expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
   });
 
   it('aligns ConfigChangedEvent experimental payload type with profile buckets', () => {

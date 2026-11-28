@@ -159,8 +159,6 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   getOrRestoreAgent,
-  resolveBootstrapEnvWithLegacyTowerMigration,
-  resolveExperimentalProfile,
   reloadOnStale,
   agentContextOf,
   IAgentChangeNotifierService,
@@ -533,16 +531,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     });
 
     const identity = assertKimiHostIdentity(this.identity);
-    const bootstrapEnv = resolveBootstrapEnvWithLegacyTowerMigration({
-      homeDir: this.homeDir,
-      configPath: this.configPath,
-      profile: resolveExperimentalProfile(identity),
-    });
     const { app } = bootstrap(
       {
         homeDir: this.homeDir,
         configPath: this.configPath,
-        env: bootstrapEnv,
         clientIdentity: identity,
         args: {
           requestHeaders: createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
@@ -568,7 +560,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         return undefined;
       });
     this.klient = createKlient({ scope: app });
-    this.configReady = app.accessor.get(IConfigService).ready;
+    this.configReady = Promise.all([
+      app.accessor.get(IConfigService).ready,
+      app.accessor.get(IFlagService).ready,
+    ]).then(() => {});
     this.installEngineTelemetry(options.telemetry);
     this.modelReady = Promise.all([
       this.configReady,
