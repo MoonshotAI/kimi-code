@@ -15,6 +15,7 @@ import {
   InteractionResolvedEvent,
   PromptCompleted,
   SubagentSpawned,
+  onCoreLoopEvent,
   type DurableAgentRuntimeParticipant,
   type IAgentScopeHandle,
   type IDisposable,
@@ -26,20 +27,16 @@ import {
   ContextClear,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import {
-  AssistantDelta,
-  ThinkingDelta,
-  ToolCallDelta,
   TurnStepInterrupted,
   TurnStepRetrying,
   TurnStepStarted,
-  TurnStepStreamReset,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
 import { TaskStarted } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { isMediaPart } from '@moonshot-ai/core/llm/message';
+import { isMediaPart, type StreamedMessagePart } from '@moonshot-ai/core/llm/message';
 
 import type {
   AssistantMessageItem,
@@ -89,6 +86,12 @@ interface LiveTool {
   readonly outputOffset: number;
 }
 
+interface RetryReset {
+  readonly turnId: number;
+  readonly step: number;
+  readonly stepId?: string;
+}
+
 const RECORD_EVENTS = [
   TurnPrompt,
   ContextAppendMessage,
@@ -131,6 +134,8 @@ export class ConversationFeed implements IDisposable {
   private firstReplay: ((ok: boolean) => void) | undefined;
   private readonly live = new Map<string, LiveItem>();
   private readonly tools = new Map<string, LiveTool>();
+  private readonly streamToolIds = new Map<string, Map<number | string | undefined, string>>();
+  private retryReset: RetryReset | undefined;
   private readonly listeners = new Set<ConversationListener>();
   private readonly disposables: IDisposable[] = [];
   private undoQueue: Promise<unknown> = Promise.resolve();
@@ -248,26 +253,38 @@ export class ConversationFeed implements IDisposable {
     this.listeners.clear();
     this.live.clear();
     this.tools.clear();
+    this.streamToolIds.clear();
+    this.retryReset = undefined;
   }
 
   private async start(): Promise<void> {
     const bus = this.handle.accessor.get(IEventBus);
     this.disposables.push(
-      bus.subscribe(AssistantDelta, (event) => {
-        this.onTextDelta('assistant_message', event.turnId, event.block, event.delta);
-      }),
-      bus.subscribe(ThinkingDelta, (event) => {
-        this.onTextDelta('reasoning', event.turnId, event.block, event.delta);
-      }),
-      bus.subscribe(ToolCallDelta, (event) => {
-        this.onToolCallDelta(event.turnId, event.toolCallId, event.name, event.argumentsPart);
+      onCoreLoopEvent(bus, 'llm.delta.part', (event) => {
+        this.onStreamPart(event.turnId, event.step, event.block, event.part);
       }),
       bus.subscribe(ToolUpdated, (event) => {
         this.onToolUpdated(event);
       }),
-      bus.subscribe(TurnStepStreamReset, (event) => {
-        this.flushPending();
-        this.dropLive((entry) => entry.stepId === event.stepId);
+      onCoreLoopEvent(bus, 'llm.retry', (event) => {
+        this.onLlmRetry(event.turnId, event.step);
+      }),
+      onCoreLoopEvent(bus, 'llm.requested', (event) => {
+        this.clearRetryReset(event.turnId, event.step);
+      }),
+      onCoreLoopEvent(bus, 'step.started', (event) => {
+        this.clearRetryReset(event.turnId, event.step);
+      }),
+      onCoreLoopEvent(bus, 'step.ended', (event) => {
+        this.streamToolIds.delete(stepKey(event.turnId, event.step));
+        this.clearRetryReset(event.turnId, event.step);
+      }),
+      onCoreLoopEvent(bus, 'turn.ended', (event) => {
+        const prefix = `${event.turnId}:`;
+        for (const key of this.streamToolIds.keys()) {
+          if (key.startsWith(prefix)) this.streamToolIds.delete(key);
+        }
+        if (this.retryReset?.turnId === event.turnId) this.retryReset = undefined;
       }),
       bus.subscribe(WarningIssued, (event) => {
         this.notify({ level: 'warning', title: event.message, code: event.code });
@@ -323,6 +340,8 @@ export class ConversationFeed implements IDisposable {
     this.beforeReplay ??= this.state;
     this.dropLive(() => true);
     this.tools.clear();
+    this.streamToolIds.clear();
+    this.retryReset = undefined;
   }
 
   private didReplay(replayed: ConversationState, ok: boolean): void {
@@ -341,11 +360,18 @@ export class ConversationFeed implements IDisposable {
 
   private commit(next: ConversationState): void {
     this.state = next;
-    if (!this.started || this.beforeReplay !== undefined || this.flushQueued) return;
-    this.flushQueued = true;
-    queueMicrotask(() => {
-      this.flushPending();
-    });
+    if (!this.started || this.beforeReplay !== undefined) return;
+    if (!this.flushQueued) {
+      this.flushQueued = true;
+      queueMicrotask(() => {
+        this.flushPending();
+      });
+    }
+    const reset = this.retryReset;
+    if (reset === undefined || !retryStepSettled(next, reset)) return;
+    this.retryReset = undefined;
+    this.flushPending();
+    if (reset.stepId !== undefined) this.dropLive((entry) => entry.stepId === reset.stepId);
   }
 
   private flush(): void {
@@ -424,6 +450,58 @@ export class ConversationFeed implements IDisposable {
     if (before.type !== 'tool_call' || after.type !== 'tool_call') return;
     const set = changedFields(before, after);
     if (Object.keys(set).length > 0) this.emit({ type: 'item.updated', turn_id: turnId, item_id: after.item_id, set });
+  }
+
+  private onStreamPart(
+    turnNumber: number,
+    step: number,
+    block: number | undefined,
+    part: StreamedMessagePart,
+  ): void {
+    if (this.beforeReplay !== undefined) return;
+    switch (part.type) {
+      case 'text':
+        this.onTextDelta('assistant_message', turnNumber, block, part.text);
+        return;
+      case 'think':
+        if (part.hidden === true) return;
+        this.onTextDelta('reasoning', turnNumber, block, part.think);
+        return;
+      case 'function': {
+        const key = stepKey(turnNumber, step);
+        const ids = this.streamToolIds.get(key) ?? new Map<number | string | undefined, string>();
+        ids.set(part._streamIndex, part.id);
+        this.streamToolIds.set(key, ids);
+        this.onToolCallDelta(turnNumber, part.id, part.name, part.arguments ?? undefined);
+        return;
+      }
+      case 'tool_call_part': {
+        const toolCallId = this.streamToolIds.get(stepKey(turnNumber, step))?.get(part.index);
+        if (toolCallId === undefined) return;
+        this.onToolCallDelta(turnNumber, toolCallId, undefined, part.argumentsPart ?? undefined);
+        return;
+      }
+      case 'image_url':
+      case 'audio_url':
+      case 'video_url':
+        return;
+    }
+  }
+
+  private onLlmRetry(turnNumber: number, step: number): void {
+    this.streamToolIds.delete(stepKey(turnNumber, step));
+    this.clearRetryReset(turnNumber, step);
+    if (this.beforeReplay !== undefined || !this.started) return;
+    const target = this.liveTarget(turnNumber);
+    this.retryReset = {
+      turnId: turnNumber,
+      step,
+      stepId: target?.stepIndex === step ? target.stepId : undefined,
+    };
+  }
+
+  private clearRetryReset(turnNumber: number, step: number): void {
+    if (this.retryReset?.turnId === turnNumber && this.retryReset.step === step) this.retryReset = undefined;
   }
 
   private onTextDelta(
@@ -589,6 +667,16 @@ export class ConversationFeed implements IDisposable {
       }
     }
   }
+}
+
+function stepKey(turnId: number, step: number): string {
+  return `${turnId}:${step}`;
+}
+
+function retryStepSettled(state: ConversationState, reset: RetryReset): boolean {
+  const turn = state.turns.findLast((candidate) => candidate.turn_number === reset.turnId);
+  if (turn === undefined || turn.status !== 'running') return true;
+  return state.steps[turn.turn_id]?.findLast((candidate) => candidate.index === reset.step)?.ended ?? false;
 }
 
 function opensWithUserInput(turn: ConversationTurn): boolean {
