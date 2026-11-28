@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { MermaidPreferenceSelectorComponent } from '#/tui/components/dialogs/mermaid-preference-selector';
 import {
   SelectionCopyModeSelectorComponent,
+  ScrollSpeedSelectorComponent,
   SettingsSelectorComponent,
   ThinkingDisplaySelectorComponent,
   ToolCallDensitySelectorComponent,
@@ -64,6 +65,7 @@ describe('transcript display selectors', () => {
     expect(regular).not.toContain('Tool call density');
     expect(regular).not.toContain('Thinking folding');
     expect(regular).not.toContain('Selection copying');
+    expect(regular).not.toContain('Scroll speed');
 
     const fullscreen = settingsText(true).split('\n');
     expect(fullscreen).toContain('    Tool call density');
@@ -71,6 +73,10 @@ describe('transcript display selectors', () => {
     expect(fullscreen).toContain('    Thinking folding');
     expect(fullscreen).toContain('    Choose whether to fold finished thinking.');
     expect(fullscreen).toContain('    Selection copying');
+    expect(fullscreen).toContain('    Scroll speed');
+    expect(fullscreen).toContain(
+      '    Choose how many lines the mouse wheel scrolls in fullscreen mode.',
+    );
   });
 
   it('offers compact, balanced, and detailed tool calls with the current marker', () => {
@@ -302,6 +308,55 @@ describe('SelectionCopyModeSelectorComponent', () => {
     });
 
     expect(strip(picker.render(100).join('\n'))).toContain('❯ Right-click ← current');
+  });
+});
+
+describe('ScrollSpeedSelectorComponent', () => {
+  it('renders the presets with the current marker and selects typed values via Enter and Space', () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const picker = new ScrollSpeedSelectorComponent({
+      currentValue: 'auto',
+      onSelect,
+      onCancel,
+    });
+    const lines = picker.render(100).map(strip);
+    expect(lines).toContain(' Scroll speed');
+    expect(lines).toContain('  ❯ Auto ← current');
+    expect(lines).toContain('    Automatically speed up when scrolling fast.');
+    expect(lines).toContain('    1 line');
+    expect(lines).toContain('    2 lines');
+    expect(lines).toContain('    3 lines');
+    expect(lines).toContain('    5 lines');
+    expect(lines).toContain('    10 lines');
+    expect(lines.join('\n')).not.toContain('(custom)');
+
+    picker.handleInput('\r');
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\u001B[B');
+    picker.handleInput(' ');
+    picker.handleInput('\u001B');
+
+    expect(onSelect.mock.calls).toEqual([['auto'], [2]]);
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('appends a hand-written custom value from tui.toml and selects it as a number', () => {
+    const onSelect = vi.fn();
+    const picker = new ScrollSpeedSelectorComponent({
+      currentValue: 4,
+      onSelect,
+      onCancel: () => {},
+    });
+    const lines = picker.render(100).map(strip);
+    expect(lines).toContain('  ❯ 4 lines (custom) ← current');
+    expect(lines).toContain('    Custom value from tui.toml.');
+    expect(lines.indexOf('  ❯ 4 lines (custom) ← current')).toBeGreaterThan(
+      lines.indexOf('    10 lines'),
+    );
+
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith(4);
   });
 });
 

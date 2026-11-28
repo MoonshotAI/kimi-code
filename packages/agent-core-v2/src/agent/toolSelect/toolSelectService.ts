@@ -22,6 +22,11 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IConfigService } from '#/app/config/config';
+import { DEFAULT_MCP_STARTUP_WAIT_MS, MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { sanitizeMcpNamePart } from '#/mcpCore/tool-naming';
+import { timeoutOutcome } from '#/_base/utils/promise';
 
 import {
   collectCurrentDynamicTools,
@@ -76,6 +81,8 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
+    @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
+    @IConfigService private readonly configService: IConfigService,
   ) {
     super();
     this.states.contributeState(toolSelectKey);
@@ -123,11 +130,26 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private async reconcileForRequest(signal: AbortSignal | undefined, publishInitialization: boolean): Promise<void> {
     const work = this.reconcileTail.then(async () => {
+      await this.awaitInitialMcp(signal);
       if (publishInitialization) await this.publishDeferredInitialization();
       await this.reconcile(signal, publishInitialization);
     });
     this.reconcileTail = work.catch(() => {});
     await (signal === undefined ? work : abortable(work, signal));
+  }
+
+  private async awaitInitialMcp(signal?: AbortSignal): Promise<void> {
+    const waitMs =
+      this.configService.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs ?? DEFAULT_MCP_STARTUP_WAIT_MS;
+    const remainingMs = waitMs - this.mcpHandle.connectionManager.initialLoadDurationMs();
+    if (remainingMs <= 0) return;
+    const deadline = timeoutOutcome(remainingMs, undefined);
+    try {
+      const settled = Promise.race([this.mcpHandle.ready, deadline]);
+      await (signal === undefined ? settled : abortable(settled, signal));
+    } finally {
+      deadline.clear();
+    }
   }
 
   defaultTools(disclosure = this.enabled()): readonly Tool[] {
@@ -148,6 +170,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     base: readonly Tool[] | undefined,
     disclosure = this.enabled(),
   ): readonly Tool[] {
+    // Non-negotiable product decision: top-level tools come only from shaping the frozen loop
+    // baseline, never from the live registry. Tools outside the baseline (late-connected MCP
+    // servers or mid-session list_changed additions) are announced in reminders only: models
+    // with dynamically_loaded_tools load them via select_tools; other models cannot call them
+    // in this session. Appending them would invalidate the provider prompt cache prefix.
     const tools = base ?? [];
     let shaped: Tool[] | undefined;
     for (let index = 0; index < tools.length; index += 1) {
@@ -427,8 +454,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       if (!this.isDynamicallyLoadable(previous) || !this.isDynamicallyLoadable(next)) return [];
       return [{ removed: previous, added: next }];
     });
+    const pendingMcpPrefixes = this.mcpHandle.connectionManager.list()
+      .filter((entry) => entry.status === 'pending')
+      .map((entry) => `mcp__${sanitizeMcpNamePart(entry.name)}__`);
     const removed = [
-      ...current.filter((tool) => !activeNames.has(tool.name)),
+      ...current.filter((tool) =>
+        !activeNames.has(tool.name) &&
+        !(tool.source === 'mcp' && pendingMcpPrefixes.some((prefix) => tool.name.startsWith(prefix)))),
       ...replaced.map((change) => change.removed),
     ];
     const added = [
@@ -659,12 +691,15 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         continue;
       }
       const removed = lifecycle.removed.filter((name) => declaredDynamicTools.delete(name));
-      if (removed.length === lifecycle.removed.length) {
+      const text = lifecycle.added.some((name) => lifecycle.removed.includes(name))
+        ? wrapSystemReminder(renderLoadableToolsAnnouncement(lifecycle.added, lifecycle.removed))
+        : part.text;
+      if (removed.length === lifecycle.removed.length && text === part.text) {
         content?.push(part);
         continue;
       }
       if (content === undefined) content = message.content.slice(0, i);
-      content.push({ ...part, meta: { ...lifecycle, removed } });
+      content.push({ ...part, text, meta: { ...lifecycle, removed } });
     }
     return content === undefined ? message : { ...message, content };
   }

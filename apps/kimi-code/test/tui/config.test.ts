@@ -6,16 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_TUI_CONFIG,
+  DEFAULT_WHEEL_SCROLL_LINES,
   detectTuiModeFallback,
   INVALID_TUI_CONFIG_MESSAGE,
   loadTuiConfig,
+  normalizeTuiConfig,
   parseTuiConfig,
   renderTuiConfig,
   removeLegacySurveySetting,
   resolveAnimationFrameRate,
   resolveTuiMode,
+  resolveWheelScrollLines,
   saveTuiConfig,
   TuiConfigParseError,
+  type WheelScrollLines,
 } from '#/tui/config';
 
 let dir: string;
@@ -199,6 +203,94 @@ alt_wheel_acceleration = false
       `[tui.toml] ignoring invalid mouse.wheel_scroll_lines value: ${String(value)}`,
     ]);
   });
+
+  it('writes wheel_scroll_lines as auto in the mouse table when creating the default config', async () => {
+    const created = await loadTuiConfig(filePath);
+
+    expect(created.mouse?.wheelScrollLines).toBe(DEFAULT_WHEEL_SCROLL_LINES);
+    expect(resolveWheelScrollLines(created.mouse?.wheelScrollLines)).toBe(DEFAULT_WHEEL_SCROLL_LINES);
+    expect(resolveWheelScrollLines(undefined)).toBe('auto');
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain(
+      '\n[mouse]\nwheel_scroll_lines = "auto" # "auto" or a positive whole number of lines\n',
+    );
+    expect((await loadTuiConfig(filePath)).mouse?.wheelScrollLines).toBe('auto');
+  });
+
+  it.each<readonly [string, WheelScrollLines, string]>([
+    ['"auto"', 'auto', 'wheel_scroll_lines = "auto"'],
+    ['3', 3, 'wheel_scroll_lines = 3'],
+    ['7', 7, 'wheel_scroll_lines = 7'],
+  ])(
+    'parses legacy top-level wheel_scroll_lines = %s and round-trips it through the mouse table',
+    async (tomlLiteral, expected, renderedPrefix) => {
+      const parsed = parseTuiConfig(`theme = "dark"\nwheel_scroll_lines = ${tomlLiteral}\n`);
+      expect(parsed.mouse?.wheelScrollLines).toBe(expected);
+      expect(resolveWheelScrollLines(parsed.mouse?.wheelScrollLines)).toBe(expected);
+
+      await saveTuiConfig({ ...parsed, theme: 'light' }, filePath);
+      const text = readFileSync(filePath, 'utf-8');
+      expect(text).toContain(
+        `\n${renderedPrefix} # "auto" or a positive whole number of lines\n`,
+      );
+      expect(text).not.toContain('# wheel_scroll_lines');
+      expect(await loadTuiConfig(filePath)).toMatchObject({
+        theme: 'light',
+        mouse: { wheelScrollLines: expected },
+      });
+    },
+  );
+
+  it.each<readonly [string, string]>([
+    ['0', '0'],
+    ['-1', '-1'],
+    ['0.5', '0.5'],
+    ['1.5', '1.5'],
+    ['"3"', '"3"'],
+    ['"Auto"', '"Auto"'],
+    ['true', 'true'],
+    ['nan', 'NaN'],
+    ['inf', 'Infinity'],
+    ['1e20', '100000000000000000000'],
+    ['[1, 2]', '[1,2]'],
+  ])(
+    'warns and falls back to auto for invalid TOML wheel_scroll_lines = %s without failing the file',
+    async (tomlLiteral, shown) => {
+      const warnings: string[] = [];
+      writeFileSync(filePath, `theme = "dark"\nwheel_scroll_lines = ${tomlLiteral}\n`, 'utf-8');
+
+      const config = await loadTuiConfig(filePath, (message) => warnings.push(message));
+
+      expect(config.theme).toBe('dark');
+      expect(config.mouse?.wheelScrollLines).toBe('auto');
+      expect(warnings).toEqual([
+        `[tui.toml] ignoring invalid wheel_scroll_lines value: ${shown} (expected "auto" or a positive integer)`,
+      ]);
+    },
+  );
+
+  it.each<readonly [unknown, string]>([
+    [99999999999999999999n, '99999999999999999999'],
+    [[99999999999999999999n], '["99999999999999999999"]'],
+    [{ lines: 99999999999999999999n }, '{"lines":"99999999999999999999"}'],
+  ])(
+    'formats BigInt and nested BigInt wheel_scroll_lines values without throwing during normalization',
+    (rawValue, shown) => {
+      const warnings: string[] = [];
+
+      const config = normalizeTuiConfig(
+        { theme: 'dark', wheel_scroll_lines: rawValue },
+        (message) => warnings.push(message),
+      );
+
+      expect(config.theme).toBe('dark');
+      expect(config.mouse?.wheelScrollLines).toBe('auto');
+      expect(warnings).toEqual([
+        `[tui.toml] ignoring invalid wheel_scroll_lines value: ${shown} (expected "auto" or a positive integer)`,
+      ]);
+    },
+  );
 
   it('normalizes an empty editor command to auto-detect', () => {
     const config = parseTuiConfig(`

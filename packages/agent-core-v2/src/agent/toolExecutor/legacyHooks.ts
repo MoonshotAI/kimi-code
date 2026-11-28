@@ -112,6 +112,32 @@ export function legacyDidExecuteContext(context: LegacyAfterContext): ToolDidExe
   };
 }
 
+export function legacyResultToToolResult(
+  context: LegacyAfterContext,
+  result: ExecutableToolResult,
+): ToolResult {
+  const converted = toLegacyToolReturn(result, context.call.name);
+  if (converted.outcome === 'failed') {
+    return {
+      ...context.result,
+      content: converted.content,
+      outcome: context.result.outcome.type === 'failed'
+        ? context.result.outcome
+        : {
+            type: 'failed',
+            error: {
+              outcome: 'failed',
+              type: 'error',
+              phase: 'after-execute',
+              reason: converted.reason,
+              data: converted.data,
+            },
+          },
+    };
+  }
+  return { ...context.result, content: converted.content, outcome: { type: 'success' } };
+}
+
 export function legacyResultOf(context: LegacyAfterContext): ExecutableToolResult {
   const prepared = context.prepared;
   if (prepared?.kind === 'synthetic') return prepared.result;

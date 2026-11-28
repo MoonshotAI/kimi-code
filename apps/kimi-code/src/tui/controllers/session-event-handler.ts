@@ -29,6 +29,7 @@ import type {
   TurnStepInterruptedEvent,
   TurnStepRetryingEvent,
   TurnStepStartedEvent,
+  TurnStepStreamResetEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -42,6 +43,9 @@ import {
 import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
+  PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE,
+  PROVIDER_FILTERED_TURN_STOPPED_NOTICE,
+  TURN_INTERRUPTED_BY_USER_NOTICE,
 } from '../constant/kimi-tui';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import {
@@ -189,6 +193,7 @@ export class SessionEventHandler {
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
+  private turnHadAssistantTextBeforeStep = false;
   private pluginCommandTurns: Map<string, string> = new Map();
   private pluginMcpToolsUsedInTurn: Set<string> = new Set();
   private pendingModelBlockedFallback: GoalChange | undefined;
@@ -213,6 +218,7 @@ export class SessionEventHandler {
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
+    this.turnHadAssistantTextBeforeStep = false;
     this.pluginCommandTurns.clear();
     this.pluginMcpToolsUsedInTurn.clear();
     this.pendingModelBlockedFallback = undefined;
@@ -323,6 +329,7 @@ export class SessionEventHandler {
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
       case 'turn.step.retrying': this.handleStepRetrying(event); break;
+      case 'turn.step.stream_reset': this.handleStepStreamReset(event); break;
       case 'tool.updated': this.handleToolUpdated(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
@@ -442,10 +449,10 @@ export class SessionEventHandler {
     }
     this.subAgentEventHandler.dropForegroundOnlyActivityRecords();
     if (event.reason === 'failed' && event.error?.code === 'provider.filtered') {
-      this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
+      this.host.showStatus(PROVIDER_FILTERED_TURN_STOPPED_NOTICE, 'error');
     }
     if (event.reason === 'blocked') {
-      this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
+      this.host.showStatus(PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE, 'error');
     }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
@@ -479,6 +486,7 @@ export class SessionEventHandler {
     this.host.streamingUI.timeline.abandonUnstarted();
     this.host.streamingUI.flushNow();
     this.host.streamingUI.setStep(event.step);
+    this.turnHadAssistantTextBeforeStep = this.currentTurnHasAssistantText;
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
     this.host.patchLivePane({
@@ -522,6 +530,12 @@ export class SessionEventHandler {
       ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
       : undefined;
     this.host.showNotice(title, detail);
+  }
+
+  private handleStepStreamReset(event: TurnStepStreamResetEvent): void {
+    if (event.step !== this.host.streamingUI.getTurnContext().step) return;
+    this.host.streamingUI.discardStepOutput();
+    this.currentTurnHasAssistantText = this.turnHadAssistantTextBeforeStep;
   }
 
   private handleStepRetrying(event: TurnStepRetryingEvent): void {
@@ -597,7 +611,7 @@ export class SessionEventHandler {
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
       if (event.message === undefined || event.message === '') {
-        this.host.showStatus('Interrupted by user', 'error');
+        this.host.showStatus(TURN_INTERRUPTED_BY_USER_NOTICE, 'error');
       } else {
         this.host.showError(event.message);
       }

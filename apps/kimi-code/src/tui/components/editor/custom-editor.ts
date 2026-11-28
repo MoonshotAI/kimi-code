@@ -28,7 +28,7 @@ import { extractAtPrefix } from './file-mention-provider';
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
 import { WrappingSelectList } from './wrapping-select-list';
 
-const ANSI_SGR = /\u001B\[[0-9;]*m/g;
+const ANSI_NON_VISIBLE = /\u001B\[[0-9;]*m|\u001B_[^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
 
 const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
 const BRACKET_PASTE_START = '\u001B[200~';
@@ -79,7 +79,7 @@ export function normalizeCapsLockedCtrl(data: string): string {
 function mapVisibleIdxToRaw(line: string, visibleIdx: number): number {
   let visibleCount = 0;
   let i = 0;
-  const re = new RegExp(ANSI_SGR.source, 'y');
+  const re = new RegExp(ANSI_NON_VISIBLE.source, 'y');
   while (i < line.length && visibleCount < visibleIdx) {
     re.lastIndex = i;
     const m = re.exec(line);
@@ -93,8 +93,8 @@ function mapVisibleIdxToRaw(line: string, visibleIdx: number): number {
   return i;
 }
 
-function stripSgr(s: string): string {
-  return s.replace(ANSI_SGR, '');
+function stripNonVisibleSequences(s: string): string {
+  return s.replace(ANSI_NON_VISIBLE, '');
 }
 
 function alternateSubmitKey(data: string): Exclude<SubmitKey, 'enter'> | undefined {
@@ -262,7 +262,7 @@ export class CustomEditor extends Editor {
         let highlighted = original;
         let leadingRange: { start: number; end: number } | null = null;
         if (text.startsWith('/')) {
-          leadingRange = leadingSlashTokenRange(stripSgr(original));
+          leadingRange = leadingSlashTokenRange(stripNonVisibleSequences(original));
           const leading = highlightFirstSlashToken(original, 'primary');
           if (leading !== undefined) {
             highlighted = leading;
@@ -620,7 +620,7 @@ export class CustomEditor extends Editor {
 }
 
 export function highlightFirstSlashToken(line: string, token: 'primary'): string | undefined {
-  const visible = stripSgr(line);
+  const visible = stripNonVisibleSequences(line);
   const range = leadingSlashTokenRange(visible);
   if (range === null) return undefined;
   const ranges = [range];
@@ -654,7 +654,7 @@ export function highlightInlineSkillTokens(
   token: 'primary',
 ): string | undefined {
   if (skillCommandNames.size === 0) return undefined;
-  const visible = stripSgr(line);
+  const visible = stripNonVisibleSequences(line);
   const ranges = findInlineSkillTokens(visible, {
     isKnownSkill: (commandName) =>
       skillCommandNames.has(commandName) || skillCommandNames.has(`skill:${commandName}`),
@@ -714,7 +714,27 @@ function highlightVisibleRanges(
 }
 
 const EDITOR_LEFT_PADDING = 4;
-const CURSOR_BLOCK = '\u001B[7m \u001B[0m';
+
+function findCursorAnchor(
+  line: string,
+  fallbackVisibleIdx: number,
+): { readonly insertAt: number; readonly cursorCells: number } {
+  const fakeCursorEnd = line.indexOf(FAKE_CURSOR_END);
+  if (fakeCursorEnd !== -1) {
+    return { insertAt: fakeCursorEnd + FAKE_CURSOR_END.length, cursorCells: 1 };
+  }
+  return { insertAt: mapVisibleIdxToRaw(line, fallbackVisibleIdx), cursorCells: 0 };
+}
+
+function injectTextAfterCursor(
+  line: string,
+  insertAt: number,
+  styledText: string,
+  textWidth: number,
+): string {
+  const remaining = Math.max(0, visibleWidth(line.slice(insertAt)) - textWidth);
+  return line.slice(0, insertAt) + styledText + ' '.repeat(remaining);
+}
 
 function injectArgumentHint(
   line: string,
@@ -722,45 +742,34 @@ function injectArgumentHint(
   realTextLength: number,
   width: number,
 ): string {
-  const cursorIdx = line.indexOf(CURSOR_BLOCK);
-  const cursorPresent = cursorIdx !== -1;
+  const { insertAt, cursorCells } = findCursorAnchor(line, EDITOR_LEFT_PADDING + realTextLength);
   const contentWidth = Math.max(1, width - EDITOR_LEFT_PADDING * 2);
-  const available = contentWidth - realTextLength - (cursorPresent ? 1 : 0);
-  const trimmed = truncateHint(hint, available);
+  const available = contentWidth - realTextLength - cursorCells;
+  if (available <= 0) return line;
+  const trimmed = truncateToWidth(hint, available, '…');
   if (trimmed.length === 0) return line;
-  const colored = currentTheme.fg('textDim', trimmed);
-  const insertAt = cursorPresent
-    ? cursorIdx + CURSOR_BLOCK.length
-    : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING + realTextLength);
-  const trailing = line.length - insertAt;
-  return line.slice(0, insertAt) + colored + ' '.repeat(Math.max(0, trailing - trimmed.length));
-}
-
-function truncateHint(hint: string, maxLen: number): string {
-  if (maxLen <= 0) return '';
-  if (hint.length <= maxLen) return hint;
-  if (maxLen === 1) return '…';
-  return `${hint.slice(0, maxLen - 1)}…`;
+  return injectTextAfterCursor(
+    line,
+    insertAt,
+    currentTheme.fg('textDim', trimmed),
+    visibleWidth(trimmed),
+  );
 }
 
 function injectPromptPrediction(line: string, prediction: string, width: number): string {
-  const fakeCursorEnd = line.indexOf(FAKE_CURSOR_END);
-  const legacyCursorIdx = line.indexOf(CURSOR_BLOCK);
-  const cursorPresent = fakeCursorEnd !== -1 || legacyCursorIdx !== -1;
+  const { insertAt, cursorCells } = findCursorAnchor(line, EDITOR_LEFT_PADDING);
   const contentWidth = Math.max(1, width - EDITOR_LEFT_PADDING * 2);
-  const available = contentWidth - (cursorPresent ? 1 : 0);
+  const available = contentWidth - cursorCells;
   if (available <= 0) return line;
   const preview = prediction.replaceAll(/\s+/g, ' ').trim();
   const trimmed = truncateToWidth(preview, available, '…');
   if (trimmed.length === 0) return line;
-  const insertAt = fakeCursorEnd !== -1
-    ? fakeCursorEnd + FAKE_CURSOR_END.length
-    : legacyCursorIdx !== -1
-      ? legacyCursorIdx + CURSOR_BLOCK.length
-      : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING);
-  const trailing = line.slice(insertAt);
-  const remaining = Math.max(0, visibleWidth(trailing) - visibleWidth(trimmed));
-  return line.slice(0, insertAt) + currentTheme.fg('textMuted', trimmed) + ' '.repeat(remaining);
+  return injectTextAfterCursor(
+    line,
+    insertAt,
+    currentTheme.fg('textMuted', trimmed),
+    visibleWidth(trimmed),
+  );
 }
 
 export function injectPromptSymbol(
@@ -783,7 +792,7 @@ export function wrapWithSideBorders(
 ): string[] {
   let seenTop = false;
   return lines.map((line) => {
-    const plain = stripSgr(line);
+    const plain = stripNonVisibleSequences(line);
     if (plain.length > 0 && plain[0] === '─') {
       const isTop = !seenTop;
       const leftCorner = seenTop ? '╰' : options.connectedAbove === true ? '├' : '╭';

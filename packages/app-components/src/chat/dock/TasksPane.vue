@@ -1,25 +1,10 @@
 <script setup lang="ts">
-import { inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '@moonshot-ai/app-core/client/types';
 import { Icon, IconButton, Spinner, StatusDot, Tooltip } from '@moonshot-ai/app-ui';
-import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { formatDuration } from '@moonshot-ai/app-components';
+import { useTaskList, type TaskListEmits, type TaskListProps } from './useTaskList';
 
-const props = defineProps<{ tasks: TaskItem[]; cancellingTaskIds?: Record<string, true> }>();
-
-const emit = defineEmits<{
-  cancel: [taskId: string];
-}>();
-
-const { t } = useI18n();
-
-const panelApi = inject(panelApiKey);
-
-function isCancelling(task: TaskItem): boolean {
-  return props.cancellingTaskIds?.[task.id] === true;
-}
+const props = defineProps<TaskListProps>();
 
 function hasDetail(task: TaskItem): boolean {
   return Boolean((task.output && task.output.length > 0) || task.meta);
@@ -34,24 +19,6 @@ function isClickable(task: TaskItem): boolean {
   return task.kind === 'subagent' || task.kind === 'tool' || hasDetail(task);
 }
 
-function durationLabel(task: TaskItem): string {
-  if (typeof task.durationMs !== 'number') return '';
-  return formatDuration(task.durationMs, {
-    h: t('status.timeUnitHour'),
-    m: t('status.timeUnitMinute'),
-    s: t('status.timeUnitSecond'),
-  });
-}
-
-function stateLabel(task: TaskItem): string {
-  if (task.state === 'done') return t('tasks.stateDone');
-  if (task.state === 'fail') return t('tasks.stateFail');
-  if (task.state === 'cancelled') return t('tasks.stateCancelled');
-  return t('tasks.running');
-}
-
-const modelDisplay = inject(ModelDisplayKey);
-const subagentEffort = inject(SubagentEffortKey);
 function taskModel(task: TaskItem): string | undefined {
   if (task.kind !== 'subagent') return undefined;
   return modelDisplay?.(task.model);
@@ -60,6 +27,10 @@ function taskEffort(task: TaskItem): string | undefined {
   if (task.kind !== 'subagent') return undefined;
   return subagentEffort?.(task.thinkingEffort);
 }
+
+const { t } = useI18n();
+const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t);
+const emit = defineEmits<TaskListEmits>();
 </script>
 
 <template>
@@ -81,7 +52,7 @@ function taskEffort(task: TaskItem): string | undefined {
               :aria-label="task.name"
               @click="handleClick(task)"
             />
-            <span class="tp-glyph" role="img" :aria-label="stateLabel(task)">
+            <span class="tp-glyph" role="img" :aria-label="stateLabel(task.state)">
               <StatusDot v-if="task.state === 'run'" status="running" />
               <Icon v-else-if="task.state === 'done'" class="tp-done" name="circle-check" size="sm" />
               <Icon v-else-if="task.state === 'cancelled'" class="tp-cancelled" name="stop" size="sm" />

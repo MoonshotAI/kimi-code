@@ -1,6 +1,6 @@
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 import type { IAgentScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
-import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '@moonshot-ai/agent-core-v2/project/projectInstance/projectInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import {
@@ -19,8 +19,6 @@ import {
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
 import { IAgentLoopService, type LoopNotifyMessage, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
@@ -52,6 +50,28 @@ import { Readable } from 'node:stream';
 import type { EventSourceRef, IDisposable, ScopeRef } from '../../core/channel.js';
 import { RPCError } from '../../core/errors.js';
 import { IEventService, serviceTokens } from './serviceRegistry.js';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
+
+const providerCatalogRoutes: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  modelService: {
+    get: 'getModelRecord',
+    list: 'listModelRecords',
+    set: 'setModelRecord',
+    delete: 'deleteModelRecord',
+  },
+  providerService: {
+    get: 'getProviderConfig',
+    list: 'listProviderConfigs',
+    set: 'setProviderConfig',
+    delete: 'deleteProviderConfig',
+  },
+  modelResolver: {
+    listModels: 'listModels',
+    listProviders: 'listProviders',
+    getProvider: 'getProvider',
+    setDefaultModel: 'setDefaultModel',
+  },
+};
 
 export interface ScopeLike {
   readonly accessor: {
@@ -303,7 +323,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.workspaceId !== undefined) {
       const lease = await root.accessor
-        .get(IWorkspaceInstanceManager)
+        .get(IProjectInstanceManager)
         .acquire({ workspaceId: scope.workspaceId });
       try {
         void lease.instance.program;
@@ -371,7 +391,8 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       return agentLoopServiceView(resolved.like as IAgentScopeHandle);
     }
-    const token = serviceTokens[service];
+    const routedService = providerCatalogRoutes[service] === undefined ? service : 'providerCatalog';
+    const token = serviceTokens[routedService];
     if (token === undefined) {
       throw new RPCError(REQUEST_INVALID, `unknown service: ${service}`);
     }
@@ -455,6 +476,8 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     async call(scope, service, method, args) {
       const resolved = await resolveScope(scope);
       const instance = resolveService(resolved, service);
+      const routes = providerCatalogRoutes[service];
+      const routedMethod = routes === undefined ? method : routes[method];
       if (service === 'fileService' && method === 'save') {
         const [data, filename, options] = args as [string, string, SaveOptions | undefined];
         const files = instance as FileServiceWireTarget;
@@ -483,7 +506,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
           rethrowFileErrorAsRpc(error);
         }
       }
-      const member = instance[method];
+      const member = routedMethod === undefined ? undefined : instance[routedMethod];
       if (member === undefined) {
         throw new RPCError(REQUEST_INVALID, `method not found: ${service}.${method}`);
       }
@@ -507,6 +530,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         if (error instanceof Error2 && error.code === ErrorCodes.PROMPT_ID_CONFLICT) {
           throw new RPCError(PROMPT_ID_CONFLICT, error.message, error.details);
         }
+        if (service === 'agentLoopService' && method === 'submit' && error instanceof Error2 && error.code === ErrorCodes.TURN_AGENT_BUSY) {
+          throw new RPCError(REQUEST_INVALID, error.message, { code: error.code });
+        }
         throw error;
       }
     },
@@ -523,10 +549,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
               started ??= (async () => {
                 const resolved = await resolveScope(scope);
                 const [modelId, input, params] = args;
-                const model = resolved.like.accessor.get(IModelCatalog).get(modelId as string);
-                const requester = resolved.like.accessor
-                  .get(IProtocolAdapterRegistry)
-                  .request(model, wireClone(params) as InitializedLlmRequestPart | undefined);
+                const providerCatalog = resolved.like.accessor.get(IProviderCatalogService);
+                const model = providerCatalog.get(modelId as string);
+                const requester = providerCatalog.createRequester(
+                  model,
+                  wireClone(params) as InitializedLlmRequestPart | undefined,
+                );
                 const resolvedInput = wireClone(input) as LlmRequestProfile &
                   LlmRequestContent &
                   Pick<LlmRequestModel, 'responseFormat'>;

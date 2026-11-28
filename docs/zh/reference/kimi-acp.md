@@ -8,6 +8,8 @@ kimi acp
 
 启动后命令不会打印任何 banner，立刻等待 ACP 客户端在 stdin 上发出 `initialize` 请求。日志会写到标准错误（以及 `~/.kimi-code/logs/` 下的诊断日志），所以 ACP 通道本身保持干净。
 
+Kimi 自己发起回合时（汇报已完成的后台任务、`Stop` hook 拦截后续跑、执行定时任务），`kimi acp` 会通过 `session/update` 把回复和工具调用发送给 IDE，即使上一次 `session/prompt` 已经结束。这时提交新消息会收到 `turn.agent_busy`，可以等这个回合结束后重发。
+
 ::: tip 谁会调用它？
 你通常不需要手动跑 `kimi acp`——这个命令是给 IDE 的子进程入口准备的。IDE 端的配置见[在 IDE 中使用](../guides/ides.md)。
 :::
@@ -56,21 +58,25 @@ kimi acp
 | `session/list` | 是 | 枚举磁盘会话，可按 `cwd` 过滤 |
 | `session/fork` | 是 | 从源会话分叉；请求上的 `cwd` / `additionalDirectories` / `mcpServers` 会被忽略并写 warn |
 | `session/close` | 是 | 尽力拆除：中断进行中的 turn、释放会话级资源并关闭存活会话；未知 id 不算错误 |
-| `session/delete` | 是 | 永久删除会话及其持久化数据；未知 id 返回 `invalidParams (-32602)` |
-| `session/prompt` | 是 | 接受 `text` / `image` / `resource` / `resource_link` 内容块，流式输出 `agent_message_chunk` |
+| `session/delete` | 是 | 永久删除会话及其持久化数据。后续的 `session/list` 调用会从列表中排除该会话。未知 ID 返回 `invalidParams (-32602)`。 |
+| `session/prompt` | 是 | 接受 `text` / `image` / `resource` / `resource_link` 内容块，流式输出 `agent_message_chunk`。回合开始之后失败时返回 JSON-RPC 错误：认证失败返回 `authRequired (-32000)`，其他失败返回 `-32603`，`message` 是错误信息，错误码放在 `data.code`。回复被供应商的内容过滤拦下时，以停止原因 `refusal` 结束；发出 `session/cancel` 之后失败的回合，仍以 `cancelled` 结束 |
 | `session/cancel` | 是 | 中断当前 turn（针对 prompt 的 JSON-RPC `$/cancel_request` 走同一条取消路径） |
 | `session/set_mode` | 是 | 校验 `modeId`，与 `set_config_option({configId:'mode'})` 走同一个模式切换 |
 | `session/set_config_option` | 是 | 统一的 model / thinking / mode picker 分发 |
+
+在模式选择器中，Auto（`auto`）可以自动批准敏感操作，仍遵守显式拒绝规则。YOLO（`yolo`）自动批准常规操作，遇到敏感操作仍可能请求确认。
+
+在 Plan 模式下创建或恢复会话时，两种模式选择器都会显示 Plan。批准计划或选择「拒绝并退出」后，选择器会更新为实际生效的权限模式。
 
 ### 客户端 reverse-RPC — agent → IDE（10 / 11）
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
 | `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
-| `session/request_permission` | 是 | 工具审批和问题提问共用此通道 |
+| `session/request_permission` | 是 | 工具审批和提问共用此通道。Bash 审批包含完整命令和工作目录。已解析的绝对文件路径通过 `toolCall.locations` 提供 |
 | `fs/read_text_file` | 是 | 客户端声明 `fsCapabilities` 时，引擎的文件读取路由到客户端 |
 | `fs/write_text_file` | 是 | 引擎的文件写入路由到客户端 |
-| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端 |
+| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端；否则命令在本机运行，运行中已打印的内容以 `tool_call_update` 的文字内容发给客户端 |
 | `elicitation/create` | 是 | 客户端声明 `elicitation.form` 时，ask-user 问题走原生表单；RPC 失败回退 `session/request_permission` |
 | `elicitation/complete` | 否 | |
 

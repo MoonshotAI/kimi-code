@@ -40,8 +40,10 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
+  MoveSessionInput,
   RefreshProviderModelsOptions,
   RefreshProviderModelsResponse,
+  SessionPlacement,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
@@ -59,6 +61,16 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
@@ -157,18 +169,7 @@ export class KimiHarness {
   async createSession(options: CreateSessionOptions): Promise<Session> {
     const { planMode, sessionStartedProperties, ...coreOptions } = stripLegacyKaosOptions(options);
     const summary = await this.rpc.createSession(coreOptions);
-    const session = new Session({
-      id: summary.id,
-      workDir: summary.workDir,
-      summary,
-      rpc: this.rpc,
-      onClose: () => {
-        if (this.activeSessions.get(summary.id) === session) {
-          this.activeSessions.delete(summary.id);
-        }
-      },
-    });
-    this.activeSessions.set(session.id, session);
+    const session = this.bindSessionInstance(summary);
     if (planMode === true) {
       await session.setPlanMode(true);
     }
@@ -203,9 +204,7 @@ export class KimiHarness {
     }
   }
 
-  private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
-    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
-    const summary = await this.rpc.resumeSession({ ...resumeInput, id });
+  private bindSessionInstance(summary: SessionSummary): Session {
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -217,8 +216,24 @@ export class KimiHarness {
         }
       },
     });
+    session.setStaleReloadHandler(undefined);
     this.activeSessions.set(session.id, session);
+    return session;
+  }
+
+  private registerActiveSession(
+    summary: SessionSummary,
+    sessionStartedProperties?: ResumeSessionInput['sessionStartedProperties'],
+  ): Session {
+    const session = this.bindSessionInstance(summary);
     this.trackSessionStarted(summary.id, true, sessionStartedProperties);
+    return session;
+  }
+
+  private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
+    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
+    const summary = await this.rpc.resumeSession({ ...resumeInput, id });
+    const session = this.registerActiveSession(summary, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume');
     return session;
   }
@@ -238,21 +253,23 @@ export class KimiHarness {
       sessionId: id,
       forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
     });
-    const session = new Session({
-      id: summary.id,
-      workDir: summary.workDir,
-      summary,
-      rpc: this.rpc,
-      onClose: () => {
-        if (this.activeSessions.get(summary.id) === session) {
-          this.activeSessions.delete(summary.id);
-        }
-      },
-    });
-    this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true);
+    const session = this.registerActiveSession(summary);
     this.trackSessionEvent(session.id, 'session_reload');
     return session;
+  }
+
+  async moveSession(input: MoveSessionInput): Promise<Session> {
+    const id = normalizeSessionId(input.id);
+    const active = this.activeSessions.get(id);
+    if (active !== undefined && !active.isClosed) {
+      await active.moveSession(input.workDir);
+      return active;
+    }
+    const summary = await this.rpc.moveSession({
+      sessionId: id,
+      workDir: input.workDir,
+    });
+    return this.registerActiveSession(summary);
   }
 
   async forkSession(input: ForkSessionInput): Promise<Session> {
@@ -263,19 +280,7 @@ export class KimiHarness {
       metadata: input.metadata,
       turnIndex: input.turnIndex,
     });
-    const session = new Session({
-      id: summary.id,
-      workDir: summary.workDir,
-      summary,
-      rpc: this.rpc,
-      onClose: () => {
-        if (this.activeSessions.get(summary.id) === session) {
-          this.activeSessions.delete(summary.id);
-        }
-      },
-    });
-    this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true);
+    const session = this.registerActiveSession(summary);
     this.trackSessionEvent(session.id, 'session_fork');
     return session;
   }
@@ -376,6 +381,26 @@ export class KimiHarness {
     return this.rpc.getGitPullRequest(workDir, input);
   }
 
+  async resolveWorkLocation(cwd: string): Promise<WorkLocation> {
+    return this.rpc.resolveWorkLocation(cwd);
+  }
+
+  async listWorktrees(cwd: string): Promise<WorktreeListing> {
+    return this.rpc.listWorktrees(cwd);
+  }
+
+  async createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree> {
+    return this.rpc.createWorktree(input, options);
+  }
+
+  async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
+    return this.rpc.inspectWorktreeRemoval(input);
+  }
+
+  async removeWorktree(input: RemoveWorktreeInput): Promise<void> {
+    return this.rpc.removeWorktree(input);
+  }
+
   /**
    * App-global plugin command list, no session required. Empty on the v1
    * engine, which only exposes plugin commands through a live session.
@@ -399,8 +424,11 @@ export class KimiHarness {
    * one shared connection set per workspace `Program`, so `/mcp` is inspectable
    * before the first session exists; empty on the v1 engine.
    */
-  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
-    return this.rpc.listWorkspaceMcpServers(workDir);
+  async listWorkspaceMcpServers(
+    workDir: string,
+    options?: Pick<CreateSessionOptions, 'environmentId' | 'environmentCwd'>,
+  ): Promise<readonly McpServerInfo[]> {
+    return this.rpc.listWorkspaceMcpServers(workDir, options);
   }
 
   async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
@@ -448,7 +476,8 @@ export class KimiHarness {
   /**
    * Trust state of `workDir` (agent-core-v2 only; the v1 engine reports an
    * always-trusted workspace). Querying may register the workDir as a
-   * workspace, which session creation would do anyway.
+   * workspace, which session creation would do anyway. With `sessionId`, the
+   * answer is about the project that session belongs to.
    */
   async getWorkspaceTrustInfo(
     workDir: string,
@@ -457,9 +486,23 @@ export class KimiHarness {
     return this.rpc.getWorkspaceTrustInfo(workDir, options);
   }
 
-  /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */
-  async trustWorkspace(workDir: string): Promise<void> {
-    return this.rpc.trustWorkspace(workDir);
+  /**
+   * Mark `workDir`, or with `sessionId` the project that session belongs to,
+   * as trusted; project-level MCP servers connect live afterwards.
+   */
+  async trustWorkspace(
+    workDir: string,
+    options?: Pick<WorkspaceTrustInfoOptions, 'sessionId'>,
+  ): Promise<void> {
+    return this.rpc.trustWorkspace(workDir, options);
+  }
+
+  /**
+   * Where a session started in `workDir` is kept, for hosts that write session
+   * files themselves. A project that does not exist yet is registered.
+   */
+  async resolveSessionPlacement(workDir: string): Promise<SessionPlacement> {
+    return this.rpc.resolveSessionPlacement(workDir);
   }
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {

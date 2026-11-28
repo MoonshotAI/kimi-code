@@ -176,17 +176,93 @@ function finalizeTruncatedResult(
 }
 
 /**
+ * Whether a UTF-16 unit always forms a grapheme cluster on its own: printable ASCII, Latin,
+ * punctuation, arrows, box drawing, symbols, kana, CJK ideographs and fullwidth forms. These ranges
+ * hold no combining marks, joiners, variation selectors, Hangul jamo or surrogates, so no Unicode
+ * grapheme rule can join two of them.
+ */
+function isStandaloneGraphemeUnit(code: number): boolean {
+	if (code >= 0x20 && code <= 0x7e) return true;
+	if (code >= 0xa0 && code <= 0x2ff) return code !== 0xad;
+	if (code >= 0x2010 && code <= 0x2bff) {
+		// Line and bidi controls, invisible operators and combining marks for symbols.
+		return (
+			!(code >= 0x2028 && code <= 0x202e) &&
+			!(code >= 0x2060 && code <= 0x206f) &&
+			!(code >= 0x20d0 && code <= 0x20ff)
+		);
+	}
+	return (
+		(code >= 0x3040 && code <= 0x3096) ||
+		(code >= 0x30a0 && code <= 0x30ff) ||
+		(code >= 0x4e00 && code <= 0x9fff) ||
+		(code >= 0xff01 && code <= 0xff60)
+	);
+}
+
+function isStandaloneGraphemeRun(text: string): boolean {
+	for (let i = 0; i < text.length; i++) {
+		if (!isStandaloneGraphemeUnit(text.charCodeAt(i))) return false;
+	}
+	return true;
+}
+
+/**
+ * Segment a run that contains complex units. A standalone unit whose neighbours are standalone too
+ * is its own cluster, since no grapheme rule joins two standalone units. Only the stretches between
+ * such units go through Intl.Segmenter; cutting there is safe because both cut edges are boundaries.
+ */
+function* segmentGraphemes(text: string): Generator<string> {
+	const standalone = (index: number) =>
+		index < 0 || index >= text.length || isStandaloneGraphemeUnit(text.charCodeAt(index));
+	let complexStart = -1;
+	for (let i = 0; i < text.length; i++) {
+		if (standalone(i) && standalone(i - 1) && standalone(i + 1)) {
+			if (complexStart >= 0) {
+				for (const { segment } of graphemeSegmenter.segment(text.slice(complexStart, i))) yield segment;
+				complexStart = -1;
+			}
+			yield text[i]!;
+		} else if (complexStart < 0) {
+			complexStart = i;
+		}
+	}
+	if (complexStart >= 0) {
+		for (const { segment } of graphemeSegmenter.segment(text.slice(complexStart))) yield segment;
+	}
+}
+
+/**
+ * Grapheme clusters of a text run without ANSI codes. Standalone units are split per character:
+ * Intl.Segmenter costs about 15x more than the slicing it serves, which made one non-ASCII
+ * character slow down every row of a fullscreen frame.
+ */
+function graphemesOf(text: string): Iterable<string> {
+	return isStandaloneGraphemeRun(text) ? text : segmentGraphemes(text);
+}
+
+// Widths of single non-ASCII BMP characters; bounded by the 64K code units.
+const singleUnitWidths = new Map<number, number>();
+
+/**
  * Calculate the terminal width of a single grapheme cluster.
  * Based on code from the string-width library, but includes a possible-emoji
  * check to avoid running the RGI_Emoji regex unnecessarily.
  */
 function graphemeWidth(segment: string): number {
-	if (segment.length === 1) {
-		const code = segment.charCodeAt(0);
-		if (code >= 0x20 && code <= 0x7e) return 1;
-		if (code === 0x09) return 3;
+	if (segment.length !== 1) return clusterWidth(segment);
+	const code = segment.charCodeAt(0);
+	if (code >= 0x20 && code <= 0x7e) return 1;
+	if (code === 0x09) return 3;
+	let width = singleUnitWidths.get(code);
+	if (width === undefined) {
+		width = clusterWidth(segment);
+		singleUnitWidths.set(code, width);
 	}
+	return width;
+}
 
+function clusterWidth(segment: string): number {
 	// Some marks occupy cells even without a base character.
 	if (terminalSpacingMarkRegex.test(segment)) {
 		return [...segment].length;
@@ -327,6 +403,56 @@ export function stripTerminalSequences(str: string): string {
 	return result;
 }
 
+function extractAnsiCodes(str: string): string {
+	let result = "";
+	let i = str.indexOf("\x1b");
+	while (i !== -1) {
+		const length = ansiCodeLength(str, i);
+		if (length > 0) {
+			result += str.substring(i, i + length);
+			i += length;
+		} else {
+			i++;
+		}
+		i = str.indexOf("\x1b", i);
+	}
+	return result;
+}
+
+// Same character set as String.prototype.trim()
+const WHITESPACE_REGEX = /\s/;
+
+/**
+ * Whether a token's visible text is only whitespace. Codes closing a styled word attach to the following space,
+ * e.g. "\x1b[22m ", so they are skipped. Stops at the first visible non-whitespace text without allocating a
+ * stripped copy, because styled words reach this check on every wrap.
+ */
+function isWhitespaceToken(token: string): boolean {
+	let i = 0;
+	while (i < token.length) {
+		const code = token.charCodeAt(i);
+		if (code === 0x1b) {
+			const length = ansiCodeLength(token, i);
+			if (length === 0) return false; // A lone ESC is visible text
+			i += length;
+		} else if (code === 0x20 || (code >= 0x09 && code <= 0x0d)) {
+			i++;
+		} else if (code < 0x80 || !WHITESPACE_REGEX.test(token[i]!)) {
+			return false;
+		} else {
+			i++;
+		}
+	}
+	return true;
+}
+
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
+
+/** Replace each run of C0 and C1 control characters (ESC, BEL, newlines, ...) with one space. */
+export function replaceControlCharacters(str: string): string {
+	return str.replace(CONTROL_CHARACTERS, " ");
+}
+
 interface GraphemeCellRange {
 	start: number;
 	end: number;
@@ -344,7 +470,15 @@ export function getGraphemeCellRange(line: string, column: number): GraphemeCell
 		}
 		let textEnd = i;
 		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
-		for (const { segment } of graphemeSegmenter.segment(line.slice(i, textEnd))) {
+		const text = line.slice(i, textEnd);
+		// Printable ASCII is one cell per character.
+		if (isPrintableAscii(text)) {
+			if (column >= currentCol && column < currentCol + text.length) return { start: column, end: column + 1 };
+			currentCol += text.length;
+			i = textEnd;
+			continue;
+		}
+		for (const segment of graphemesOf(text)) {
 			const width = graphemeWidth(segment);
 			if (width > 0 && column >= currentCol && column < currentCol + width) {
 				return { start: currentCol, end: currentCol + width };
@@ -779,7 +913,7 @@ class AnsiCodeTracker {
 
 	/**
 	 * Get reset codes for attributes that need to be turned off at line end.
-	 * Underline must be closed to prevent bleeding into padding.
+	 * Underline and strikethrough must be closed to prevent bleeding into padding.
 	 * Active OSC 8 hyperlinks must be closed and re-opened on the next line.
 	 * Returns empty string if no attributes need closing.
 	 */
@@ -787,6 +921,9 @@ class AnsiCodeTracker {
 		let result = "";
 		if (this.underline) {
 			result += "\x1b[24m"; // Underline off only
+		}
+		if (this.strikethrough) {
+			result += "\x1b[29m"; // Strikethrough off only, re-opened at line start via getActiveCodes()
 		}
 		if (this.activeHyperlink) {
 			result += formatOsc8Close(this.activeHyperlink.terminator); // Re-opened at line start via getActiveCodes()
@@ -957,10 +1094,10 @@ function wrapSingleLine(line: string, width: number, logicalLineId: number): Wra
 	let pendingWhitespace: string | undefined;
 	let currentLine = "";
 	let currentVisibleLength = 0;
-	const pushLine = (text: string, lineEndReset = ""): void => {
+	const pushLine = (text: string, lineEndReset = "", ansiSuffix = ""): void => {
 		const trimmed = text.trimEnd();
 		wrapped.push({
-			text: trimmed + lineEndReset,
+			text: trimmed + ansiSuffix + lineEndReset,
 			logicalLineId,
 			...(pendingWhitespace === undefined
 				? {}
@@ -971,7 +1108,7 @@ function wrapSingleLine(line: string, width: number, logicalLineId: number): Wra
 
 	for (const token of tokens) {
 		const tokenVisibleLength = visibleWidth(token);
-		const isWhitespace = token.trim() === "";
+		const isWhitespace = isWhitespaceToken(token);
 
 		if (tokenVisibleLength > width && !isWhitespace) {
 			if (currentLine) {
@@ -992,15 +1129,21 @@ function wrapSingleLine(line: string, width: number, logicalLineId: number): Wra
 		const totalNeeded = currentVisibleLength + tokenVisibleLength;
 
 		if (totalNeeded > width && currentVisibleLength > 0) {
-			pushLine(currentLine, tracker.getLineEndReset());
+			const ansiSuffix = isWhitespace ? extractAnsiCodes(token) : "";
+			if (isWhitespace) updateTrackerFromText(token, tracker);
+			pushLine(currentLine, tracker.getLineEndReset(), ansiSuffix);
 			if (isWhitespace) {
 				pendingWhitespace = (pendingWhitespace ?? "") + stripTerminalSequences(token);
 				currentLine = tracker.getActiveCodes();
 				currentVisibleLength = 0;
-			} else {
-				currentLine = tracker.getActiveCodes() + token;
-				currentVisibleLength = tokenVisibleLength;
+				continue;
 			}
+			currentLine = tracker.getActiveCodes() + token;
+			currentVisibleLength = tokenVisibleLength;
+		} else if (isWhitespace && totalNeeded > width && token.includes("\x1b")) {
+			// Whitespace wider than an empty line. Plain spaces are removed by the final trimEnd(), but codes after
+			// them (e.g. a trailing reset) would block that and leave the line wider than width. Keep only the codes.
+			currentLine += extractAnsiCodes(token);
 		} else {
 			currentLine += token;
 			currentVisibleLength += tokenVisibleLength;
@@ -1293,11 +1436,13 @@ export function sliceWithWidth(
 	while (i < line.length) {
 		const ansi = extractAnsiCode(line, i);
 		if (ansi) {
+			// APC sequences (cursor markers) are positional one-shot commands, not persistent style
+			// state, so codes before the range carry over only when they are not APC.
 			if (currentCol >= startCol && currentCol < endCol) {
 				// Keep original order: codes from before the range must precede codes at the boundary
 				result += pendingAnsi + ansi.code;
 				pendingAnsi = "";
-			} else if (currentCol < startCol) pendingAnsi += ansi.code;
+			} else if (currentCol < startCol && !ansi.code.startsWith("\x1b_")) pendingAnsi += ansi.code;
 			i += ansi.length;
 			continue;
 		}
@@ -1305,7 +1450,23 @@ export function sliceWithWidth(
 		let textEnd = i;
 		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
 
-		for (const { segment } of graphemeSegmenter.segment(line.slice(i, textEnd))) {
+		const text = line.slice(i, textEnd);
+		// Printable ASCII is one cell per character.
+		if (isPrintableAscii(text)) {
+			const from = Math.max(0, startCol - currentCol);
+			const to = Math.min(text.length, endCol - currentCol);
+			if (to > from) {
+				result += pendingAnsi + text.slice(from, to);
+				pendingAnsi = "";
+				resultWidth += to - from;
+			}
+			currentCol += text.length;
+			i = textEnd;
+			if (currentCol >= endCol) break;
+			continue;
+		}
+
+		for (const segment of graphemesOf(text)) {
 			const w = graphemeWidth(segment);
 			const inRange = currentCol >= startCol && currentCol < endCol;
 			const fits = !strict || currentCol + w <= endCol;

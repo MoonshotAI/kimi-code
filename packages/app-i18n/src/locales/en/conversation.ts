@@ -29,6 +29,8 @@ export default {
   compactedPlain: 'Context compacted',
   compactedAuto: 'Context auto-compacted',
   compactedTokens: '{before} → {after} tokens',
+  compactionFailed: 'Context compaction failed',
+  compactionFailedAuto: 'Auto-compaction failed',
   undo: 'Undo',
   undoTooltip: 'Undo message',
   undoConfirm: 'This removes this message and all later messages from the conversation context, and puts this message’s text back into the composer. File and code changes are not affected.',

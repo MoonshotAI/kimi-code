@@ -1,4 +1,5 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import type { Component } from '@moonshot-ai/pi-tui';
 
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
@@ -11,6 +12,7 @@ import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
 import {
+  getTranscriptComponentEntry,
   getTranscriptComponentTurnId,
   markTranscriptComponent,
   markTranscriptComponentTurnId,
@@ -41,6 +43,7 @@ export interface StreamingUIHost {
   deferUserMessages: boolean;
   shiftQueuedMessage(): QueuedMessage | undefined;
   pushTranscriptEntry(entry: TranscriptEntry): void;
+  removeTranscriptEntries(entries: readonly TranscriptEntry[]): void;
   mergeCurrentTurnSteps(): void;
   mergeCompletedTurnAssistants(): void;
 }
@@ -57,6 +60,7 @@ export class StreamingUIController {
   private endedTurnId: number | undefined;
   private heldContinuation: 'background' | 'none' | undefined;
   private _currentStep = 0;
+  private _stepOutput: Component[] = [];
   private _assistantDraft = '';
   private _thinkingDraft = '';
   private _streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null = null;
@@ -96,6 +100,7 @@ export class StreamingUIController {
 
   setStep(step: number): void {
     this._currentStep = step;
+    this._stepOutput = [];
   }
 
   hasActiveTurn(): boolean {
@@ -473,6 +478,31 @@ export class StreamingUIController {
     this.disposeActiveThinkingComponent();
   }
 
+  discardStepOutput(): void {
+    const { state } = this.host;
+    this.discardPending();
+    this._assistantDraft = '';
+    this._streamingBlock = null;
+    this._thinkingDraft = '';
+    this.disposeActiveThinkingComponent();
+    this.timeline.forget([...this._activeToolCalls.keys(), ...this._streamingToolCallArguments.keys()]);
+    this.resetToolUi();
+    const entries: TranscriptEntry[] = [];
+    for (const component of this._stepOutput) {
+      const entry = getTranscriptComponentEntry(component);
+      if (entry !== undefined) {
+        entries.push(entry);
+        continue;
+      }
+      if (!state.transcriptContainer.children.includes(component)) continue;
+      state.transcriptContainer.removeChild(component);
+      if (hasDispose(component)) component.dispose();
+    }
+    this._stepOutput = [];
+    this.host.removeTranscriptEntries(entries);
+    this.host.updateActivityPaneForTranscriptGrouping();
+  }
+
   resetToolUi(): void {
     this.pendingToolCallFlushIds.clear();
     this.clearFlushTimerIfIdle();
@@ -494,6 +524,14 @@ export class StreamingUIController {
   }
 
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+    this.finalizeRequest(sendQueued, this.host.state.appState.loopLifecycleEvents === true);
+  }
+
+  finalizeTurnlessRequest(sendQueued: (item: QueuedMessage) => void): void {
+    this.finalizeRequest(sendQueued, false);
+  }
+
+  private finalizeRequest(sendQueued: (item: QueuedMessage) => void, awaitLoopEnd: boolean): void {
     this.timeline.turnEnded();
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') {
@@ -504,12 +542,12 @@ export class StreamingUIController {
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.lastCompletedTurnKey = completedTurnKey;
-    this.finalizeLiveTextBuffers(state.appState.loopLifecycleEvents === true ? 'waiting' : 'idle');
+    this.finalizeLiveTextBuffers(awaitLoopEnd ? 'waiting' : 'idle');
     this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
-    if (state.appState.loopLifecycleEvents === true) {
+    if (awaitLoopEnd) {
       this.host.setAppState({ streamingPhase: 'waiting' });
       return;
     }
@@ -632,6 +670,7 @@ export class StreamingUIController {
     this._streamingBlock = { component, entry };
     markTranscriptComponent(component, entry);
     state.transcriptContainer.addChild(component);
+    this.trackStepOutput(component);
     this.host.pushTranscriptEntry(entry);
     state.ui.requestRender();
   }
@@ -668,6 +707,7 @@ export class StreamingUIController {
       if (state.transcriptContainer.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
       markTranscriptComponentTurnId(this._activeThinkingComponent, this._currentTurnId);
       state.transcriptContainer.addChild(this._activeThinkingComponent);
+      this.trackStepOutput(this._activeThinkingComponent);
     } else {
       this._activeThinkingComponent.setText(fullText);
     }
@@ -706,6 +746,7 @@ export class StreamingUIController {
       state.transcriptContainer.addChild(tc);
       state.ui.requestRender();
     }
+    this.trackStepOutput(tc, this._pendingAgentGroup?.group, this._pendingReadGroup?.group);
     this.host.updateActivityPaneForTranscriptGrouping();
 
     if (toolCall.name === 'ExitPlanMode' && typeof toolCall.args['plan'] !== 'string') {
@@ -919,6 +960,14 @@ export class StreamingUIController {
     }
     group.attach(solo.toolCallView.id, solo);
     return group;
+  }
+
+  private trackStepOutput(...candidates: (Component | undefined)[]): void {
+    const { children } = this.host.state.transcriptContainer;
+    for (const component of candidates) {
+      if (component === undefined || this._stepOutput.includes(component)) continue;
+      if (children.includes(component)) this._stepOutput.push(component);
+    }
   }
 }
 

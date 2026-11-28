@@ -208,6 +208,7 @@ export interface CompactionItem extends ConversationItemBase {
   readonly tokens_after?: number;
   readonly compacted_count?: number;
   readonly summary?: string;
+  readonly error?: ConversationError;
 }
 
 export interface ForkBoundaryItem extends ConversationItemBase {

@@ -2,8 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
+import { deferred, ONE_PIXEL_PNG_BASE64 } from '@moonshot-ai/testkit/fixtures';
+import { batch, call, say } from '@moonshot-ai/testkit/model';
 import { describe, expect, it, vi } from 'vitest';
 
+import { IInstantiationService } from '#/_base/di/instantiation';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
@@ -11,12 +14,17 @@ import {
 import {
   WIRE_PROTOCOL_VERSION,
   IAgentGoalService,
+  ISessionContext,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import type { ExecutableTool, ExecutableToolResult } from '#/tool/toolContract';
 import { turnKey } from '#/agent/loop/turnOps';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
 import {
   createAgentTaskPersistence,
   taskHistoryRecords,
@@ -27,7 +35,11 @@ import {
   InMemoryWireRecordPersistence,
   execEnvServices,
   homeDirServices,
+  permissionModeServices,
+  permissionRulesServices,
   testAgent,
+  testkitAgentFixtures,
+  type TestkitAgentFixtures,
 } from '../harness';
 
 const MOCK_PROVIDER = {
@@ -741,6 +753,10 @@ describe('Agent resume', () => {
     ] as unknown as WireRecord[]);
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-undelivered-'));
     const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
+    const writeStarted = deferred();
+    const releaseWrite = deferred();
+    const lifecycle: string[] = [];
+    let closing: Promise<void> | undefined;
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
       await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
@@ -748,8 +764,21 @@ describe('Agent resume', () => {
 
       await ctx.restorePersisted();
 
+      const documents = ctx.get(IAtomicDocumentStore);
+      const set = documents.set.bind(documents);
+      const { metaScope } = ctx.get(ISessionContext);
+      vi.spyOn(documents, 'set').mockImplementation(async (scope, key, value) => {
+        if (scope === metaScope && key === 'state.json' && (value as { lastTurnReason?: string }).lastTurnReason !== undefined) {
+          writeStarted.resolve();
+          await releaseWrite.promise;
+          await set(scope, key, value);
+          lifecycle.push('metadata persisted');
+          return;
+        }
+        await set(scope, key, value);
+      });
+
       expect(steer).not.toHaveBeenCalled();
-      ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
       await ctx.untilTurnEnd();
       expect(
@@ -772,8 +801,28 @@ describe('Agent resume', () => {
           }),
         }),
       );
+
+      await writeStarted.promise;
+      const agentDisposed = deferred();
+      const agentServices = ctx.get(IInstantiationService);
+      const disposeAgent = agentServices.disposeAsync.bind(agentServices);
+      vi.spyOn(agentServices, 'disposeAsync').mockImplementationOnce(async () => {
+        await disposeAgent();
+        agentDisposed.resolve();
+      });
+      closing = ctx.dispose().then(() => {
+        lifecycle.push('disposed');
+      });
+      await Promise.race([agentDisposed.promise, closing]);
+      releaseWrite.resolve();
+      await closing;
+      await drainSessionMetadataWrites();
+      expect(lifecycle).toContain('metadata persisted');
+      expect(lifecycle.at(-1)).toBe('disposed');
     } finally {
-      await ctx.dispose();
+      releaseWrite.resolve();
+      await (closing ?? ctx.dispose());
+      await drainSessionMetadataWrites();
       await rm(homeDir, { recursive: true, force: true });
     }
   });
@@ -1155,6 +1204,82 @@ describe('Agent resume', () => {
         resetUnexpectedErrorHandler();
       }
     }
+  });
+});
+
+const NOTE = '<system>The change is applied; there is no need to Read the file back to check it.</system>';
+const TRUNCATED_NOTE = '<system>Output truncated.</system>';
+const SHAPE_TOOL = 'Shape';
+const TIMED_TOOL = 'mcp__probe__timed';
+const DENIED_TOOL = 'mcp__probe__denied';
+
+const SHAPES: Readonly<Record<string, ExecutableToolResult>> = {
+  text: { output: 'plain output' },
+  withNote: { output: 'Wrote 8 bytes to out.txt', note: NOTE },
+  failedWithNote: { output: 'Permission denied: out.txt', isError: true, note: NOTE },
+  emptyWithNote: { output: '', note: NOTE },
+  empty: { output: '' },
+  partsWithNote: { output: [{ type: 'text', text: 'first part' }, { type: 'text', text: 'second part' }], note: NOTE },
+  failed: { output: 'the tool failed', isError: true },
+  truncated: { output: 'the start of a long output', truncated: true, note: TRUNCATED_NOTE },
+  imageWithNote: {
+    output: [
+      { type: 'text', text: 'here is the picture' },
+      { type: 'image_url', imageUrl: { url: `data:image/png;base64,${ONE_PIXEL_PNG_BASE64}` } },
+    ],
+    note: '<system>Image compressed.</system>',
+  },
+};
+
+function shapeTool(name: string, results: Readonly<Record<string, ExecutableToolResult>>): ExecutableTool<{ shape: string }> {
+  return {
+    name,
+    description: 'Return a tool result of the requested shape.',
+    parameters: { type: 'object', properties: { shape: { type: 'string' } }, required: ['shape'], additionalProperties: false },
+    resolveExecution: ({ shape }) => ({
+      approvalRule: name,
+      execute: async () => {
+        const result = results[shape];
+        if (result === undefined) throw new Error(`the ${shape} tool crashed`);
+        return result;
+      },
+    }),
+  };
+}
+
+const testWithShapes = it.extend<TestkitAgentFixtures>(
+  testkitAgentFixtures(
+    permissionModeServices('yolo'),
+    permissionRulesServices([{ decision: 'deny', scope: 'user', pattern: DENIED_TOOL, reason: 'This test denies it.' }]),
+  ),
+);
+
+function shapeCall(id: string, name: string, shape: string) {
+  return call(name, { shape }, { id });
+}
+
+describe('the first request after a resume', () => {
+  testWithShapes('carries every kind of tool result exactly as the live session sent it', async ({ agent, model }) => {
+    const registry = agent.get(IAgentToolRegistryService);
+    registry.register(shapeTool(SHAPE_TOOL, SHAPES));
+    registry.register(shapeTool(TIMED_TOOL, { withNote: { output: 'timed output', note: TRUNCATED_NOTE }, text: { output: 'timed output' } }));
+    registry.register(shapeTool(DENIED_TOOL, {}));
+    await agent.restorePersisted();
+    model.script(
+      ...[...Object.keys(SHAPES), 'crash'].map((shape, index) => shapeCall(`call_${String(index)}`, SHAPE_TOOL, shape)),
+      shapeCall('call_denied', DENIED_TOOL, 'text'),
+      batch(
+        shapeCall('call_timed_note', TIMED_TOOL, 'withNote'),
+        shapeCall('call_timed_text', TIMED_TOOL, 'text'),
+        shapeCall('call_batch_note', SHAPE_TOOL, 'withNote'),
+      ),
+      say('Every shape came back.'),
+    );
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'Return every shape.' }] });
+    await agent.untilTurnEnd();
+
+    expect(model.requests('main').at(-1)?.texts('tool').join('\n')).toContain('Wrote 8 bytes to out.txt');
+    await agent.expectResumeSendsTheSameHistory();
   });
 });
 

@@ -6,8 +6,9 @@ import { dirname, join } from 'node:path';
 import {
   closeSessionById,
   ISessionIndex,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
+import { fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
 import { say } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
 import { afterAll, beforeAll, describe, expect, it, test as base } from 'vitest';
@@ -61,10 +62,6 @@ function resolveExecServerFixture(): string {
   return join(dirname(packageJson), 'test', 'remote', 'fixtures', 'exec-server-child.ts');
 }
 
-function resolveMcpServerFixture(): string {
-  const packageJson = require.resolve('@moonshot-ai/agent-core-v2/package.json');
-  return join(dirname(packageJson), 'test', 'mcpCore', 'fixtures', 'mock-stdio-server.mjs');
-}
 
 function configToml(): string {
   const node = process.execPath;
@@ -222,7 +219,7 @@ const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({
 
 kapTest('offers the MCP tools of the project in the first request of a session whose environment connects slower than the servers start', { timeout: 60_000 }, async ({ kap, model }) => {
   await writeFile(join(kap.home.dataDir, 'mcp.json'), JSON.stringify({
-    mcpServers: { slow: { command: process.execPath, args: [resolveMcpServerFixture()], env: { KIMI_TEST_MCP_START_DELAY_MS: '300' } } },
+    mcpServers: { slow: fakeMcpServer('slow', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }], startDelayMs: 300 }) },
   }));
   model.script(say('done'));
   const session = await kap.rest.post<SessionWire>('/api/v1/sessions', {

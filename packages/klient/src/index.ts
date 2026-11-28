@@ -97,14 +97,14 @@ export type {
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 export type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/queryStore';
 export type {
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+  Project as Workspace,
+  ProjectUpdate as WorkspaceUpdate,
+} from '@moonshot-ai/agent-core-v2/app/project/project';
 export type {
   ConfigDiagnostic,
   ConfigInspectValue,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 export type { AuthStatus } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 export type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 export type {

@@ -58,12 +58,14 @@ export function emissionsOf(step: ReplyStep, callId: (callIndex: number, call: T
   return emissions;
 }
 
-export function resolveUsage(step: ReplyStep, requestBody: string): ResolvedUsage | null {
+export function resolveUsage(step: ReplyStep, requestBody: string, cachedTokens = 0): ResolvedUsage | null {
   if (step.usage === null) return null;
+  const prompt = estimateTokens(requestBody.length);
+  const cacheRead = Math.min(cachedTokens, prompt);
   const estimated: ResolvedUsage = {
-    input: estimateTokens(requestBody.length),
+    input: prompt - cacheRead,
     output: estimateTokens(outputLength(step)),
-    cacheRead: 0,
+    cacheRead,
     cacheWrite: 0,
   };
   return { ...estimated, ...step.usage };
@@ -108,6 +110,6 @@ function outputLength(step: ReplyStep): number {
   );
 }
 
-function estimateTokens(characters: number): number {
+export function estimateTokens(characters: number): number {
   return Math.max(1, Math.ceil(characters / 4));
 }

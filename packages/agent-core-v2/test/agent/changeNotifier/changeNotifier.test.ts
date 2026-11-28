@@ -25,8 +25,12 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
+import type { ContextInjectionProvider } from '#/features/reminder/types';
+import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
+import { ContextUndone } from '#/agent/undo/undoService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -75,6 +79,8 @@ interface Harness {
   readonly ix: TestInstantiationService;
   readonly notifier: IAgentChangeNotifierService;
   readonly reminders: CapturedReminder[];
+  beginStep(): Promise<void>;
+  readonly eventBus: EventBusService;
   readonly instructionsChange: Emitter<readonly WatchChange[]>;
   readonly skillCatalogChange: Emitter<string>;
   readonly agentCatalogChange: Emitter<string>;
@@ -141,6 +147,8 @@ function createHarness(options: {
   readonly workspaceReady?: Promise<void>;
 }): Harness {
   const reminders: CapturedReminder[] = [];
+  const reminderProviders: ContextInjectionProvider[] = [];
+  const eventBus = disposables.add(new EventBusService());
   const instructionsChange = disposables.add(new Emitter<readonly WatchChange[]>());
   const skillCatalogChange = disposables.add(new Emitter<string>());
   const agentCatalogChange = disposables.add(new Emitter<string>());
@@ -221,6 +229,10 @@ function createHarness(options: {
       reg.defineInstance(
         IAgentReminderService,
         createReminderStub({
+          register: (_variant, provider) => {
+            reminderProviders.push(provider as ContextInjectionProvider);
+            return { dispose: () => {} };
+          },
           notify: (content, notification) => {
             reminders.push({ content, variant: notification.variant });
           },
@@ -249,7 +261,7 @@ function createHarness(options: {
         scope: (sub?: string): string =>
           sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
       } satisfies ISessionContext);
-      reg.defineInstance(ISessionWorkspaceInfo, {
+      reg.defineInstance(ISessionProjectInfo, {
         _serviceBrand: undefined,
         ready: options.workspaceReady ?? Promise.resolve(),
         get additionalDirs() {
@@ -259,7 +271,7 @@ function createHarness(options: {
           return workspaceDirs.primaryByWorkspace;
         },
         onDidChange: workspaceDirsChange.event,
-      } satisfies ISessionWorkspaceInfo);
+      } satisfies ISessionProjectInfo);
       reg.defineInstance(IBootstrapService, {
         homeDir,
         getEnv: () => undefined,
@@ -325,6 +337,7 @@ function createHarness(options: {
           }
         },
       } as unknown as IEventDispatcher);
+      reg.defineInstance(IEventBus, eventBus);
       reg.define(IAgentChangeNotifierService, AgentChangeNotifierService);
     },
     strict: true,
@@ -334,6 +347,12 @@ function createHarness(options: {
     ix,
     notifier,
     reminders,
+    eventBus,
+    beginStep: async () => {
+      for (const provider of reminderProviders) {
+        await provider({ injectedPositions: [], lastInjectedAt: null, lastInjection: undefined, lastDisclosure: undefined, isNewTurn: true });
+      }
+    },
     instructionsChange,
     skillCatalogChange,
     agentCatalogChange,
@@ -868,6 +887,70 @@ describe('notifySkillChanges', () => {
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.variant).toBe('skills_change');
     expect(h.reminders[0]?.content).toContain('skill-a');
+  });
+
+  it('reminds a restored agent once, at its first step, about a skill listing that changed while it was closed', async () => {
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `header\n\n${LISTING_A}\n\nfooter`,
+      }),
+    });
+    h.skillListing.value = LISTING_A;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.skillListing.value = LISTING_AB;
+    await h.ix.get(IEventDispatcher).hooks.onDidRestore.run({});
+    expect(h.reminders).toHaveLength(0);
+
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('skills_change');
+    expect(h.reminders[0]?.content).toContain('skill-b');
+
+    h.skillListing.value = LISTING_A;
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(1);
+  });
+
+  it('checks again at the next step after an undo rolls back the reminded turn', async () => {
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `header\n\n${LISTING_A}\n\nfooter`,
+      }),
+    });
+    h.skillListing.value = LISTING_A;
+    await h.notifier.notifySkillChanges();
+    await h.ix.get(IEventDispatcher).hooks.onDidRestore.run({});
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(0);
+
+    const main = stubAgentContext('main', 0);
+    const sub = stubAgentContext('sub-1', 0);
+    h.eventBus.activateAgent(main);
+    h.eventBus.activateAgent(sub);
+    h.skillListing.value = LISTING_AB;
+    h.eventBus.publish(new ContextUndone({ agentId: 'main', turns: 1 }), main);
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('skill-b');
+
+    h.eventBus.publish(new ContextUndone({ agentId: 'sub-1', turns: 1 }), sub);
+    h.skillListing.value = LISTING_A;
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(1);
+  });
+
+  it('leaves a restored agent without a bound profile to the binding that seeds its beliefs', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: undefined }) });
+    h.skillListing.value = LISTING_AB;
+
+    await h.ix.get(IEventDispatcher).hooks.onDidRestore.run({});
+    await h.beginStep();
+
+    expect(h.reminders).toHaveLength(0);
   });
 });
 

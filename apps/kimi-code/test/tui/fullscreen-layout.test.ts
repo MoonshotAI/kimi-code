@@ -174,7 +174,7 @@ function pendingApproval(): NonNullable<ReturnType<typeof createTUIState>['liveP
   };
 }
 
-function pillLines(state: ReturnType<typeof createTUIState>): string[] {
+function pillLines(state: ReturnType<typeof createTUIState>): readonly string[] {
   const root = (state.ui as TuiAltScreen).getLayoutRoot() as VStack;
   const transcript = root.children[0] as VStack;
   return transcript.children[0]!.render(state.ui.terminal.columns);
@@ -2750,7 +2750,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Follow-up behavior');
+    expect(rows.join('\n')).toContain('❯ Editor');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();
@@ -3117,7 +3117,7 @@ describe('fullscreen layout', () => {
     }
   });
 
-  it('keeps search focused while selecting or clicking docked editor text', async () => {
+  it('keeps search focused while selecting docked editor text and focuses the editor on click', async () => {
     clipboardText.copyTextToClipboard.mockClear();
     const { state, vt } = await mountFullscreen();
     try {
@@ -3155,14 +3155,12 @@ describe('fullscreen layout', () => {
       vt.sendInput(`\u001B[<0;${start + 7};${row + 1}m`);
       await vt.waitForRender();
 
-      expect(alt.getFocusedComponent()).toBe(searchFocus);
-      expect(state.editor.focused).toBe(false);
-      expect(state.editor.getCursor()).toEqual(editorCursor);
-      expect(vt.getCursorPosition()).toEqual(searchCursor);
+      expect(alt.getFocusedComponent()).toBe(state.editor);
+      expect(state.editor.focused).toBe(true);
+      expect(screenRows(vt).join('\n')).not.toContain('↑ Previous · ↓ Next');
       vt.sendInput('X');
       await vt.waitForRender();
-      expect(state.editor.getText()).toBe('hello world');
-      expect(screenRows(vt).join('\n')).toContain('findX');
+      expect(state.editor.getText()).toBe('hello Xworld');
     } finally {
       state.ui.stop();
     }

@@ -34,8 +34,9 @@ const ALLOWED_EVERYWHERE = new Set([
 
 const ALLOWED_ONLY_IN = {
   '@agentclientprotocol/sdk': ['tests/e2e/surfaces/acp.ts'],
-  '@moonshot-ai/pi-tui/testing': ['tests/e2e/surfaces/tui.ts'],
-  'node:child_process': ['tests/e2e/surfaces/tui.ts', 'tests/e2e/surfaces/acp.ts'],
+  '@moonshot-ai/pi-tui/testing': ['tests/e2e/surfaces/tui.ts', 'tests/e2e/surfaces/terminal-process.ts'],
+  'node-pty': ['tests/e2e/surfaces/tui.ts', 'tests/e2e/surfaces/terminal-process.ts'],
+  'node:child_process': ['tests/e2e/surfaces/acp.ts'],
 };
 
 const USER_OPERATIONS = 'drive the product with user operations only: keys and screen reads, clicks and typing located by role and accessible name, or ACP messages as an editor sends them';
@@ -118,7 +119,7 @@ export const FLAKE_MASKING_PATTERNS = [
   pattern('toPass(', `${WAIT_FOR_CONDITION}; toPass re-runs a block until it passes, which is a retry`, /\btoPass\(/g),
 ];
 
-const SURFACE_BLIND = 'use only product, model and workspace; a difference between surfaces belongs in its driver, or in except/onlyOn with a reason';
+const SURFACE_BLIND = 'use only product, model, workspace and mcp; a difference between surfaces belongs in its driver, or in except/onlyOn with a reason';
 
 export const SCENARIO_ENVIRONMENT_PATTERNS = [
   pattern('process.', SURFACE_BLIND, /\bprocess(?:\.[A-Za-z_$]|\[)/g),

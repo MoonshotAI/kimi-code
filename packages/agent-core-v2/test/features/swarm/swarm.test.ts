@@ -1,22 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
 import { appendContext } from '../../agent/contextMemory/stubs';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
-import type { ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
-import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { createReminderStub } from '../reminder/stubs';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -26,14 +23,15 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentSwarmService } from '#/features/swarm/agent/swarmService';
-import SWARM_MODE_ENTER_REMINDER from '../../../src/features/swarm/agent/enter-reminder.md?raw';
 import { swarmKey } from '#/features/swarm/swarmOps';
 import { AgentSwarmToolInputSchema } from '#/features/swarm/tools/agent-swarm/agent-swarm';
+import AGENT_SWARM_DESCRIPTION from '../../../src/features/swarm/tools/agent-swarm/agent-swarm.md?raw';
 import { AgentSwarmTool } from '#/features/swarm/tools/agent-swarm/agentSwarmTool';
+import '#/features/swarm/swarmFeature';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -70,7 +68,8 @@ import {
 } from '../../wire/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
-import { createTestAgent } from '../../harness';
+import { testkitAgentFixtures, type TestkitAgentFixtures } from '../../harness';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const signal = new AbortController().signal;
 
@@ -256,7 +255,7 @@ function realSubagents(
       }
       return { id: alias } as Model;
     },
-  } as unknown as IModelCatalog;
+  } as unknown as IProviderCatalogService;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
   return new SessionSubagentService(
     agentLifecycle,
@@ -294,54 +293,6 @@ describe('AgentSwarmService', () => {
     ix.stub(IAgentLoopService, loop);
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    let provider: ContextInjectionProvider | undefined;
-    const reminder = createReminderStub({
-      register: (_variant, value) => {
-        provider = value as ContextInjectionProvider;
-        return toDisposable(() => { provider = undefined; });
-      },
-    });
-    ix.stub(IAgentReminderService, reminder);
-    loop.hooks.onWillBeginStep.register('test-reminder', async ({ firstStepOfTurn }, next) => {
-      const context = ix.get(IAgentLoopService);
-      const history = context.history();
-      const positions = history.flatMap((message, index) =>
-        message.origin?.kind === 'injection' && message.origin.variant === 'swarm_mode' ? [index] : [],
-      );
-      const lastInjectedAt = positions.at(-1) ?? null;
-      const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
-      const value = await provider?.({
-        injectedPositions: positions,
-        lastInjectedAt,
-        lastInjection,
-        lastDisclosure: lastInjection?.origin?.kind === 'injection'
-          ? lastInjection.origin.disclosure
-          : undefined,
-        isNewTurn: firstStepOfTurn,
-      });
-      if (value !== undefined) {
-        const result: ContextInjectionResult =
-          typeof value === 'object' && !Array.isArray(value) && 'content' in value
-            ? value
-            : { content: value };
-        if (typeof result.content === 'string') {
-          const message: ContextMessage = {
-            role: 'user',
-            content: [{ type: 'text', text: wrapSystemReminder(result.content) }],
-            origin: { kind: 'injection', variant: 'swarm_mode', disclosure: result.disclosure },
-          };
-          const start = context.history().length;
-          appendContext(context, message);
-          await ix.get(IEventDispatcher).dispatch(new ContextSpliced({
-            agentId: 'test-agent',
-            start,
-            deleteCount: 0,
-            messages: [message],
-          }));
-        }
-      }
-      await next();
-    });
     ix.stub(ISessionSwarmService, {
       getSwarmItem: async () => undefined,
       run: async () => [],
@@ -426,85 +377,6 @@ describe('AgentSwarmService', () => {
     ]);
   });
 
-  it('delivers enter guidance at the first step after manual swarm mode becomes active', async () => {
-    const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentLoopService);
-
-    swarm.enter('manual');
-    expect(context.history()).toHaveLength(0);
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-
-    const reminder = context.history().at(-1);
-    expect(reminder?.origin).toEqual({
-      kind: 'injection',
-      variant: 'swarm_mode',
-      disclosure: { kind: 'swarm_mode', state: 'active' },
-    });
-    expect(context.history()).toHaveLength(1);
-  });
-
-  it('delivers enter guidance only once while the same activation stays active', async () => {
-    const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentLoopService);
-
-    swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-
-    expect(context.history()).toHaveLength(1);
-  });
-
-  it('keeps history on exit and delivers once for each new activation', async () => {
-    const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentLoopService);
-
-    swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    swarm.exit();
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-
-    expect(context.history()).toHaveLength(1);
-    expect(context.history()[0]?.origin).toMatchObject({
-      kind: 'injection',
-      variant: 'swarm_mode',
-      disclosure: { kind: 'swarm_mode', state: 'active' },
-    });
-
-    swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-
-    expect(context.history()).toHaveLength(2);
-    expect(context.history()[1]?.origin).toMatchObject({
-      kind: 'injection',
-      variant: 'swarm_mode',
-      disclosure: { kind: 'swarm_mode', state: 'active' },
-    });
-
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    expect(context.history()).toHaveLength(2);
-  });
-
-  it('keeps enter guidance when a later context message makes it non-trailing', async () => {
-    const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentLoopService);
-
-    swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    appendContext(context,{
-      role: 'user',
-      content: [{ type: 'text', text: 'later prompt' }],
-      origin: { kind: 'user' },
-    });
-    swarm.exit();
-
-    expect(context.history()).toHaveLength(2);
-    expect(context.history()[0]?.origin).toMatchObject({
-      kind: 'injection',
-      variant: 'swarm_mode',
-    });
-    expect(messageText(context.history()[1])).toBe('later prompt');
-  });
-
   it('refuses the tool trigger so only the user can turn swarm mode on', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentLoopService);
@@ -547,73 +419,27 @@ describe('AgentSwarmService', () => {
     expect(ix.get(IAgentStateService).get(swarmKey)).toBe('manual');
   });
 
-  it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
+  it('replays sessions that recorded a legacy enter reminder as plain history', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentLoopService);
+    const legacyReminder = swarmReminder('Legacy swarm enter reminder.');
     await restoreTestEventDispatcher(
       ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
       [
         { type: 'swarm_mode.enter', trigger: 'manual' },
-        { type: 'context.append_message', message: swarmReminder(SWARM_MODE_ENTER_REMINDER) },
-      ],
-    );
-    appendContext(context, swarmReminder(SWARM_MODE_ENTER_REMINDER));
-
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-
-    expect(swarm.isActive).toBe(true);
-    expect(context.history()).toHaveLength(1);
-  });
-
-  it('replays exit by preserving the enter reminder without injecting exit guidance', async () => {
-    const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentLoopService);
-    await restoreTestEventDispatcher(
-      ix.get(IEventDispatcher),
-      ix.get(IAppendLogStore),
-      testWireScope('wire', 'swarm-test'),
-      [
-        { type: 'swarm_mode.enter', trigger: 'manual' },
-        { type: 'context.append_message', message: swarmReminder(SWARM_MODE_ENTER_REMINDER) },
+        { type: 'context.append_message', message: legacyReminder },
         { type: 'swarm_mode.exit' },
       ],
     );
-    appendContext(context, swarmReminder(SWARM_MODE_ENTER_REMINDER));
+    appendContext(context, legacyReminder);
 
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
     expect(swarm.isActive).toBe(false);
     expect(context.history()).toHaveLength(1);
-    expect(messageText(context.history()[0])).toBe(wrapSystemReminder(SWARM_MODE_ENTER_REMINDER));
-  });
-
-  it('delivers once after replay when a new activation is still pending', async () => {
-    const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentLoopService);
-    await restoreTestEventDispatcher(
-      ix.get(IEventDispatcher),
-      ix.get(IAppendLogStore),
-      testWireScope('wire', 'swarm-test'),
-      [
-        { type: 'swarm_mode.enter', trigger: 'manual' },
-        { type: 'context.append_message', message: swarmReminder(SWARM_MODE_ENTER_REMINDER) },
-        { type: 'swarm_mode.exit' },
-        { type: 'swarm_mode.enter', trigger: 'manual' },
-      ],
-    );
-    appendContext(context, swarmReminder(SWARM_MODE_ENTER_REMINDER));
-
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-
-    expect(swarm.isActive).toBe(true);
-    expect(context.history()).toHaveLength(2);
-    expect(messageText(context.history()[1])).toBe(wrapSystemReminder(SWARM_MODE_ENTER_REMINDER));
-
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    expect(context.history()).toHaveLength(2);
+    expect(messageText(context.history()[0])).toBe(wrapSystemReminder('Legacy swarm enter reminder.'));
   });
 
   it('dispatch persists enter/exit records and replay rebuilds the trigger (silent)', async () => {
@@ -716,51 +542,6 @@ describe('AgentSwarmService', () => {
     expect(decision).toBeUndefined();
     expect(permissionGateRan).toBe(true);
     expect(formatDenyMessage).not.toHaveBeenCalled();
-  });
-});
-
-describe('swarm context reconciliation', () => {
-  it('delivers one reminder before the first request and preserves it across turns and exit', async () => {
-    const ctx = createTestAgent();
-    try {
-      await ctx.restorePersisted();
-      const swarm = ctx.get(IAgentSwarmService);
-      const reminders = () => ctx.contextData().history.filter(
-        (message) =>
-          message.origin?.kind === 'injection' && message.origin.variant === 'swarm_mode',
-      );
-      const guidance = 'The user may send tasks that require a large number of parallel subagents.';
-
-      swarm.enter('manual');
-      expect(reminders()).toHaveLength(0);
-      ctx.mockNextResponse({ type: 'text', text: 'first answer' });
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first prompt' }] });
-      await ctx.untilTurnEnd();
-
-      const firstInput = JSON.stringify(ctx.llmCalls.at(-1));
-      const reminderAt = firstInput.indexOf(guidance);
-      const promptAt = firstInput.indexOf('first prompt');
-      expect(promptAt).toBeGreaterThanOrEqual(0);
-      expect(reminderAt).toBeGreaterThan(promptAt);
-      expect(reminders()).toHaveLength(1);
-
-      ctx.mockNextResponse({ type: 'text', text: 'second answer' });
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
-      await ctx.untilTurnEnd();
-
-      expect(JSON.stringify(ctx.llmCalls.at(-1)).split(guidance)).toHaveLength(2);
-      expect(reminders()).toHaveLength(1);
-
-      swarm.exit();
-      ctx.mockNextResponse({ type: 'text', text: 'third answer' });
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third prompt' }] });
-      await ctx.untilTurnEnd();
-
-      expect(JSON.stringify(ctx.llmCalls.at(-1))).not.toContain('Swarm Mode has ended.');
-      expect(reminders()).toHaveLength(1);
-    } finally {
-      await ctx.dispose();
-    }
   });
 });
 
@@ -926,6 +707,8 @@ describe('AgentSwarmTool', () => {
     const swarmMode = mockSwarmMode(false);
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode, stubConfig(), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()));
 
+    expect(tool.description).toBe(AGENT_SWARM_DESCRIPTION);
+
     const result = await executeTool(
       tool,
       context({
@@ -972,6 +755,20 @@ describe('AgentSwarmTool', () => {
     const host = mockSwarmHost();
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()));
     expect(tool.description).toContain('{{item}}');
+  });
+
+  it('keeps the static description across swarm mode changes', () => {
+    const host = mockSwarmHost();
+    const swarmMode = mockSwarmMode(false);
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode, stubConfig(), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()));
+    const initial = tool.description;
+    expect(initial).toBe(AGENT_SWARM_DESCRIPTION);
+
+    swarmMode.isActive = true;
+    expect(tool.description).toBe(initial);
+
+    swarmMode.isActive = false;
+    expect(tool.description).toBe(initial);
   });
 
   it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
@@ -1502,4 +1299,73 @@ describe('AgentSwarmTool', () => {
     expect(result.isError).toBeUndefined();
   });
 
+});
+
+const swarmToolSelectTest = it.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+describe('AgentSwarm tool schema stability', () => {
+  for (const dynamicallyLoadedTools of [false, true]) {
+    swarmToolSelectTest(
+      `keeps AgentSwarm description unchanged and emits no tool_update_pending across mid-session swarm toggles (dynamic tools: ${String(dynamicallyLoadedTools)})`,
+      async ({ agent, model }) => {
+        agent.configure({
+          modelCapabilities: {
+            image_in: false,
+            video_in: false,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            maxContextSize: 128_000,
+            dynamically_loaded_tools: dynamicallyLoadedTools,
+          },
+        });
+        await agent.restorePersisted();
+        await agent.rpc.setPermission({ mode: 'yolo' });
+        const swarm = agent.get(IAgentSwarmService);
+        const registry = agent.get(IAgentToolRegistryService);
+        const loop = agent.get(IAgentLoopService);
+        const liveDescription = () =>
+          registry.list().find((tool) => tool.name === 'AgentSwarm')?.description;
+
+        model.script(say('first'));
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+        await agent.untilTurnEnd();
+
+        const firstDescription = model.requests('main')[0]?.view.tools
+          .find((tool) => tool.name === 'AgentSwarm')?.description;
+        expect(firstDescription).toBe(AGENT_SWARM_DESCRIPTION);
+        expect(swarm.isActive).toBe(false);
+
+        swarm.enter('manual');
+        expect(swarm.isActive).toBe(true);
+        expect(liveDescription()).toBe(firstDescription);
+
+        model.script(say('second'));
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'second turn' }] });
+        await agent.untilTurnEnd();
+
+        swarm.exit();
+        expect(swarm.isActive).toBe(false);
+        expect(liveDescription()).toBe(firstDescription);
+
+        model.script(say('third'));
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'third turn' }] });
+        await agent.untilTurnEnd();
+
+        const requests = model.requests('main');
+        expect(requests).toHaveLength(3);
+        for (const request of requests) {
+          expect(request.view.tools.find((tool) => tool.name === 'AgentSwarm')?.description)
+            .toBe(firstDescription);
+          expect(request.rawBody).not.toContain('has an update, but the update is not applied');
+        }
+        expect(
+          loop.history().filter(
+            (message) =>
+              message.origin?.kind === 'injection' && message.origin.variant === 'tool_update_pending',
+          ),
+        ).toHaveLength(0);
+      },
+    );
+  }
 });

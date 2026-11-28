@@ -12,7 +12,7 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#human/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
@@ -109,6 +109,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const signal = new AbortController().signal;
 
@@ -188,7 +189,7 @@ function noopDisposable() {
   return { dispose: () => {} };
 }
 
-function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
+function modelCatalogResolving(...aliases: readonly string[]): IProviderCatalogService {
   return {
     _serviceBrand: undefined,
     get: (alias: string) => {
@@ -201,6 +202,7 @@ function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
       }
       return {
         id: alias,
+        protocol: 'openai',
         spec: { provider: 'test', name: alias },
         endpoint: {},
       } as Model;
@@ -214,7 +216,7 @@ function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
       request: async function* () {},
     }),
     notifyConfigChanged: () => {},
-  } as unknown as IModelCatalog;
+  } as unknown as IProviderCatalogService;
 }
 
 interface AgentLifecycleStubOptions {
@@ -5007,11 +5009,13 @@ describe('Agent tools', () => {
         [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
         [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
+        [wire] tools.settled               { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
         [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
         [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
         [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
-        [emit] tool.call.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
+        [emit] tool.call.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "" }
+        [emit] tool.call.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 2, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ], "providerMessageId": "mock-1", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 134 }

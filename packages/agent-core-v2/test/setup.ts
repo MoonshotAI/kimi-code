@@ -1,7 +1,14 @@
-for (const key of Object.keys(process.env)) {
-  if (key.startsWith('KIMI_CODE_')) {
-    delete process.env[key];
-  }
-}
+import { isolateProcessEnv } from '@moonshot-ai/testkit/fixtures';
+import { useNetworkGuard } from '@moonshot-ai/testkit/vitest';
+import { afterEach } from 'vitest';
 
-process.env['KIMI_CODE_PERSISTENCE_MINIDB_READMODEL'] = 'false';
+isolateProcessEnv();
+useNetworkGuard();
+
+afterEach(({ task }) => {
+  if ((task.result?.retryCount ?? 0) > 0 && task.result?.state === 'pass') {
+    throw new Error(
+      `"${task.name}" failed and then passed on retry, so it is flaky. Find the cause instead of relying on the retry.`,
+    );
+  }
+});

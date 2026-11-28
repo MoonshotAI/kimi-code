@@ -16,6 +16,7 @@ import {
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
+import { takeProgramResumeToken } from '@moonshot-ai/pi-tui';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from '#/constant/app';
 import { runHeadlessMigrate, type MigrateCommandOptions } from '#/migration/index';
@@ -52,6 +53,7 @@ export interface MainCommandOutcome {
 export async function handleMainCommand(
   opts: CLIOptions,
   version: string,
+  programResumeToken?: string,
 ): Promise<MainCommandOutcome> {
   let validated: ReturnType<typeof validateOptions>;
   startupTrace('main:enter');
@@ -88,7 +90,11 @@ export async function handleMainCommand(
   }
 
   startupTrace('runShell:begin');
-  await runShell(validated.options, version);
+  if (programResumeToken === undefined) {
+    await runShell(validated.options, version);
+  } else {
+    await runShell(validated.options, version, { programResumeToken });
+  }
   return { headlessCompleted: false };
 }
 
@@ -171,6 +177,7 @@ export function main(): void {
 }
 
 function bootstrap(): void {
+  const programResumeToken = takeProgramResumeToken(process.env);
   installGlobalProxyDispatcher();
   installNativeModuleHook();
   const workerInstall = installMinidbTextBuildWorker();
@@ -202,7 +209,7 @@ function bootstrap(): void {
   const program = createProgram(
     version,
     (opts) => {
-      void handleMainCommand(opts, version)
+      void handleMainCommand(opts, version, programResumeToken)
         .then(async (outcome) => {
           if (outcome.headlessCompleted) {
             await finalizeHeadlessRun(

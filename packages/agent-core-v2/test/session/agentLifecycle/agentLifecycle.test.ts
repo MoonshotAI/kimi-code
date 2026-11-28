@@ -42,10 +42,8 @@ import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeCo
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
+import { UNKNOWN_CAPABILITY } from '#/provider-catalog/capability';
 import type { ToolCall } from '#human/message';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -102,7 +100,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
-import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import { IProjectTrust } from '#/project/projectTrust/projectTrust';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -123,17 +121,18 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { ScopeUnits, type Fiber } from '#/_base/di/fiber';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { stubProviderDiscovery } from '../../stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -265,13 +264,13 @@ describe('AgentLifecycleService', () => {
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
-    ix.stub(ISessionWorkspaceInfo, {
+    ix.stub(ISessionProjectInfo, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       primaryByWorkspace: {},
       additionalDirs: [],
       onDidChange: Event.None,
-    } as ISessionWorkspaceInfo);
+    } as ISessionProjectInfo);
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
@@ -288,16 +287,16 @@ describe('AgentLifecycleService', () => {
       environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
-    ix.stub(IWorkspaceTrust, {
+    ix.stub(IProjectTrust, {
       get: async () => false,
-    } as unknown as IWorkspaceTrust);
+    } as unknown as IProjectTrust);
     ix.stub(IProjectPermissionRulesService, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       rules: [],
       appendRules: async () => {},
     });
-    ix.stub(IWorkspaceInstanceManager, {
+    ix.stub(IProjectInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       get: () => undefined,
@@ -510,19 +509,19 @@ describe('AgentLifecycleService', () => {
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
-    ix.stub(IModelCatalog, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
       get: () => ({ spec: { provider: 'stub', name: 'stub', capability: {} } }),
-    } as unknown as IModelCatalog);
+    } as unknown as IProviderCatalogService);
     ix.stub(ISessionTokenCountingService, {
       estimateText: () => 0,
       estimateMessage: () => 0,
       estimateMessages: () => 0,
       recordTruncation: () => {},
     } as unknown as ISessionTokenCountingService);
-    ix.stub(IProtocolAdapterRegistry, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
-    } as IProtocolAdapterRegistry);
+    } as IProviderCatalogService);
     ix.stub(IBuiltinAgentProfileLoader, {
       _serviceBrand: undefined,
       list: () => [],

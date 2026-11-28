@@ -75,6 +75,7 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
 ]);
 const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tools.reset_active_tools',
+  'tools.settled',
   'profile.bind',
 ]);
 
@@ -266,7 +267,6 @@ describe('conversation-time checkpoint registration', () => {
     'goalForkNotice',
     'turn',
     'fullCompaction.wireRanges',
-    'swarmReminderDelivered',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [

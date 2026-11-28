@@ -50,7 +50,7 @@ import type {
   CreateSessionOptions,
   ForkSessionOptions,
   ResumeSessionOptions,
-} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+} from '@moonshot-ai/agent-core-v2/project/sessionLifecycle/sessionLifecycle';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -99,8 +99,7 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type {
   ImportCustomRegistryOptions,
@@ -128,15 +127,15 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 import type {
   SessionListQuery,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import type {
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+  Project,
+  ProjectUpdate,
+} from '@moonshot-ai/agent-core-v2/app/project/project';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   CompactionBlockedEvent,
@@ -330,6 +329,7 @@ import {
 
 import type { AssertWire, MutableDeep } from './helpers/typeAssert.js';
 import type { AgentFacade, AgentSteerEntry } from '../src/core/facade/agent.js';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 type AssertEngineToWire<TSchema extends z.ZodType, TEngine> = [MutableDeep<TEngine>] extends [
   z.infer<TSchema>,
@@ -362,8 +362,8 @@ type ConfigTargetValues = `${ConfigTarget}`;
 const _sessionSummary: AssertWire<typeof sessionSummarySchema, SessionSummary> = true;
 const _sessionListQuery: AssertWire<typeof sessionListQuerySchema, SessionListQuery> = true;
 
-const _workspace: AssertWire<typeof workspaceSchema, Workspace> = true;
-const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, WorkspaceUpdate> = true;
+const _workspace: AssertWire<typeof workspaceSchema, Project> = true;
+const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, ProjectUpdate> = true;
 
 const _configInspectValue: AssertEngineToWire<typeof configInspectValueSchema, ConfigInspectValue> =
   true;
@@ -404,9 +404,9 @@ const _fsHomeResponse: AssertWire<typeof fsHomeResponseSchema, FsHomeResponse> =
 const _fileMeta: AssertWire<typeof fileMetaSchema, FileMeta> = true;
 const _fileSaveOptions: AssertWire<typeof fileSaveOptionsSchema, SaveOptions> = true;
 
-type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
-type ProviderCatalogItem = Awaited<ReturnType<IModelCatalog['listProviders']>>[number];
-type SetDefaultModelResponse = Awaited<ReturnType<IModelCatalog['setDefaultModel']>>;
+type ModelCatalogItem = Awaited<ReturnType<IProviderCatalogService['listModels']>>[number];
+type ProviderCatalogItem = Awaited<ReturnType<IProviderCatalogService['listProviders']>>[number];
+type SetDefaultModelResponse = Awaited<ReturnType<IProviderCatalogService['setDefaultModel']>>;
 type RefreshProviderModelsOptions = NonNullable<
   Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;

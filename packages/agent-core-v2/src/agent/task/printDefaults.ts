@@ -20,6 +20,7 @@ type SectionValue = Record<string, unknown>;
 
 function isUnset(inspected: ConfigInspectValue<SectionValue>, key: string): boolean {
   if (inspected.userValue?.[key] !== undefined) return false;
+  if (inspected.envValue?.[key] !== undefined) return false;
   if (inspected.memoryValue?.[key] !== undefined) return false;
   const effective = inspected.value?.[key];
   if (effective === undefined) return true;

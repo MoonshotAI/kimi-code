@@ -6,6 +6,7 @@ import { isSwarmRejection } from '../lib/parseSwarmResult';
 import type {
   CompactionItem,
   ConversationAttachment,
+  ConversationError,
   ConversationItem,
   ConversationMedia,
   ConversationRequestDebug,
@@ -24,7 +25,15 @@ import {
   toolResultText,
   withReadMediaDetails,
 } from './toolCalls';
-import type { ChatTurn, TaskNotification, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from './types';
+import type {
+  ChatTurn,
+  TaskNotification,
+  ToolCall,
+  ToolMedia,
+  TurnAttachment,
+  TurnBlock,
+  TurnCompactionError,
+} from './types';
 import { mcpAuthCardOf } from './mcpAuthCard';
 import { inlineReferencedIndexes } from './userMessageText';
 
@@ -526,7 +535,21 @@ function compactionTurn(item: CompactionItem, no: number): ChatTurn {
     role: 'compaction',
     no,
     text: item.summary ?? '',
-    compaction: { trigger: item.trigger, tokensBefore: item.tokens_before, tokensAfter: item.tokens_after },
+    compaction: {
+      trigger: item.trigger,
+      tokensBefore: item.tokens_before,
+      tokensAfter: item.tokens_after,
+      ...(item.error === undefined ? {} : { error: compactionErrorOf(item.error) }),
+    },
+  };
+}
+
+function compactionErrorOf(error: ConversationError): TurnCompactionError {
+  return {
+    code: error.code,
+    message: error.message,
+    ...(error.status_code === undefined ? {} : { statusCode: error.status_code }),
+    ...(error.request_id === undefined ? {} : { requestId: error.request_id }),
   };
 }
 

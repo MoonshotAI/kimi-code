@@ -24,8 +24,6 @@ import {
   IAgentTodoService,
   IEventBus,
   IEventService,
-  IModelCatalog,
-  IModelService,
   IConfigService,
   ISessionActivityView,
   ISessionMetadata,
@@ -34,9 +32,9 @@ import {
   ISessionManager,
   ISessionTokenCountingService,
   ISessionUsageService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
-  IWorkspaceSessions,
+  IProjectInstanceManager,
+  IProjectService,
+  IProjectSessions,
   MAIN_AGENT_ID,
   interactions,
   makeAgentScopeContext,
@@ -70,6 +68,7 @@ import {
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import { USAGE_FRAME_INTERVAL_MS } from '../src/transport/ws/v1/sessionAgentFeed';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 type FakeBusEvent = { type: string };
 
@@ -105,9 +104,15 @@ class FakeAgentBus {
   }
 }
 
+interface FakeCoreEvent {
+  type: string;
+  payload: unknown;
+  time?: number;
+}
+
 class FakeEventBus {
-  private handlers: Array<(e: { type: string; payload: unknown }) => void> = [];
-  subscribe(handler: (e: { type: string; payload: unknown }) => void) {
+  private handlers: Array<(e: FakeCoreEvent) => void> = [];
+  subscribe(handler: (e: FakeCoreEvent) => void) {
     this.handlers.push(handler);
     return {
       dispose: () => {
@@ -116,7 +121,7 @@ class FakeEventBus {
       },
     };
   }
-  emit(e: { type: string; payload: unknown }): void {
+  emit(e: FakeCoreEvent): void {
     for (const h of [...this.handlers]) h(e);
   }
 }
@@ -522,7 +527,7 @@ function makeCore(
           onDidArchiveSession: managerEvents?.onDidArchiveSession,
         };
       }
-      if (token === IWorkspaceInstanceManager) {
+      if (token === IProjectInstanceManager) {
         return {
           list: () => [{ program: { accessor: handler.accessor } }],
           onDidChange: () => ({ dispose: () => {} }),
@@ -540,13 +545,13 @@ function makeCore(
           }),
         };
       }
-      if (token === IWorkspaceService) {
+      if (token === IProjectService) {
         return { get: async () => ({ root: '/repo/a' }) };
       }
       if (token === IConfigService) {
         return { ready: Promise.resolve(), getAll: () => ({}) };
       }
-      if (token === IWorkspaceSessions) {
+      if (token === IProjectSessions) {
         return { listRecent: async () => [], count: async () => 3 };
       }
       return undefined;
@@ -808,6 +813,29 @@ describe('SessionEventBroadcaster', () => {
       session: { id: 'cold-1', workspace_id: 'wd_cold_000000000000' },
     });
     expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
+  it('reports the archive in its frame when the session summary predates it', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+    const archivedAt = Date.parse('2026-02-01T00:00:00.000Z');
+
+    eventBus.emit({
+      type: 'event.session.archived',
+      time: archivedAt,
+      payload: {
+        sessionId: 'cold-1',
+        workspaceId: 'wd_cold_000000000000',
+        session: { ...sessionInfo('cold-1', 'wd_cold_000000000000'), activity: 'turn', pending_interaction: 'approval' },
+      },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'session',
+      change: 'archived',
+      session: { id: 'cold-1', archived: true, archived_at: '2026-02-01T00:00:00.000Z', activity: 'idle', pending_interaction: undefined },
+    });
   });
 
   it('fans out event.session.restored to every connection, including for cold sessions', async () => {
@@ -2226,6 +2254,32 @@ describe('SessionEventBroadcaster', () => {
       expect(stateFramesOf(offView)).toEqual([]);
     });
 
+    it('pushes updated agent state when the model catalog changes', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      let model = 'k2';
+      Object.assign(main.accessor.get(IAgentLoopService) as Record<string, unknown>, {
+        getModel: () => model,
+      });
+      sessions.set('s1', lc);
+      bc = makeBroadcasterForAgents();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+      expect(stateFramesOf(view)).toContainEqual(expect.objectContaining({ type: 'agent', model: 'k2' }));
+
+      model = 'k3';
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [{ provider_id: 'openai-main', provider_name: 'OpenAI', added: 0, removed: 1 }], unchanged: [], failed: [] },
+      });
+      await settle();
+
+      const agentFrames = stateFramesOf(view).filter((frame) => frame.type === 'agent');
+      expect(agentFrames).toHaveLength(2);
+      expect(agentFrames[1]).toMatchObject({ model: 'k3' });
+    });
+
     it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
@@ -2293,8 +2347,10 @@ describe('SessionEventBroadcaster', () => {
           },
         }),
       });
-      main.set(IModelService, { getDefaultModel: () => 'k3' });
-      main.set(IModelCatalog, { get: () => ({ spec: { maxInputSize: 800 } }) });
+      main.set(IProviderCatalogService, {
+        getDefaultModelId: () => 'k3',
+        get: () => ({ spec: { maxInputSize: 800 } }),
+      });
       sessions.set('s1', lc);
       bc = makeBroadcasterForAgents();
 

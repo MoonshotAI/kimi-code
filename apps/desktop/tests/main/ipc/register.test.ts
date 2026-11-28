@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   >(async () => ({ ok: true })),
   setGlobalShortcut: vi.fn(() => true),
   showMainWindow: vi.fn(),
+  markRendererUiMounted: vi.fn(),
   setVibrancyEnabled: vi.fn(),
   setColorScheme: vi.fn(),
   setPreventSystemSleep: vi.fn(),
@@ -136,6 +137,7 @@ const mocks = vi.hoisted(() => ({
   appExit: vi.fn(),
   appQuit: vi.fn(),
   markQuitting: vi.fn(),
+  sendToRenderer: vi.fn(),
   captureScreenshot: vi.fn(async () => ({ status: 'cancelled' })),
   cancelScreenshotCapture: vi.fn(),
 }));
@@ -186,12 +188,18 @@ vi.mock('electron', () => ({
   clipboard: { writeText: mocks.clipboardWriteText },
 }));
 
+vi.mock('../../../src/main/window/window-registry', () => ({
+  getMainWindow: mocks.getMainWindow,
+  markQuitting: mocks.markQuitting,
+  sendToRenderer: mocks.sendToRenderer,
+  windowForWebContents: vi.fn(),
+}));
 vi.mock('../../../src/main/window/main-window', () => ({
   getMainWindow: mocks.getMainWindow,
   showMainWindow: mocks.showMainWindow,
   applyWindowVibrancy: mocks.applyWindowVibrancy,
-  markQuitting: mocks.markQuitting,
-  sendToRenderer: vi.fn(),
+  markRendererUiMounted: mocks.markRendererUiMounted,
+  sendToRenderer: mocks.sendToRenderer,
 }));
 vi.mock('../../../src/main/browser/browser-view', () => ({
   restoreBrowser: mocks.browserGetState,
@@ -295,6 +303,8 @@ vi.mock('../../../src/main/shell/menu', () => ({
   setMenuLocale: vi.fn(),
   setMenuShortcuts: vi.fn(),
   setMenuSuspended: vi.fn(),
+}));
+vi.mock('../../../src/main/shell/terminal-menu-focus', () => ({
   setTerminalMenuFocus: vi.fn(),
   onTerminalMenuFocus: vi.fn(),
 }));
@@ -343,6 +353,8 @@ vi.mock('../../../src/main/shell/dock-icon', () => ({
 }));
 vi.mock('../../../src/main/diagnostics/log', () => ({
   log: { error: vi.fn() },
+  logStartup: vi.fn(),
+  uptimeMs: () => 0,
   redactUrlForLog: vi.fn((url: string) => url),
 }));
 vi.mock('../../../src/main/diagnostics/renderer-log', () => ({ createRendererLogWriter: vi.fn(() => vi.fn()) }));
@@ -382,6 +394,28 @@ beforeEach(() => {
   mocks.getMainWindow.mockReturnValue(null);
   mocks.isPowerSaveBlockerEnabled.mockReturnValue(false);
   registerIpcHandlers();
+});
+
+describe('startup mount notification', () => {
+  it('forwards mounts from the current main frame, including subsequent mounts', () => {
+    const frame = { url: 'app://renderer/index.html' };
+    const contents = { mainFrame: frame };
+    mocks.getMainWindow.mockReturnValue({ isDestroyed: () => false, webContents: contents });
+    const report = listener(IPC.startupMilestone);
+    const mounted = { milestone: 'ui-mounted' };
+    const source = { sender: contents, senderFrame: frame };
+
+    report({ sender: {}, senderFrame: frame }, mounted);
+    report({ sender: contents, senderFrame: { url: frame.url } }, mounted);
+    report({ sender: contents, senderFrame: null }, mounted);
+    report(source, { milestone: 'ui-ready' });
+    report(source, { milestone: 'other' });
+    expect(mocks.markRendererUiMounted).not.toHaveBeenCalled();
+
+    report(source, mounted);
+    report(source, mounted);
+    expect(mocks.markRendererUiMounted.mock.calls).toEqual([[frame.url], [frame.url]]);
+  });
 });
 
 describe('screenshot sender isolation', () => {

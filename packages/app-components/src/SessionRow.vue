@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import './lib/anchored-menu.css';
 import type { Session } from '@moonshot-ai/app-core/client/types';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, sessionLink, sessionLinksSupported } from '@moonshot-ai/app-core/lib';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, StatusDot, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { configStore, sessionViewsStore } from '@moonshot-ai/app-client/stores';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
@@ -382,17 +383,24 @@ function positionMenuAtCursor(e: MouseEvent): void {
   };
 }
 
-const copiedId = ref(false);
-const copyFailed = ref(false);
-async function copySessionId(): Promise<void> {
-  const ok = await copyTextToClipboard(props.session.id);
-  copiedId.value = ok;
-  copyFailed.value = !ok;
+const sessionLinkCopyable = sessionLinksSupported();
+type CopyTarget = 'id' | 'link';
+const copied = ref<CopyTarget | null>(null);
+const copyFailed = ref<CopyTarget | null>(null);
+async function copyFromMenu(target: CopyTarget): Promise<void> {
+  const ok = await copyTextToClipboard(target === 'id' ? props.session.id : sessionLink(props.session.id));
+  copied.value = ok ? target : null;
+  copyFailed.value = ok ? null : target;
   setTimeout(() => {
-    copiedId.value = false;
-    copyFailed.value = false;
+    copied.value = null;
+    copyFailed.value = null;
     closeMenu();
   }, 1500);
+}
+
+function copyLabel(target: CopyTarget, idleLabel: string): string {
+  if (copyFailed.value === target) return t('sidebar.copyFailed');
+  return copied.value === target ? t('sidebar.copied') : idleLabel;
 }
 
 function forkRow(): void {
@@ -656,15 +664,13 @@ function openPullRequest(): void {
           {{ t('sidebar.rename') }}
         </MenuItem>
         <MenuItem separator />
-        <MenuItem :danger="copyFailed" @click="copySessionId">
+        <MenuItem :danger="copyFailed === 'id'" @click="copyFromMenu('id')">
           <Icon name="copy" size="sm" />
-          {{
-            copyFailed
-              ? t('sidebar.copyFailed')
-              : copiedId
-                ? t('sidebar.copied')
-                : t('sidebar.copySessionId')
-          }}
+          {{ copyLabel('id', t('sidebar.copySessionId')) }}
+        </MenuItem>
+        <MenuItem v-if="sessionLinkCopyable" :danger="copyFailed === 'link'" @click="copyFromMenu('link')">
+          <Icon name="link" size="sm" />
+          {{ copyLabel('link', t('sidebar.copySessionLink')) }}
         </MenuItem>
         <MenuItem @click="exportRow">
           <Icon name="download" size="sm" />
@@ -1031,5 +1037,3 @@ function openPullRequest(): void {
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--font-ui); }
 </style>
-
-<style src="./lib/anchored-menu.css"></style>

@@ -31,14 +31,24 @@
       "why": "It freezes rules that already have findings at their current count per file and reports suppressions that no longer suppress anything; without it new code could add to that debt unnoticed."
     },
     {
-      "run": "node scripts/checks/test-doubles.mjs",
+      "run": "node scripts/checks/app-boundaries.mjs",
       "in": "package.json#scripts.lint",
-      "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
+      "why": "Desktop and Web UI must compose business hooks instead of calling API or IPC directly, Pinia stores must stay isolated, and app-* packages must not self-import barrels or create new runtime cycles; this check freezes existing violations per file so refactoring only ratchets them down."
     },
     {
-      "run": "node scripts/checks/quarantine.mjs",
+      "run": "node scripts/checks/test-doubles.mjs",
       "in": "package.json#scripts.lint",
-      "why": "A quarantined Desktop journey must name an owner, a reason and an expiry date, and a protected or smoke journey can never be quarantined; without it a quarantine quietly becomes permanent."
+      "why": "New tests must script models and fake MCP servers through the shared testkit; this check freezes the legacy doubles at their current use per file so new cases cannot add to them."
+    },
+    {
+      "run": "node scripts/checks/fixed-waits.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "AGENTS.md rules out sleep- and timeout-based synchronization in tests; this check freezes the existing fixed waits per test file so new code waits for a signal instead."
+    },
+    {
+      "run": "node scripts/checks/legacy-e2e.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The old Desktop and TUI E2E directories no longer run on pull requests or main; this check freezes their test cases per file so a new case lands in tests/e2e, where it runs, instead of looking like coverage that nothing executes."
     },
     {
       "run": "node scripts/checks/instructions.mjs",
@@ -51,9 +61,9 @@
       "why": "The scenarios in tests/e2e are only worth trusting while their drivers reach the product the way a user does; this check keeps product internals, page and network backdoors, skips, retries, fixed waits and undocumented KIMI_* switches out of that directory."
     },
     {
-      "run": "node scripts/vitest-l0-gate.mjs .vitest-reports",
-      "in": ".github/workflows/ci.yml#jobs.l0-gate",
-      "why": "This is where every L0 test in tests/protected.yaml must pass on its first attempt across the test shards; without it regression and contract IDs are listed but never enforced."
+      "run": "node scripts/checks/e2e-cache-catalog.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "tests/e2e/scenarios/cache/catalog.yaml lists what may change the requests the product sends to the model service; this check fails when an entry has neither a test nor a recorded gap, when a cache scenario is not listed, or when a scenario declares a different cache break than its entry promises."
     },
     {
       "run": "pnpm run lint",
@@ -106,18 +116,12 @@
   ],
   "fanIn": [
     {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "l0-gate",
-      "needs": ["test"],
-      "why": "It turns the L0 results of every test shard into one check. If it stopped waiting for the shards, or stopped running after a shard failed, a missing or failing L0 test would never be reported."
-    },
-    {
       "workflow": ".github/workflows/desktop-e2e.yml",
       "job": "result",
       "needs": ["plan", "journeys"],
       "checksResults": true,
-      "coversJobsExcept": ["quarantine", "alert"],
-      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The nightly quarantine job is informational, and the alert job runs after it on main to keep the tracking issue, so both stay outside it."
+      "coversJobsExcept": ["alert"],
+      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The alert job runs after it on main to keep the tracking issue, so it stays outside it."
     }
   ]
 }

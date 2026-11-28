@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { AltScreenSearchComponent } from "../src/alt-screen-search.ts";
 import { Editor, type EditorTheme } from "../src/components/editor.ts";
 import { Input } from "../src/components/input.ts";
+import { ScrollView } from "../src/components/scroll-view.ts";
 import { SelectList, type SelectListTheme } from "../src/components/select-list.ts";
 import { SettingsList, type SettingsListTheme } from "../src/components/settings-list.ts";
 import { Text } from "../src/components/text.ts";
@@ -2161,7 +2162,7 @@ describe("mouse-aware components", () => {
 			});
 			const input = new Input({ prompt: "" });
 			input.setValue("abcd");
-			tui.setLayoutRoot(input);
+			tui.addChild(input);
 			tui.start();
 			try {
 				await terminal.waitForRender();
@@ -2181,10 +2182,7 @@ describe("mouse-aware components", () => {
 				terminal.sendInput("\x1b[<0;1;1M");
 				terminal.sendInput("\x1b[<0;1;1m");
 				await terminal.waitForRender();
-				assert.strictEqual(
-					tui.getFocusedComponent() instanceof AltScreenSearchComponent,
-					enabled,
-				);
+				assert.strictEqual(tui.getFocusedComponent() instanceof AltScreenSearchComponent, false);
 			} finally {
 				tui.stop();
 			}
@@ -2203,7 +2201,7 @@ describe("mouse-aware components", () => {
 			},
 		});
 		const component = new MouseAwareStructuralSelectionFixture();
-		tui.setLayoutRoot(component);
+		tui.setLayoutRoot(new ScrollView(component, { primary: true }));
 		tui.start();
 		try {
 			await terminal.waitForRender();

@@ -1,4 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#/wire/message';
 import type { ContextMessageTiming, PromptOrigin } from '#/agent/contextMemory/types';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';

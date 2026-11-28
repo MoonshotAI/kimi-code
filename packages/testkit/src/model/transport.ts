@@ -5,6 +5,7 @@ export interface IncomingRequest {
   readonly path: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
+  readonly bytes: Uint8Array;
 }
 
 export type RequestHandler = (incoming: IncomingRequest, sink: PlaybackSink) => Promise<void>;

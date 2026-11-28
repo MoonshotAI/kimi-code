@@ -42,6 +42,8 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 │       └── <key>-<suffix>.json
 ├── sessions/               # Session data (see below)
 │   └── <workDirKey>/<sessionId>/
+├── worktrees/              # Kimi-managed Git worktrees
+│   └── <repoKey>/<name>/
 ├── locks/
 │   └── sessions/           # Cross-process occupancy locks while a client writes a session
 ├── bin/
@@ -69,10 +71,11 @@ Each top-level file under the data root serves a specific purpose; most are mana
 - **`skills/`**: Kimi-specific user-level Skills. This directory moves with `KIMI_CODE_HOME`; generic cross-tool Skills can still live under `~/.agents/skills/`. See [Agent Skills](../customization/skills.md).
 - **`plugins/installed.json`**: records installed plugins, each plugin's enabled state, and MCP server capability state changes made via `/plugins` or `/plugins mcp disable|enable`. Files installed from local paths or zip URLs are copied to `plugins/managed/<id>/`. See [Plugins](../customization/plugins.md).
 - **`credentials/`**: OAuth credential directory, with permissions `0o700` (directory) / `0o600` (files), readable and writable only by the current user. Managed provider credentials are stored as `credentials/<name>.json`; MCP server credentials are stored under `credentials/mcp/`. Credentials are written using an atomic flow (tmp → fsync → rename) to prevent corruption.
+- **`worktrees/`**: Kimi-managed [Git worktrees](../guides/worktrees.md), stored under `worktrees/<repoKey>/<name>/`. Remove them via `/worktree` or the exit prompt rather than deleting folders directly so Git does not leave stale worktree records.
 
 ## Session data
 
-Each session's data is stored under `sessions/<workspaceId>/<sessionId>/`, and a top-level `session_index.jsonl` index is maintained (one record per line, each containing `sessionId`, `sessionDir`, and `workDir`). For an implicit workspace, `workspaceId` is a bucket name derived from the working directory path, in the format `wd_<slug>_<first-12-chars-of-sha256>`. For a managed workspace (a project created explicitly), `workspaceId` is the generated `wm_<uuid>`.
+Each session's data is stored under `sessions/<workspaceId>/<sessionId>/`, and a top-level `session_index.jsonl` index is maintained (one record per line, each containing `sessionId`, `sessionDir`, and `workDir`, plus `projectRoot`, the project root, when the session runs in another directory). For an implicit workspace, `workspaceId` is a bucket name derived from the project root path, in the format `wd_<slug>_<first-12-chars-of-sha256>`; the worktrees and subdirectories of a Git repository share the bucket of its main checkout. For a managed workspace (a project created explicitly), `workspaceId` is the generated `wm_<uuid>`.
 
 Inside each session directory:
 

@@ -18,6 +18,8 @@ import {
 import AnnotationDetails from './AnnotationDetails.vue';
 import AnnotationScroll from './AnnotationScroll.vue';
 import BrowserOverlayMenuEntry from './BrowserOverlayMenuEntry.vue';
+import { ModelQuickMenu } from '@moonshot-ai/app-components';
+import type { QuickModelMenuAction } from '@moonshot-ai/app-core/quick-model-menu';
 import { measureBrowserOverlayCard } from '../../lib/browserOverlaySize';
 
 interface BrowserOverlayRendererBridge {
@@ -38,6 +40,11 @@ const bridge = (
 const config = ref<BrowserOverlayConfig | null>(null);
 const stageRef = ref<HTMLElement | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
+const modelMenuRef = ref<InstanceType<typeof ModelQuickMenu> | null>(null);
+const modelMenuOffset = ref<{ x: number; y: number } | null>(null);
+const modelMenuBottom = ref<number | null>(null);
+const modelViewOrigin = ref<{ x: number; y: number } | null>(null);
+const modelMenuFrame = ref<{ x: number; y: number; viewportWidth: number; viewportHeight: number } | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
 const inputValue = ref('');
 const annotationInput = ref<InstanceType<typeof Textarea>>();
@@ -92,8 +99,17 @@ const menuStyle = computed<Record<string, string>>(() => {
   };
 });
 
+const modelMenuPositionStyle = computed((): Record<string, string> => ({
+  position: 'absolute',
+  left: `${modelMenuOffset.value?.x ?? BROWSER_OVERLAY_GUTTER}px`,
+  ...(modelMenuBottom.value !== null
+    ? { bottom: `${modelMenuBottom.value}px`, top: 'auto' }
+    : { top: `${modelMenuOffset.value?.y ?? BROWSER_OVERLAY_GUTTER}px` }),
+}));
+
 const stageStyle = computed((): Record<string, string> => {
   const current = config.value;
+  if (current?.kind === 'menu' && current.modelMenu !== undefined) return { padding: '0px' };
   if (current?.kind === 'menu') return { padding: `${BROWSER_OVERLAY_GUTTER}px` };
   if (current?.kind !== 'dialog') return {};
   return {
@@ -119,11 +135,13 @@ function menuItemKey(item: BrowserOverlayMenuItem, index: number): string {
 
 function surfaceElement(): HTMLElement | null {
   if (config.value?.kind === 'dialog') return stageRef.value;
+  if (config.value?.modelMenu !== undefined) return modelMenuRef.value?.el ?? null;
   return menuRef.value?.el ?? null;
 }
 
 function measuredCard(): HTMLElement | null {
   if (config.value?.kind === 'dialog') return dialogRef.value;
+  if (config.value?.modelMenu !== undefined) return modelMenuRef.value?.el ?? null;
   return menuRef.value?.el ?? null;
 }
 
@@ -154,6 +172,10 @@ function applyConfig(next: BrowserOverlayConfig): void {
     shownPayload = null;
     presented.value = false;
     closing.value = false;
+    modelMenuOffset.value = null;
+    modelMenuBottom.value = null;
+    modelViewOrigin.value = null;
+    modelMenuFrame.value = null;
   }
   if (next.kind === 'menu') resolvedPlacement.value = next.placement ?? 'bottom-end';
   reducedMotion.value = next.kind === 'dialog' && next.agent !== undefined && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -172,6 +194,13 @@ function reportSize(): void {
   const current = config.value;
   const card = measuredCard();
   if (current === null || card === null || closing.value) return;
+  const frame = modelMenuFrame.value;
+  const origin = modelViewOrigin.value;
+  if (current.kind === 'menu' && current.modelMenu !== undefined && frame !== null && origin !== null) {
+    const x = origin.x + card.offsetLeft;
+    const y = origin.y + card.offsetTop;
+    if (x !== frame.x || y !== frame.y) modelMenuFrame.value = { ...frame, x, y };
+  }
   const { width, height } = measureBrowserOverlayCard(card);
   const anchor = current.anchor === undefined ? '' : [current.anchor.x, current.anchor.y, current.anchor.width, current.anchor.height].join(':');
   const sizeKey = current.kind === 'dialog' && current.annotation ? 'annotation' : `${width}:${height}`;
@@ -181,7 +210,7 @@ function reportSize(): void {
   bridge?.rendered({ requestId: current.requestId, width, height });
 }
 
-watch([menuRef, dialogRef], () => {
+watch([menuRef, modelMenuRef, dialogRef], () => {
   sizeObserver?.disconnect();
   const card = measuredCard();
   if (card !== null) {
@@ -197,6 +226,13 @@ function show(payload: BrowserOverlayShown): void {
   if (current.kind === 'menu' && payload.placement !== undefined) {
     resolvedPlacement.value = payload.placement;
   }
+  if (current.kind === 'menu' && payload.menuFrame !== undefined) {
+    const offset = payload.menuOffset ?? null;
+    modelMenuOffset.value = offset;
+    modelMenuBottom.value = payload.menuBottom ?? null;
+    modelViewOrigin.value = offset === null ? null : { x: payload.menuFrame.x - offset.x, y: payload.menuFrame.y - offset.y };
+    modelMenuFrame.value = payload.menuFrame;
+  }
   const entering = !presented.value;
   closing.value = false;
   shownPayload = payload;
@@ -205,7 +241,9 @@ function show(payload: BrowserOverlayShown): void {
     shownFrame = 0;
     if (config.value?.requestId !== payload.requestId) return;
     presented.value = true;
-    if (config.value.kind === 'menu') {
+    if (config.value.kind === 'menu' && config.value.modelMenu !== undefined) {
+      if (entering) modelMenuRef.value?.el?.focus();
+    } else if (config.value.kind === 'menu') {
       if (config.value.preserveFocus) revealBrowserMenuSelection(menuRef.value?.el);
       if (entering && config.value.initialFocus === 'first-item') enabledItems()[0]?.focus();
     } else if (!config.value.preserveFocus && (entering || config.value.anchor === undefined)) {
@@ -283,6 +321,7 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.isComposing || event.keyCode === 229) return;
   const current = config.value;
   if (current === null) return;
+  if (current.kind === 'menu' && current.modelMenu !== undefined) return;
   if (current.kind === 'menu' && current.submitOnCtrlEnter === true && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
     dismiss('dismiss');
@@ -365,8 +404,30 @@ onUnmounted(() => {
     :style="stageStyle"
     @mousedown.self="dismiss('dismiss')"
   >
+    <ModelQuickMenu
+      v-if="config?.kind === 'menu' && config.modelMenu !== undefined"
+      ref="modelMenuRef"
+      class="browser-overlay-menu browser-overlay-model-menu"
+      :class="{ 'is-presented': presented, 'is-closing': closing }"
+      :style="modelMenuPositionStyle"
+      :models="config.modelMenu.models"
+      :recent-models="config.modelMenu.recentModels"
+      :provider-models="config.modelMenu.providerModels"
+      :providers="config.modelMenu.providers"
+      :active-provider="config.modelMenu.activeProvider"
+      :active-provider-label="config.modelMenu.activeProviderLabel"
+      :current-model-id="config.modelMenu.currentModelId"
+      :current-effort="config.modelMenu.currentEffort"
+      :effort-descriptions="config.modelMenu.effortDescriptions"
+      :max-height="config.maxHeight ?? 480"
+      :host-frame="modelMenuFrame ?? undefined"
+      @select-model="(modelId, effort, fromSearch) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }), ...(fromSearch === true ? { fromSearch: true } : {}) } satisfies QuickModelMenuAction })"
+      @select-effort="(effort) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-effort', effort } satisfies QuickModelMenuAction })"
+      @select-provider="(providerId) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-provider', providerId } satisfies QuickModelMenuAction })"
+      @dismiss="dismiss('escape')"
+    />
     <Menu
-      v-if="config?.kind === 'menu'"
+      v-else-if="config?.kind === 'menu'"
       ref="menuRef"
       :role="config.preserveFocus ? 'listbox' : 'menu'"
       class="browser-overlay-menu"
@@ -504,6 +565,10 @@ onUnmounted(() => {
 
 .browser-overlay-menu.is-closing {
   transition-duration: var(--duration-fast);
+}
+.browser-overlay-model-menu {
+  overflow: visible;
+  transform-origin: bottom right;
 }
 
 .browser-overlay-stage.is-dialog {

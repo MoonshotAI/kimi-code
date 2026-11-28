@@ -69,6 +69,8 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 在 Google 请求历史中，`functionCall` 和 `functionResponse` 可以省略 ID。两个同名调用都省略 ID 时，按它们出现的顺序配对无 ID 的结果。在 `request.view.messages` 中分别读取每条调用的 `id` 和结果的 `callId` 来断言配对关系。协议里显式给出的 ID 会原样保留，多出的结果或缺失的结果会被 `verify()` 报出。
 
+一条 Google user 内容可以先放普通 parts，再放 `functionResponse`。引擎把紧跟在工具结果后面的用户消息（例如回合中途压缩时的压缩指令）合并进这条内容时就是这个顺序，Gemini 也接受它。视图把这些开头的 parts 作为一条用户消息，排在紧随其后的那组工具结果之后，所以不会报 `arrives before the results`。内容里其他位置的 parts，例如两个结果之间的文字，仍按线上位置检查。
+
 三个协议都要求同时等待结果的工具调用各有自己的 ID。若 `verify()` 报 `repeats pending tool call ID`，检查出错消息里的调用列表和之前尚未配对的调用。等前一次调用收到匹配结果后，后续调用可以重新使用这个 ID。
 
 `model.problems()` 返回处理请求时已记录的问题。`verify()` 还会检查所有通道的剩余步骤和仍在等待处置的命名挂起点。手动用 `createFakeModel()` 时，在断言后调用 `verify()`，并用 `finally` 执行 `await model.close()`。有意发送的 `httpError(503)` 可以和成功通过的 `verify()` 同时出现。用例仍需断言客户端如何处理了错误。[校验实现](../src/model/fake-model.ts) · [未放行挂起点的场景](../../../tests/scenarios/verification.test.ts)
@@ -83,6 +85,39 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 空用户消息如果插在两个工具结果之间，错误还会指出哪个工具调用仍在等待结果。[空消息与工具结果顺序回归](../test/protocols.test.ts#L57)
 
+## 检查 prompt 缓存前缀
+
+服务端只能复用请求开头那段与之前请求完全相同的内容。假模型按服务端缓存的顺序把每个请求切成段（模型、思考参数与结构化输出的 schema，system，tools，messages），记在 `model.promptCache()` 里：每个请求复用了多少估算 token、复用自哪个请求、主通道和压缩请求比上一个主请求在哪一段变了。这项检查默认开启，没有声明过的断点会让 `verify()` 失败，`checkPromptCache: false` 可以关掉。创建模型时传 `reportCachedTokens: true`，没写 usage 的步骤会把复用的 token 作为缓存读数报给客户端。
+
+```ts
+import { say } from '@moonshot-ai/testkit/model';
+import { modelFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
+import OpenAI from 'openai';
+import { expect, test as base } from 'vitest';
+
+const test = base.extend<ModelFixtures>(modelFixtures({ reportCachedTokens: true }));
+
+test('reuses the first request as the cached prefix of the second', async ({ model }) => {
+  model.script(say('first'), say('second'));
+  const client = new OpenAI({ apiKey: 'test-key', baseURL: 'http://example.test/v1', fetch: model.fetch, maxRetries: 0 });
+  const tools = [{ type: 'function' as const, function: { name: 'Read', parameters: { type: 'object' } } }];
+  const history = [{ role: 'user' as const, content: 'Read notes.txt.' }];
+
+  await client.chat.completions.create({ model: 'testkit-model', messages: history, tools, prompt_cache_key: 'session-1' });
+  const second = await client.chat.completions.create({
+    model: 'testkit-model',
+    messages: [...history, { role: 'assistant', content: 'first' }, { role: 'user', content: 'And then?' }],
+    tools,
+    prompt_cache_key: 'session-1',
+  });
+
+  expect(model.promptCache()[1]).toMatchObject({ baseline: 0, reusedFrom: 0 });
+  expect(second.usage?.prompt_tokens_details?.cached_tokens).toBe(model.promptCache()[1]?.reusedTokens);
+});
+```
+
+第二个请求改了 tools、system 或者更早的消息时，夹具收尾的 `verify()` 会报出第一处不同，例如 `tools[1] Bash is missing`，并给出复用了多少 token。产品有意改写前缀时（撤销、清空上下文、媒体恢复），在测试里用 `model.expectCacheBreak('撤销改写了上一轮回答', { at: 'history' })` 写明原因；声明了却没发生的断点同样会失败。换模型不用声明，每个模型各有一份缓存；被服务端拒绝的请求也不参与比较；子 agent 的压缩请求只压缩它自己的历史，不和主 agent 比较。压缩请求生效后的第一个主请求可以换一段新历史，但模型参数、system 和 tools 仍不能变，这条只在 `kimi` provider 类型下自动识别。完整规则见 [README](../README.md#prompt-cache)。[规则用例](../test/prompt-cache.test.ts) · [经过真实引擎](../../../tests/scenarios/providers.test.ts)
+
 ## 检查客户端是否依赖整齐的分块
 
 默认每个步骤按完整的 SSE 事件写出。真实 provider 和网络会把字节流切在任意位置，包括多字节字符和 JSON 的中间。创建模型时传 `chunking: { seed, maxBytes }`（例如 `createFakeModel({ chunking: { seed: 7, maxBytes: 3 } })`，KAP 场景用 `scenarioFixtures({ modelOptions: { chunking } })`），回复和 JSON 响应体会被切成 1 到 `maxBytes` 字节的小块逐块写出。挂起点仍落在原来的位置，流内错误仍整块写出。同一个种子每次切法相同，失败可以复现。
@@ -91,22 +126,10 @@ Google SDK 只把「单独一次读到的错误 JSON」识别为流中错误。�
 
 ## 在引擎进程内接入假模型
 
-agent-core-v2 的集成测试不起服务端，用 harness 的 `testkitAgentFixtures()` 取得 `{ agent, model }`。它把 `model.fetch` 注入引擎真实的 provider 请求链：步骤、命名挂起点、通道、请求记录和 `verify()` 都与其他层相同，请求会经过真实的协议编码和解析。harness 默认的 provider 是 `kimi`，所以子 agent 和压缩请求会自动进入各自的通道。这时调用旧的 `agent.mockNextResponse()` 会直接报错，避免两套脚本混用。[引擎用例](../../agent-core-v2/test/integration/conversation/testkit-model.test.ts) · [harness 夹具](../../agent-core-v2/test/harness/testkit.ts)
+agent-core-v2 的集成测试不起服务端，用 harness 的 `testkitAgentFixtures()` 取得 `{ agent, model }`。它把 `model.fetch` 注入引擎真实的 provider 请求链：步骤、命名挂起点、通道、请求记录和 `verify()` 都与其他层相同，请求会经过真实的协议编码和解析。harness 默认的 provider 是 `kimi`，所以子 agent 和压缩请求会自动进入各自的通道。这时调用旧的 `agent.mockNextResponse()` 会直接报错，避免两套脚本混用。存量用例里的 `mockNextResponse` 也由 testkit 模型回答：harness 把每条旧剧本翻译成 testkit 步骤，用例结束时同样检查没写剧本的请求、没被请求的剧本和不合法的消息序列。[引擎用例](../../agent-core-v2/test/integration/conversation/testkit-model.test.ts) · [harness 夹具](../../agent-core-v2/test/harness/testkit.ts)
 
 ## 在桌面端接入假模型
 
-从[桌面应用夹具](../../../apps/desktop/e2e/fixtures/app.ts)导入 `testWithProvider`。它在 Electron 首次启动前为内嵌 KAP 配置严格模型，用例可直接使用 `{ app, provider }`。设置里的 provider 为 `e2e`，默认模型为 `e2e/stub`，请求中的模型名为 `stub`。teardown 自动验证和关闭模型，失败时保留诊断。原有 `test` 导出继续提供旧 stub。
-| 要在桌面验证的行为 | 用例怎么写 |
-|---|---|
-| 流式输出与用户取消 | 用 `held('partial', say(['第一块', '第二块']), 1)` 安排回复。用 `app.submit()` 发送消息，等 `hold('partial').reached()` 和界面出现第一块，再点击 Interrupt。检查该请求的 `state` 变为 `aborted`，随后在同一会话发第二条消息并断言回复。旧夹具的 `app.startTurn()` 等待的是它自己的 stub。 |
-| 工作区提示和消息历史 | OpenAI 请求用 `request.texts('system')` 按原顺序读取每条 system 或 developer 消息。跨协议读取整段提示用 `view.system`。插话或取消后的下一步可分别检查 `userTextsSinceReply` 和 `remindersSinceReply`。 |
-| 后台请求、子 agent 与工具结果 | 桌面的 OpenAI 配置没有 Kimi 路由元数据。按 `model.lane('main').waitForRequest(n)` 等主通道，避免全局序号被无工具的 `side` 请求占用。自定义子 agent 路由可同时匹配 `request.tools.length > 0` 和 `firstUserText`。工具结果与实际请求中的调用 ID 配对。 |
-| 需要让未编排回合保持运行 | 在对应通道显式设置 `unscripted('hang')`，模型发出第一块后挂起。用 `waitForHeldTurn()` 等请求就位；`releaseHeld()` 放行已经到达的挂起点。由桌面夹具验证并关闭模型。 |
+按 [E2E 指南](../../../tests/e2e/AGENTS.md)编写场景。场景通过 `scenario()` 取得 `product`、`model` 和 `workspace`。场景夹具在启动前写入假模型配置，[Desktop 驱动](../../../tests/e2e/surfaces/desktop.ts)启动 Electron。场景结束后，夹具验证并关闭假模型。
 
-Electron 窗口、原生对话框、剪贴板、Browser MCP、重启后的用户数据和失败 trace 由桌面夹具管理。测 renderer 与 KAP 的重连时，在 Playwright 端切断 REST 或 WebSocket；测 provider 回复中断时，使用模型的 `hold.cut()`。这两种断连发生在不同的连接上。[桌面重连用例](../../../apps/desktop/e2e/turn-reconnect.spec.ts) · [KAP 场景指南](kap-scenarios.md)
-
-从仓库根目录单独运行表中取消与后续回合的桌面用例。这个命令会构建桌面应用，并用 Playwright 启动 Electron。[完整用例](../../../apps/desktop/e2e/turn-stop-then-send.spec.ts)
-
-```sh
-pnpm --filter kimi-code-app run e2e:headless --project turns-transcript --no-deps --grep 'the desktop cancels its testkit provider stream'
-```
+例如测试用户取消流式回复时，用 `held()` 安排部分文本后挂起，用 `product.send()` 发消息，等模型到达挂起点和界面显示部分文本，再用 `product.stop()` 停止回合。可以检查模型请求是否中止，然后在同一会话发下一条消息并断言新回复。[取消的端到端场景](../../../tests/e2e/scenarios/turn/stop-mid-turn.spec.ts)

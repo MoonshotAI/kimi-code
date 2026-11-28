@@ -182,6 +182,7 @@ export class GitService implements IGitService {
         () => ({ ok: false as const }),
       );
     if (!spawned.ok) {
+      lease.dispose();
       return { exitCode: -1, stdout: '', stderr: '' };
     }
     const { proc } = spawned;

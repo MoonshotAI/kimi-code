@@ -23,6 +23,8 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import {
   SelectionCopyModeSelectorComponent,
+  formatWheelScrollSpeedLabel,
+  ScrollSpeedSelectorComponent,
   SettingsSelectorComponent,
   ThinkingDisplaySelectorComponent,
   ToolCallDensitySelectorComponent,
@@ -38,6 +40,7 @@ import {
   DEFAULT_TUI_CONFIG,
   resolveFollowUpBehavior,
   resolveTuiMode,
+  resolveWheelScrollLines,
   saveTuiConfig,
   type FollowUpBehavior,
   type MarkdownConfig,
@@ -45,6 +48,7 @@ import {
   type TranscriptConfig,
   type TuiConfig,
   type TuiMode,
+  type WheelScrollLines,
 } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
@@ -67,7 +71,7 @@ import {
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
-import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
+import { DOCK_MODEL_SELECTOR_ROWS, DOCK_PREVIEW_ROWS } from '../constant/rendering';
 import type { QueuedModelSwitch } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
@@ -455,6 +459,10 @@ export async function showModelPicker(host: SlashCommandHost, selectedValue: str
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
+      layout:
+        host.state.dockContainer === undefined
+          ? undefined
+          : { maxBodyRows: DOCK_MODEL_SELECTOR_ROWS },
       warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       effortDescriptions: effortDescriptions(),
       onSelect: ({ alias, thinking }) => {
@@ -687,6 +695,10 @@ function showSecondaryModelPicker(
       currentThinkingEffort: 'off',
       thinkingControl: false,
       title: ' Select a secondary model (subagents)',
+      layout:
+        host.state.dockContainer === undefined
+          ? undefined
+          : { maxBodyRows: DOCK_MODEL_SELECTOR_ROWS },
       onSelect: ({ alias }) => {
         host.restoreEditor();
         void performSecondaryModelSave(host, alias);
@@ -1101,6 +1113,47 @@ export async function applySelectionCopyModeChoice(
   host.showStatus(`Selection copy mode set to ${mode}.`);
 }
 
+function showScrollSpeedPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ScrollSpeedSelectorComponent({
+      currentValue: resolveWheelScrollLines(host.state.appState.mouse?.wheelScrollLines),
+      onSelect: (lines) => {
+        host.restoreEditor();
+        void applyScrollSpeedChoice(host, lines);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyScrollSpeedChoice(
+  host: Pick<SlashCommandHost, 'state' | 'setAppState' | 'showStatus'>,
+  lines: WheelScrollLines,
+): Promise<void> {
+  const label = formatWheelScrollSpeedLabel(lines);
+  if (lines === resolveWheelScrollLines(host.state.appState.mouse?.wheelScrollLines)) {
+    host.showStatus(`Scroll speed already ${label}.`);
+    return;
+  }
+
+  const mouse = {
+    ...(host.state.appState.mouse ?? DEFAULT_MOUSE_CONFIG),
+    wheelScrollLines: lines,
+  };
+  try {
+    await saveTuiConfig({ ...currentTuiConfig(host), mouse });
+  } catch (error) {
+    host.showStatus(`Failed to save scroll speed setting: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ mouse });
+  if (host.state.ui instanceof TuiAltScreen) host.state.ui.setWheelScrollLines(lines);
+  host.showStatus(`Scroll speed set to ${label}.`, 'success');
+}
+
 function showToolCallDensityPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ToolCallDensitySelectorComponent({
@@ -1302,6 +1355,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'toolCallDensity': showToolCallDensityPicker(host); return;
     case 'thinking': showThinkingDisplayPicker(host); return;
     case 'copyOnSelect': showSelectionCopyModePicker(host); return;
+    case 'scrollSpeed': showScrollSpeedPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'followUpBehavior': showFollowUpBehaviorPicker(host); return;

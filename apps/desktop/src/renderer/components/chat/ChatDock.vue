@@ -6,7 +6,7 @@ import type { ApprovalBlock, TaskItem, TodoView, TurnAttachment, UIQuestion } fr
 import type { GlobalShortcutFailureReason } from '../../../shared/global-shortcut';
 import type { QuestionResponse, SessionPlan } from '../../api/types';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { useAppearance } from '@moonshot-ai/app-core';
+import { useAppearance } from '@moonshot-ai/app-core/composables';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
 import { Composer, type ComposerEmits } from '@moonshot-ai/app-components';
 import { GoalPanel } from '@moonshot-ai/app-components';
@@ -18,10 +18,10 @@ import { SubagentGrid } from '@moonshot-ai/app-components';
 import { TodoCard } from '@moonshot-ai/app-components';
 import { WorkPill } from '@moonshot-ai/app-components';
 import { WorkPanelHead } from '@moonshot-ai/app-components';
-import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, installImeCompositionLatch, isImeKeyEvent, StatusDot } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { createDockMetricsPublisher, dockTasksPillPriority, installImeCompositionLatch, isImeKeyEvent, LIVE_PILL_PRIORITY, planDockPillCollapse, publishDockHeightPx } from '@moonshot-ai/app-client/lib';
+import { createDockMetricsPublisher, dockTasksPillPriority, LIVE_PILL_PRIORITY, planDockPillCollapse, publishDockHeightPx } from '@moonshot-ai/app-client/lib';
 import type { DockPillKey } from '@moonshot-ai/app-client/lib';
 import type { SlashCommand } from '@moonshot-ai/app-core/lib';
 import { formatDuration } from '@moonshot-ai/app-components';
@@ -44,6 +44,8 @@ const props = defineProps<{
   approvalBusy?: boolean;
   mobile?: boolean;
   statusNote?: string;
+  sessionSubmitBlockedReason?: string;
+  sessionSubmitBlockedTooltip?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
   extraBuiltinCommands?: readonly SlashCommand[];
@@ -160,6 +162,7 @@ const composerRef = ref<{
   restoreDraftEntries: (entries: AttachmentEntry[]) => void;
   focus: () => void;
   clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
+  openModelMenu?: (targetSid?: string) => void;
   closeOverlays?: () => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -415,7 +418,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty, clearAfterDispatch });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: (targetSid?: string) => composerRef.value?.openModelMenu?.(targetSid), anyPopupOpen, isEmpty, clearAfterDispatch });
 </script>
 
 <template>
@@ -682,6 +685,8 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
       <Composer
         :style="hasPendingCard ? { display: 'none' } : undefined"
         :status-note="props.statusNote"
+        :session-submit-blocked-reason="props.sessionSubmitBlockedReason"
+        :session-submit-blocked-tooltip="props.sessionSubmitBlockedTooltip"
         :before-submit="props.beforeSubmit"
         :defer-submit-reset="props.deferSubmitReset"
         :extra-builtin-commands="props.extraBuiltinCommands"
@@ -698,7 +703,6 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         @command="emit('command', $event)"
         @interrupt="emit('interrupt')"
         @focus-goal="emit('focusGoal')"
-        @pick-model="emit('pickModel')"
         @login="emit('login')"
         @configure-model="emit('configureModel')"
       />

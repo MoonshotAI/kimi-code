@@ -4,7 +4,7 @@ import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+} from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
 import type { ConversationTurn } from '@moonshot-ai/kap-server/protocol/conversation';
 import type { Session } from '@moonshot-ai/kap-server/protocol/session';

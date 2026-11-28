@@ -295,6 +295,7 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
     ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });
@@ -318,6 +319,7 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
     ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });
@@ -445,5 +447,56 @@ describe('AgentDateChangeService', () => {
     expect(changeText).toContain('2026-07-30');
     expect(changeText).toContain(TEST_TIME_ZONE);
     expect(changeText).toContain('local client');
+  });
+});
+
+describe('AgentDateChangeService on a Windows session cwd', () => {
+  let ctx: TestAgentContext | undefined;
+  let clock: TestHostClock;
+
+  async function startAgent(sessionCwd: string, renderedCwd: string): Promise<IAgentLoopService> {
+    clock = testHostClock(INITIAL_INSTANT);
+    ctx = createTestAgent({ autoConfigure: false, cwd: sessionCwd }, appService(IHostClock, clock));
+    await ctx.restorePersisted();
+    ctx.configure();
+    const loop = ctx.get(IAgentLoopService);
+    updateSystemPrompt(loop, 'You are a deterministic test agent.', renderedCwd);
+    return loop;
+  }
+
+  afterEach(async () => {
+    try {
+      await ctx?.expectResumeMatches();
+    } finally {
+      await ctx?.dispose();
+      ctx = undefined;
+    }
+  });
+
+  it.each([
+    ['the SDK spells the session cwd with forward slashes', 'C:/Users/me/project'],
+    ['the drive letter is lower case', 'c:\\Users\\me\\project'],
+  ])('discloses and announces the date when %s', async (_, sessionCwd) => {
+    const loop = await startAgent(sessionCwd, 'C:\\Users\\me\\project');
+
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(loop).map(messageText)).toEqual([expect.stringContaining('2026-07-29')]);
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(loop).map(messageText)).toEqual([
+      expect.stringContaining('2026-07-29'),
+      expect.stringContaining('The date has changed. Today\'s date is now 2026-07-30'),
+    ]);
+  });
+
+  it('never injects when the snapshot belongs to another Windows directory', async () => {
+    const loop = await startAgent('C:/Users/me/other', 'C:\\Users\\me\\project');
+
+    await runWillBeginStepHooks(loop);
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+
+    expect(dateReminders(loop)).toHaveLength(0);
   });
 });

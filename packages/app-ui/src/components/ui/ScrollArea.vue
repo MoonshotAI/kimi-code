@@ -235,9 +235,9 @@ defineExpose({ viewport, updateMetrics });
   scrollbar-width: none;
 }
 .ui-scroll-area__viewport::-webkit-scrollbar { display: none; }
+.ui-scroll-area__viewport:focus,
 .ui-scroll-area__viewport:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: -2px;
+  outline: none;
 }
 .ui-scroll-area__bar {
   position: absolute;

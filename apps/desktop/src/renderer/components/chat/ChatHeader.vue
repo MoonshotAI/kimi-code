@@ -4,9 +4,9 @@ import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { registerBrowserOverlayMenu } from '../../lib/browserOverlayMenu';
 import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
-import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, sessionLink } from '@moonshot-ai/app-core/lib';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
+import { isMacosDesktop, sessionLinksSupported } from '@moonshot-ai/app-core/lib';
 import { OpenInMenu } from '@moonshot-ai/app-components';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
@@ -17,6 +17,7 @@ import ViewToggles from './ViewToggles.vue';
 const { t } = useI18n();
 
 const { sidebarTabs } = useSidebarTabs();
+const sessionLinkCopyable = sessionLinksSupported();
 
 const client = useKimiWebClient();
 const sessionViews = sessionViewsStore();
@@ -38,7 +39,7 @@ const emit = defineEmits<{
 
 const sessionId = computed(() => client.activeSessionId.value);
 const workspaceName = computed(() => client.visibleWorkspace.value?.name);
-const workspaceRoot = computed(() => client.visibleWorkspace.value?.root ?? client.status.value.cwd);
+const panelRoot = computed(() => workspacesStore().activePanelRoot);
 const sessionTitle = computed(() => sessionViews.activeSessionTitle);
 const archived = client.activeSessionArchived;
 const pinned = computed(() => sessionViews.activeSessionPinned);
@@ -52,7 +53,7 @@ const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const menuStyle = ref<Record<string, string>>({});
 
-type CopyAction = 'all' | 'summary' | 'id';
+type CopyAction = 'all' | 'summary' | 'id' | 'link';
 const copiedAction = ref<CopyAction | null>(null);
 let copyRequest = 0;
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -78,6 +79,7 @@ const nativeMenu = registerBrowserOverlayMenu({
     { kind: 'item', id: 'copy-summary', ...copyItem('summary', t('header.copyFinalSummary'), 'file-text'), keepOpen: true },
     ...(sessionId.value ? [
       { kind: 'item' as const, id: 'copy-id', ...copyItem('id', t('header.copySessionId'), 'copy'), keepOpen: true },
+      ...(sessionLinkCopyable ? [{ kind: 'item' as const, id: 'copy-link', ...copyItem('link', t('header.copySessionLink'), 'link'), keepOpen: true }] : []),
       { kind: 'item' as const, id: 'export', label: t('header.exportSession'), icon: 'download' },
       ...(!archived.value ? [{ kind: 'item' as const, id: 'reload', label: t('header.reloadSession'), icon: 'refresh' }] : []),
       ...(!archived.value || sidebarTabs.value ? [{ kind: 'separator' as const }] : []),
@@ -92,7 +94,7 @@ const nativeMenu = registerBrowserOverlayMenu({
     if (id.slice(0, separator) !== menuContext) return;
     const action = id.slice(separator + 1);
     const actions: Record<string, () => void> = {
-      'copy-all': onCopyAll, 'copy-summary': onCopyFinalSummary, 'copy-id': copySessionId,
+      'copy-all': onCopyAll, 'copy-summary': onCopyFinalSummary, 'copy-id': copySessionId, 'copy-link': copySessionLink,
       pin: togglePin, rename: () => { void startRename(); }, fork: forkSession,
       export: exportSession, reload: reloadSession, restore: startRestore, archive: startArchive,
     };
@@ -104,7 +106,7 @@ watch(nativeMenu.open, value => {
   menuOpen.value = value;
   if (!value) resetCopyFeedback();
 });
-watch([sessionId, workspaceRoot], () => { menuContext = randomUUID(); closeMenu(); }, { flush: 'sync' });
+watch([sessionId, panelRoot], () => { menuContext = randomUUID(); closeMenu(); }, { flush: 'sync' });
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
@@ -218,6 +220,12 @@ function copySessionId(): void {
   if (!sessionId.value) return;
   track('session_menu_action', { action: 'copySessionId' });
   void copyTextToClipboard(sessionId.value).then(copyFeedback('id'));
+}
+
+function copySessionLink(): void {
+  if (!sessionId.value) return;
+  track('session_menu_action', { action: 'copySessionLink' });
+  void copyTextToClipboard(sessionLink(sessionId.value)).then(copyFeedback('link'));
 }
 
 const renaming = ref(false);
@@ -375,6 +383,10 @@ const isDev = import.meta.env.DEV;
             <Icon :name="copiedAction === 'id' ? 'check' : 'copy'" size="sm" />
             {{ copiedAction === 'id' ? t('header.copied') : t('header.copySessionId') }}
           </MenuItem>
+          <MenuItem v-if="sessionLinkCopyable" @click="copySessionLink">
+            <Icon :name="copiedAction === 'link' ? 'check' : 'link'" size="sm" />
+            {{ copiedAction === 'link' ? t('header.copied') : t('header.copySessionLink') }}
+          </MenuItem>
           <MenuItem @click="exportSession">
             <Icon name="download" size="sm" />
             {{ t('header.exportSession') }}
@@ -400,7 +412,7 @@ const isDev = import.meta.env.DEV;
 
     <!-- Open workspace in editor/terminal; the pill self-hides on an empty
          service catalog (the no-bridge degradation). -->
-    <OpenInMenu v-if="workspaceRoot && workspacesStore().isLocalWorkspace" :work-dir="workspaceRoot" />
+    <OpenInMenu v-if="panelRoot && workspacesStore().isLocalWorkspace" :work-dir="panelRoot" />
 
     <IconButton
       class="ch-session-info"

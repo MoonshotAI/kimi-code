@@ -14,12 +14,13 @@ import { permissionRulesKey } from '#/agent/permissionRules/permissionRulesOps';
 import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { changeNotifierSnapshotKey } from '#/agent/changeNotifier/changeNotifierOps';
 import { environmentBindingKey } from '#/agent/environmentBinding/environmentBindingOps';
+import { workdirMoveStateKey } from '#/agent/workdirMove/workdirMoveOps';
 import { taskKey } from '#/agent/task/taskOps';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
 import { fileHistoryKey } from '#/features/fileHistory/fileHistoryOps';
 import { planKey } from '#/features/plan/planOps';
-import { swarmKey, swarmReminderDeliveredKey } from '#/features/swarm/swarmOps';
+import { swarmKey } from '#/features/swarm/swarmOps';
 import { towerKey, towerOwnerKey } from '#/features/tower/towerOps';
 
 export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] = [
@@ -36,12 +37,13 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   pluginSessionStartSnapshotKey,
   changeNotifierSnapshotKey,
   environmentBindingKey,
+  workdirMoveStateKey,
   taskKey,
   toolSelectKey,
   userToolKey,
   fileHistoryKey,
   planKey,
-  swarmKey, swarmReminderDeliveredKey,
+  swarmKey,
   towerKey,
   towerOwnerKey,
 ];

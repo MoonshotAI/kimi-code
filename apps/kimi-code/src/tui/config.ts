@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { MAX_ANIMATION_FRAME_RATE } from '@moonshot-ai/pi-tui';
+import { MAX_ANIMATION_FRAME_RATE, type WheelScrollLines } from '@moonshot-ai/pi-tui';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
@@ -231,11 +231,25 @@ export function resolveFollowUpBehavior(value: FollowUpBehavior | undefined): Fo
   return value ?? DEFAULT_FOLLOW_UP_BEHAVIOR;
 }
 
+export type { WheelScrollLines };
+
+export const DEFAULT_WHEEL_SCROLL_LINES: WheelScrollLines = 'auto';
+
+export const WheelScrollLinesSchema: z.ZodType<WheelScrollLines> = z.union([
+  z.literal('auto'),
+  z.number().int().min(1).refine(Number.isSafeInteger),
+]);
+
+export function resolveWheelScrollLines(value: WheelScrollLines | undefined): WheelScrollLines {
+  return value ?? DEFAULT_WHEEL_SCROLL_LINES;
+}
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   tui_mode: z.string().optional(),
   cursor_copy_mode: z.string().optional(),
   copy_on_select: z.union([z.boolean(), z.literal('right-click')]).optional(),
+  wheel_scroll_lines: z.unknown().optional(),
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
@@ -459,6 +473,18 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`);
     }
   }
+  const legacyWheelScrollLinesValue = config.wheel_scroll_lines;
+  let wheelScrollLines = DEFAULT_MOUSE_CONFIG.wheelScrollLines;
+  if (legacyWheelScrollLinesValue !== undefined) {
+    const parsed = WheelScrollLinesSchema.safeParse(legacyWheelScrollLinesValue);
+    if (parsed.success) {
+      wheelScrollLines = parsed.data;
+    } else {
+      warn(
+        `[tui.toml] ignoring invalid wheel_scroll_lines value: ${formatInvalidTomlValue(legacyWheelScrollLinesValue)} (expected "auto" or a positive integer)`,
+      );
+    }
+  }
   const tuiModeValue = config.tui_mode;
   let tuiMode: TuiMode | undefined;
   if (tuiModeValue !== undefined) {
@@ -483,16 +509,15 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown cursor_copy_mode value: ${cursorCopyModeValue}`);
     }
   }
-  const wheelScrollLinesValue = config.mouse?.wheel_scroll_lines;
-  let wheelScrollLines = DEFAULT_MOUSE_CONFIG.wheelScrollLines;
-  if (wheelScrollLinesValue !== undefined) {
-    const parsed = MouseWheelScrollLinesSchema.safeParse(wheelScrollLinesValue);
+  const mouseWheelScrollLinesValue = config.mouse?.wheel_scroll_lines;
+  if (mouseWheelScrollLinesValue !== undefined) {
+    const parsed = MouseWheelScrollLinesSchema.safeParse(mouseWheelScrollLinesValue);
     if (parsed.success) {
       wheelScrollLines = parsed.data;
     } else {
-      const shown = typeof wheelScrollLinesValue === 'string'
-        ? wheelScrollLinesValue
-        : JSON.stringify(wheelScrollLinesValue);
+      const shown = typeof mouseWheelScrollLinesValue === 'string'
+        ? mouseWheelScrollLinesValue
+        : JSON.stringify(mouseWheelScrollLinesValue);
       warn(`[tui.toml] ignoring invalid mouse.wheel_scroll_lines value: ${shown}`);
     }
   }
@@ -626,6 +651,21 @@ alt_wheel_acceleration = ${String(mouse.altWheelAcceleration)} # Alt+wheel scrol
 ${markdownSection}
 ${transcriptSection}
 ${statusSection}`;
+}
+
+function formatInvalidTomlValue(value: unknown): string {
+  if (typeof value === 'bigint' || (typeof value === 'number' && !Number.isFinite(value))) {
+    return String(value);
+  }
+  try {
+    return (
+      JSON.stringify(value, (_key, entry: unknown) =>
+        typeof entry === 'bigint' ? String(entry) : entry,
+      ) ?? String(value)
+    );
+  } catch {
+    return String(value);
+  }
 }
 
 function escapeTomlBasicString(value: string): string {

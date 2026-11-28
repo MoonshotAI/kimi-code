@@ -1,9 +1,16 @@
 import { browserAnnotationViewBounds } from './browser-annotations';
 import { browserCaptureBindingId } from '@moonshot-ai/app-core/browser-reference';
 import { app, WebContentsView } from 'electron';
-import type { MouseInputEvent, Rectangle, View, WebContents } from 'electron';
+import type { Rectangle, WebContents } from 'electron';
 import type { MainWindow } from '../window/main-window';
+import {
+  onBrowserAnnotationOverlayRefresh,
+  onBrowserOverlayOutsidePointer,
+  setBrowserOverlayView,
+} from './browser-overlay-state';
 import { join } from 'node:path';
+
+export { isBrowserOverlayView, observeBrowserOverlayOutsidePointer } from './browser-overlay-state';
 
 import {
   BROWSER_OVERLAY_GUTTER,
@@ -30,6 +37,12 @@ import { rendererDevBase } from '../app/protocol';
 
 const PROVISIONAL_HEIGHT = 720;
 const VIEWPORT_MARGIN = 8;
+export const MODEL_OVERLAY_MENU_WIDTH = 240;
+export const MODEL_OVERLAY_MAX_HEIGHT = 480;
+export const MODEL_OVERLAY_ANCHOR_OFFSET = 8;
+export const MODEL_OVERLAY_FLYOUT_RESERVE_X = 244;
+export const MODEL_OVERLAY_FLYOUT_RESERVE_TOP = 260;
+export const MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM = 320;
 
 interface BrowserOverlayEntry {
   host: MainWindow;
@@ -47,22 +60,12 @@ interface BrowserOverlayEntry {
 
 let hostWindow: MainWindow | null = null;
 let overlayEntry: BrowserOverlayEntry | null = null;
-const outsidePointerContents = new WeakSet<WebContents>();
 
-export function observeBrowserOverlayOutsidePointer(contents: WebContents, isUserSurface: () => boolean = () => true): void {
-  if (outsidePointerContents.has(contents)) return;
-  outsidePointerContents.add(contents);
-  contents.on('before-mouse-event', (_event, mouse: MouseInputEvent) => {
-    if (mouse.type !== 'mouseDown' || !isUserSurface()) return;
-    closeBrowserOverlayMenu(undefined, 'dismiss');
-    const current = liveEntry()?.current;
-    if (current?.kind === 'dialog' && current.anchor !== undefined) closeBrowserOverlayDialog(undefined, 'dismiss');
-  });
-}
-
-export function isBrowserOverlayView(view: View): boolean {
-  return overlayEntry !== null && overlayEntry.view === view;
-}
+onBrowserOverlayOutsidePointer(() => {
+  closeBrowserOverlayMenu(undefined, 'dismiss');
+  const current = liveEntry()?.current;
+  if (current?.kind === 'dialog' && current.anchor !== undefined) closeBrowserOverlayDialog(undefined, 'dismiss');
+});
 
 function liveHost(): MainWindow | null {
   return hostWindow !== null && !hostWindow.isDestroyed() ? hostWindow : null;
@@ -148,7 +151,10 @@ function hideEntry(
 function destroyEntry(entry: BrowserOverlayEntry | null = overlayEntry, reason: 'host-closed' | 'replaced' = 'host-closed'): void {
   if (entry === null || entry.disposed) return;
   entry.disposed = true;
-  if (overlayEntry === entry) overlayEntry = null;
+  if (overlayEntry === entry) {
+    overlayEntry = null;
+    setBrowserOverlayView(null);
+  }
   if (
     entry.current !== null &&
     !entry.host.isDestroyed() &&
@@ -181,12 +187,28 @@ function flushConfig(entry: BrowserOverlayEntry): void {
     entry.view.setVisible(true);
   } else {
     const [contentWidth, contentHeight] = hostContentSize(entry.host).map(size => size / entry.zoom) as [number, number];
-    const maxWidth = Math.max(1, contentWidth - BROWSER_OVERLAY_GUTTER * 2);
-    current.minWidth = Math.min(current.minWidth ?? current.width ?? 220, maxWidth);
-    current.width = current.autoWidth === true ? maxWidth : current.minWidth;
-    current.maxHeight = Math.max(1, Math.min(PROVISIONAL_HEIGHT, contentHeight - BROWSER_OVERLAY_GUTTER * 2));
-    const width = current.width + BROWSER_OVERLAY_GUTTER * 2;
-    if (!entry.visible) entry.view.setBounds({ x: 0, y: 0, width: Math.ceil(width * entry.zoom), height: Math.ceil((current.maxHeight + BROWSER_OVERLAY_GUTTER * 2) * entry.zoom) });
+    if (current.modelMenu !== undefined) {
+      current.minWidth = MODEL_OVERLAY_MENU_WIDTH;
+      current.width = MODEL_OVERLAY_MENU_WIDTH;
+      current.autoWidth = false;
+      current.offset = MODEL_OVERLAY_ANCHOR_OFFSET;
+      current.maxHeight = modelOverlayMaxHeight(current.anchor.y, contentHeight);
+      if (!entry.visible) {
+        const provisionalWidth = Math.min(contentWidth, MODEL_OVERLAY_MENU_WIDTH + (MODEL_OVERLAY_FLYOUT_RESERVE_X + BROWSER_OVERLAY_GUTTER) * 2);
+        const provisionalHeight = Math.min(contentHeight, current.maxHeight + MODEL_OVERLAY_FLYOUT_RESERVE_TOP + MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM + BROWSER_OVERLAY_GUTTER * 2);
+        entry.view.setBounds({ x: 0, y: 0, width: Math.ceil(provisionalWidth * entry.zoom), height: Math.ceil(provisionalHeight * entry.zoom) });
+      }
+    } else {
+      const maxWidth = Math.max(1, contentWidth - BROWSER_OVERLAY_GUTTER * 2);
+      current.minWidth = Math.min(current.minWidth ?? current.width ?? 220, maxWidth);
+      current.width = current.autoWidth === true ? maxWidth : current.minWidth;
+      current.maxHeight = Math.max(
+        1,
+        Math.min(current.maxHeight ?? PROVISIONAL_HEIGHT, PROVISIONAL_HEIGHT, contentHeight - BROWSER_OVERLAY_GUTTER * 2),
+      );
+      const width = current.width + BROWSER_OVERLAY_GUTTER * 2;
+      if (!entry.visible) entry.view.setBounds({ x: 0, y: 0, width: Math.ceil(width * entry.zoom), height: Math.ceil((current.maxHeight + BROWSER_OVERLAY_GUTTER * 2) * entry.zoom) });
+    }
   }
   entry.view.webContents.send(IPC.browserOverlayConfig, current);
 }
@@ -225,6 +247,7 @@ function ensureEntry(): BrowserOverlayEntry {
     initialUrl,
   };
   overlayEntry = entry;
+  setBrowserOverlayView(entry.view);
 
   browserOverlayView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   browserOverlayView.webContents.on('will-navigate', (event, url) => {
@@ -418,6 +441,58 @@ export function browserOverlayBounds(input: BrowserOverlayPositionInput): Rectan
   return browserOverlayLayout(input).bounds;
 }
 
+export function modelOverlayMaxHeight(anchorY: number, contentHeight: number): number {
+  const availableAbove = Math.floor(anchorY - VIEWPORT_MARGIN * 2);
+  return Math.max(
+    96,
+    Math.min(MODEL_OVERLAY_MAX_HEIGHT, availableAbove, Math.floor(contentHeight - VIEWPORT_MARGIN * 2)),
+  );
+}
+
+export interface BrowserModelOverlayLayoutInput {
+  contentWidth: number;
+  contentHeight: number;
+  anchor: Rectangle;
+  menuHeight: number;
+}
+
+export interface BrowserModelOverlayLayout {
+  bounds: Rectangle;
+  menuOffset: { x: number; y: number };
+  menuBottom?: number;
+  menuFrame: { x: number; y: number; viewportWidth: number; viewportHeight: number };
+}
+
+export function browserModelOverlayLayout(input: BrowserModelOverlayLayoutInput): BrowserModelOverlayLayout {
+  const { contentWidth, contentHeight, anchor } = input;
+  const menuWidth = MODEL_OVERLAY_MENU_WIDTH;
+  const maxHeight = modelOverlayMaxHeight(anchor.y, contentHeight);
+  const menuHeight = Math.max(1, Math.min(input.menuHeight, maxHeight));
+  const maxMenuX = Math.max(VIEWPORT_MARGIN, contentWidth - VIEWPORT_MARGIN - menuWidth);
+  const menuX = Math.min(Math.max(VIEWPORT_MARGIN, anchor.x + anchor.width - menuWidth), maxMenuX);
+  const menuY = Math.min(
+    Math.max(VIEWPORT_MARGIN, anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - menuHeight),
+    Math.max(VIEWPORT_MARGIN, contentHeight - VIEWPORT_MARGIN - menuHeight),
+  );
+  const highestMenuY = Math.min(
+    Math.max(VIEWPORT_MARGIN, anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - maxHeight),
+    Math.max(VIEWPORT_MARGIN, contentHeight - VIEWPORT_MARGIN - maxHeight),
+  );
+  const x = Math.max(0, Math.floor(menuX - MODEL_OVERLAY_FLYOUT_RESERVE_X - BROWSER_OVERLAY_GUTTER));
+  const y = Math.max(0, Math.floor(highestMenuY - MODEL_OVERLAY_FLYOUT_RESERVE_TOP - BROWSER_OVERLAY_GUTTER));
+  const right = Math.min(contentWidth, Math.ceil(menuX + menuWidth + MODEL_OVERLAY_FLYOUT_RESERVE_X + BROWSER_OVERLAY_GUTTER));
+  const bottomAnchor = Math.max(anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET, highestMenuY + maxHeight);
+  const bottom = Math.min(contentHeight, Math.ceil(bottomAnchor + MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM + BROWSER_OVERLAY_GUTTER));
+  const topClamped = menuY <= VIEWPORT_MARGIN && anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - menuHeight < VIEWPORT_MARGIN;
+  const menuBottom = topClamped ? undefined : bottom - (anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET);
+  return {
+    bounds: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) },
+    menuOffset: { x: menuX - x, y: menuY - y },
+    ...(menuBottom === undefined ? {} : { menuBottom }),
+    menuFrame: { x: menuX, y: menuY, viewportWidth: contentWidth, viewportHeight: contentHeight },
+  };
+}
+
 export function showBrowserOverlayRendered(
   contents: WebContents,
   rendered: BrowserOverlayRendered,
@@ -451,6 +526,46 @@ export function showBrowserOverlayRendered(
     return;
   }
   const wasVisible = entry.visible;
+  if (current.kind === 'menu' && current.modelMenu !== undefined) {
+    const contentSize = hostContentSize(entry.host);
+    const zoom = entry.zoom;
+    const modelLayout = browserModelOverlayLayout({
+      contentWidth: (contentSize[0] ?? 0) / zoom,
+      contentHeight: (contentSize[1] ?? 0) / zoom,
+      anchor: current.anchor,
+      menuHeight: rendered.height,
+    });
+    const { x, y, width, height } = modelLayout.bounds;
+    const nextBounds = {
+      x: Math.floor(x * zoom),
+      y: Math.floor(y * zoom),
+      width: Math.ceil((x + width) * zoom) - Math.floor(x * zoom),
+      height: Math.ceil((y + height) * zoom) - Math.floor(y * zoom),
+    };
+    const previousBounds = entry.view.getBounds();
+    const boundsChanged =
+      previousBounds.x !== nextBounds.x ||
+      previousBounds.y !== nextBounds.y ||
+      previousBounds.width !== nextBounds.width ||
+      previousBounds.height !== nextBounds.height;
+    if (wasVisible && !boundsChanged) return;
+    if (!wasVisible) {
+      entry.host.contentView.removeChildView(entry.view);
+      entry.host.contentView.addChildView(entry.view);
+    }
+    entry.view.setBounds(nextBounds);
+    entry.visible = true;
+    entry.view.setVisible(true);
+    if (!wasVisible && current.preserveFocus !== true) entry.view.webContents.focus();
+    entry.view.webContents.send(IPC.browserOverlayShown, {
+      requestId: current.requestId,
+      placement: 'top-end',
+      menuOffset: modelLayout.menuOffset,
+      ...(modelLayout.menuBottom === undefined ? {} : { menuBottom: modelLayout.menuBottom }),
+      menuFrame: modelLayout.menuFrame,
+    } satisfies BrowserOverlayShown);
+    return;
+  }
   const contentSize = hostContentSize(entry.host, current.kind === 'dialog' ? current.viewport : undefined);
   const contentWidth = contentSize[0] ?? 0;
   const contentHeight = contentSize[1] ?? 0;
@@ -494,6 +609,16 @@ export function activateBrowserOverlayItem(contents: WebContents, request: Brows
   const current = entry.current;
   if (current === null || entry.view.webContents !== contents || current.requestId !== request.requestId) return;
   const { itemId } = request;
+  if (current.kind === 'menu' && current.modelMenu !== undefined) {
+    if (request.modelAction === undefined) return;
+    liveHost()?.webContents.send(IPC.browserOverlayAction, {
+      menuId: current.menuId,
+      itemId,
+      keepOpen: true,
+      modelAction: request.modelAction,
+    } satisfies BrowserOverlayAction);
+    return;
+  }
   if (current.kind === 'dialog') {
     if (itemId !== 'confirm' && itemId !== 'cancel' && itemId !== 'auxiliary') return;
     if (itemId === 'auxiliary' && (!current.auxiliary || current.auxiliary.disabled)) return;
@@ -585,3 +710,5 @@ export function refreshBrowserAnnotationOverlay(): void {
   const boundary = browserAnnotationViewBounds(browserCaptureBindingId(current.annotation.capture));
   if (JSON.stringify(boundary) !== JSON.stringify(current.boundary)) flushConfig(entry);
 }
+
+onBrowserAnnotationOverlayRefresh(refreshBrowserAnnotationOverlay);

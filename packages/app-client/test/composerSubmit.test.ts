@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ATTACHMENT_LINK_BASE, rewriteAttachmentLinksForSubmit, serializeAttachment, serializePastedText, serializeQuote } from '@moonshot-ai/app-composer/model';
-import { decideComposerSubmit, decideSubmitKind, steerHistoryText, type SubmitDecisionInput } from '../src/lib/composerSubmit';
+import { commandNeedsProjectTrust, decideComposerSubmit, decideSubmitKind, isSessionBoundSubmit, steerHistoryText, type SubmitDecisionInput } from '../src/lib/composerSubmit';
 import type { PromptAttachment } from '../src/client/types';
 
 const FILE_ATT: PromptAttachment = { fileId: 'f_pdf', kind: 'file', name: 'a.pdf' };
@@ -27,6 +27,49 @@ function input(partial: Partial<SubmitDecisionInput> = {}): SubmitDecisionInput 
 
 const fileLink = (attId: string, name = 'a.pdf') => `[${name}](${ATTACHMENT_LINK_BASE}${attId})`;
 const quoteLink = (text: string) => serializeQuote({ text });
+
+describe('isSessionBoundSubmit', () => {
+  it.each([
+    ['hello', true],
+    ['/btw explain this', true],
+    ['/new', true],
+    ['/plan', false],
+    ['/feedback', false],
+    ['', false],
+  ] as const)('classifies the session submit gate for %j', (text, expected) => {
+    const args = input({
+      text,
+      rewritten: text,
+      extraBuiltins: [{ name: '/feedback', desc: 'feedback.send', noArgs: true }],
+    });
+    expect(isSessionBoundSubmit(decideComposerSubmit(args))).toBe(expected);
+  });
+
+  it('requires a session for an attachment-only prompt', () => {
+    const args = input({
+      text: '',
+      rewritten: '',
+      assembly: { promptAttachments: [IMG_ATT], fileAttIds: [], mediaAttIds: [] },
+    });
+    expect(isSessionBoundSubmit(decideComposerSubmit(args))).toBe(true);
+  });
+});
+
+describe('commandNeedsProjectTrust', () => {
+  it.each([
+    ['/new', true],
+    ['/clear', true],
+    ['/compact', true],
+    ['/compact keep the implementation notes', true],
+    ['/tower status', true],
+    ['/tower teardown', true],
+    ['/tower on', false],
+    ['/plan', false],
+    ['/feedback', false],
+  ] as const)('classifies built-in command %j', (command, expected) => {
+    expect(commandNeedsProjectTrust(command)).toBe(expected);
+  });
+});
 
 describe('decideComposerSubmit — the gate', () => {
   it('is a noop while the send gate is blocked', () => {

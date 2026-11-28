@@ -1,5 +1,5 @@
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import type { ToolResult } from '#/tool/toolContract';
 import { isToolDetachAck, legacyToolDurationMs } from '#/tool/executor';

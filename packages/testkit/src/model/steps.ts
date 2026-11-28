@@ -46,6 +46,7 @@ export interface CallOptions {
   readonly rawArguments?: string;
   readonly argumentChunks?: number;
   readonly invalid?: boolean;
+  readonly extras?: Readonly<Record<string, unknown>>;
 }
 
 export function call(name: string, args: Readonly<Record<string, unknown>>, options: CallOptions = {}): ReplyStep {
@@ -59,6 +60,7 @@ export function call(name: string, args: Readonly<Record<string, unknown>>, opti
     rawArguments: options.rawArguments,
     argumentChunks: options.argumentChunks,
     invalid: options.invalid,
+    extras: options.extras,
   };
   const parts: ReplyPart[] = options.text === undefined ? [] : [{ type: 'text', text: options.text }];
   parts.push({ type: 'call', call: spec });
@@ -86,6 +88,10 @@ export function finishWith(finish: FinishSpec, step: ReplyStep): ReplyStep {
 
 export function withUsage(usage: UsageSpec | null, step: ReplyStep): ReplyStep {
   return { ...step, usage, label: `withUsage(${JSON.stringify(usage)}, ${step.label})` };
+}
+
+export function withResponseId(responseId: string, step: ReplyStep): ReplyStep {
+  return { ...step, responseId, label: `withResponseId(${JSON.stringify(responseId)}, ${step.label})` };
 }
 
 export function paced(intervalMs: number, step: ReplyStep): ReplyStep {
@@ -135,8 +141,16 @@ export function streamError(step: ReplyStep, options: HttpErrorOptions & { reado
   };
 }
 
-export function disconnect(step: ReplyStep): ReplyStep {
-  return { ...step, ending: { type: 'disconnect' }, label: `disconnect(${step.label})` };
+export interface DisconnectOptions {
+  readonly afterUsage?: boolean;
+}
+
+export function disconnect(step: ReplyStep, options: DisconnectOptions = {}): ReplyStep {
+  return {
+    ...step,
+    ending: options.afterUsage === true ? { type: 'disconnect', afterUsage: true } : { type: 'disconnect' },
+    label: options.afterUsage === true ? `disconnect(${step.label}, after usage)` : `disconnect(${step.label})`,
+  };
 }
 
 export function networkError(): NetworkErrorStep {

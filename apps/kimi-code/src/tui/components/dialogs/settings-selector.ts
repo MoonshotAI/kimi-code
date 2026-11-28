@@ -1,25 +1,15 @@
-import type { SelectionCopyMode, ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
+import type {
+  SelectionCopyMode,
+  ThinkingDisplay,
+  ToolCallDensity,
+  TranscriptConfig,
+  WheelScrollLines,
+} from '../../config';
 import type { DockLayout } from '../chrome/dock-section';
 import { ChoicePickerComponent, PreviewChoicePickerComponent, type ChoiceOption } from './choice-picker';
 import { TranscriptPreview } from './transcript-preview';
 
-export type SettingsSelection =
-  | 'model'
-  | 'theme'
-  | 'tuiMode'
-  | 'toolCallDensity'
-  | 'thinking'
-  | 'copyOnSelect'
-  | 'mermaid'
-  | 'editor'
-  | 'followUpBehavior'
-  | 'permission'
-  | 'survey'
-  | 'experiments'
-  | 'upgrade'
-  | 'usage';
-
-const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
+const SETTINGS_OPTIONS = [
   {
     value: 'model',
     label: 'Model',
@@ -44,16 +34,25 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     value: 'toolCallDensity',
     label: 'Tool call density',
     description: 'Choose how much of each tool call the transcript shows.',
+    fullscreenOnly: true,
   },
   {
     value: 'thinking',
     label: 'Thinking folding',
     description: 'Choose whether to fold finished thinking.',
+    fullscreenOnly: true,
   },
   {
     value: 'copyOnSelect',
     label: 'Selection copying',
     description: 'Choose when selected text is copied in fullscreen mode.',
+    fullscreenOnly: true,
+  },
+  {
+    value: 'scrollSpeed',
+    label: 'Scroll speed',
+    description: 'Choose how many lines the mouse wheel scrolls in fullscreen mode.',
+    fullscreenOnly: true,
   },
   {
     value: 'mermaid',
@@ -90,26 +89,9 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     label: 'Usage',
     description: 'Show session tokens, context window, and plan quotas.',
   },
-];
+] as const satisfies readonly (ChoiceOption & { readonly fullscreenOnly?: true })[];
 
-function isSettingsSelection(value: string): value is SettingsSelection {
-  return (
-    value === 'model' ||
-    value === 'theme' ||
-    value === 'tuiMode' ||
-    value === 'toolCallDensity' ||
-    value === 'thinking' ||
-    value === 'copyOnSelect' ||
-    value === 'mermaid' ||
-    value === 'editor' ||
-    value === 'followUpBehavior' ||
-    value === 'permission' ||
-    value === 'survey' ||
-    value === 'experiments' ||
-    value === 'upgrade' ||
-    value === 'usage'
-  );
-}
+export type SettingsSelection = (typeof SETTINGS_OPTIONS)[number]['value'];
 
 export interface SettingsSelectorOptions {
   readonly fullscreen?: boolean;
@@ -122,14 +104,11 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
     super({
       title: 'Settings',
       options: SETTINGS_OPTIONS.filter(
-        (option) =>
-          opts.fullscreen === true ||
-          (option.value !== 'toolCallDensity' &&
-            option.value !== 'thinking' &&
-            option.value !== 'copyOnSelect'),
+        (option) => opts.fullscreen === true || !('fullscreenOnly' in option),
       ),
       onSelect: (value) => {
-        if (isSettingsSelection(value)) opts.onSelect(value);
+        const matched = SETTINGS_OPTIONS.find((option) => option.value === value);
+        if (matched !== undefined) opts.onSelect(matched.value);
       },
       onCancel: opts.onCancel,
     });
@@ -247,6 +226,68 @@ export class SelectionCopyModeSelectorComponent extends ChoicePickerComponent {
       onSelect: (value) => {
         const option = SELECTION_COPY_MODE_OPTIONS.find((candidate) => candidate.value === value);
         if (option !== undefined) opts.onSelect(option.value);
+      },
+      onCancel: opts.onCancel,
+    });
+  }
+}
+
+export const WHEEL_SCROLL_PRESETS = [
+  'auto',
+  1,
+  2,
+  3,
+  5,
+  10,
+] as const satisfies readonly WheelScrollLines[];
+
+export function formatWheelScrollSpeedLabel(value: WheelScrollLines): string {
+  if (value === 'auto') return 'Auto';
+  return value === 1 ? '1 line' : `${String(value)} lines`;
+}
+
+export interface ScrollSpeedSelectorOptions {
+  readonly currentValue: WheelScrollLines;
+  readonly onSelect: (value: WheelScrollLines) => void;
+  readonly onCancel: () => void;
+}
+
+interface ScrollSpeedChoiceOption extends ChoiceOption {
+  readonly lines: WheelScrollLines;
+}
+
+function buildScrollSpeedOptions(
+  currentValue: WheelScrollLines,
+): readonly ScrollSpeedChoiceOption[] {
+  const options: ScrollSpeedChoiceOption[] = WHEEL_SCROLL_PRESETS.map((lines) => ({
+    value: String(lines),
+    lines,
+    label: formatWheelScrollSpeedLabel(lines),
+    ...(lines === 'auto'
+      ? { description: 'Automatically speed up when scrolling fast.' }
+      : {}),
+  }));
+  if (!WHEEL_SCROLL_PRESETS.some((preset) => preset === currentValue)) {
+    options.push({
+      value: String(currentValue),
+      lines: currentValue,
+      label: `${formatWheelScrollSpeedLabel(currentValue)} (custom)`,
+      description: 'Custom value from tui.toml.',
+    });
+  }
+  return options;
+}
+
+export class ScrollSpeedSelectorComponent extends ChoicePickerComponent {
+  constructor(opts: ScrollSpeedSelectorOptions) {
+    const options = buildScrollSpeedOptions(opts.currentValue);
+    super({
+      title: 'Scroll speed',
+      options,
+      currentValue: String(opts.currentValue),
+      onSelect: (value) => {
+        const matched = options.find((option) => option.value === value);
+        if (matched !== undefined) opts.onSelect(matched.lines);
       },
       onCancel: opts.onCancel,
     });

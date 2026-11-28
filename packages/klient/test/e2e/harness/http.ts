@@ -8,7 +8,7 @@ import type { UpdateSessionProfileRequest as SessionUpdate } from '@moonshot-ai/
 import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+} from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
 import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
 import type {

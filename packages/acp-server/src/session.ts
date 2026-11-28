@@ -10,17 +10,18 @@ import type {
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
 import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
-import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
-import type {
-  AgentEventPayloads,
-  AgentHandle,
-  ContentPart,
-  IDisposable,
-  Klient,
-  PromptLaunchResult,
-  SessionEventPayloads,
-  SessionHandle,
-  SkillSummary,
+import { toLlmMessage } from '@moonshot-ai/agent-core-v2/wire/message';
+import {
+  RPCError,
+  type AgentEventPayloads,
+  type AgentHandle,
+  type ContentPart,
+  type IDisposable,
+  type Klient,
+  type PromptLaunchResult,
+  type SessionEventPayloads,
+  type SessionHandle,
+  type SkillSummary,
 } from '@moonshot-ai/klient';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
@@ -42,10 +43,12 @@ import { buildSessionConfigOptions } from './config-options';
 import { acpBlocksToContentParts, compressPromptImageParts } from './convert';
 import {
   acpToolCallId,
+  answerForTurnEnd,
   assistantDeltaToSessionUpdate,
   availableCommandsUpdateNotification,
   configOptionUpdateNotification,
   currentModeUpdateNotification,
+  liveToolOutputToSessionUpdate,
   planFromDisplayBlock,
   sessionInfoUpdateNotification,
   thinkingDeltaToSessionUpdate,
@@ -56,12 +59,13 @@ import {
   toolCallStartToSessionUpdate,
   toolUpdatedToSessionUpdate,
   toolResultToSessionUpdate,
-  turnEndReasonToStopReason,
+  type TurnEndError,
   usageUpdateNotification,
   isAuthError,
   stringifyArgs,
 } from './events-map';
 import { AcpInteractionBridge } from './interaction-bridge';
+import { LiveToolOutput } from './live-output';
 import { log } from './log';
 import { projectModelCatalog } from './model-catalog';
 import { ACP_MODES, type AcpModeId, acpModeToToggles, DEFAULT_MODE_ID } from './modes';
@@ -78,6 +82,13 @@ const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
 const SESSION_OCCUPIED_CODE = 'session.occupied';
 const SESSION_STALE_CODE = 'session.stale';
 
+const AGENT_STARTED_ORIGIN_KINDS: ReadonlySet<string> = new Set(['task', 'cron_job', 'cron_missed', 'system_trigger']);
+
+function isAgentStartedOrigin(origin: unknown): boolean {
+  if (typeof origin !== 'object' || origin === null || !('kind' in origin)) return false;
+  return typeof origin.kind === 'string' && AGENT_STARTED_ORIGIN_KINDS.has(origin.kind);
+}
+
 export function mapPromptLaunchError(error: unknown, sessionId: string): RequestError {
   const code = (error as { readonly code?: unknown } | null | undefined)?.code;
   const message = error instanceof Error ? error.message : String(error);
@@ -88,9 +99,12 @@ export function mapPromptLaunchError(error: unknown, sessionId: string): Request
     });
     return RequestError.authRequired(undefined, message);
   }
-  if (code === TURN_AGENT_BUSY_CODE) {
+  if (
+    code === TURN_AGENT_BUSY_CODE ||
+    (error instanceof RPCError && (error.details as { readonly code?: unknown } | undefined)?.code === TURN_AGENT_BUSY_CODE)
+  ) {
     log.warn('acp: prompt rejected because another turn is active', { sessionId });
-    return RequestError.invalidRequest({ code }, message);
+    return RequestError.invalidRequest({ code: TURN_AGENT_BUSY_CODE }, message);
   }
   if (code === SESSION_OCCUPIED_CODE) {
     log.warn('acp: prompt rejected because another client holds the session', { sessionId });
@@ -120,13 +134,17 @@ interface ResolvedCommands {
   readonly skillCommandMap: ReadonlyMap<string, string>;
 }
 
+type EarlyDispatch =
+  | { readonly kind: 'turnEvent'; readonly turnId: number; readonly dispatch: () => void }
+  | { readonly kind: 'interaction'; readonly dispatch: () => void };
+
 interface TurnDriver {
   resolve(response: PromptResponse): void;
   reject(error: unknown): void;
   turnId?: number;
   settled: boolean;
   cancelRequested?: boolean;
-  early: Array<{ readonly turnId: number; readonly dispatch: () => void }>;
+  early: EarlyDispatch[];
 }
 
 export class AcpSession {
@@ -137,8 +155,11 @@ export class AcpSession {
   private currentModelId: string = '';
   private currentThinkingLevel: string = 'off';
   private currentModeId: AcpModeId = DEFAULT_MODE_ID;
+  private readMode: (() => AcpModeId | undefined) | undefined;
+  private modeChangesInFlight = 0;
   private skills: readonly SkillSummary[] = [];
   private driver: TurnDriver | undefined;
+  private agentStartedTurnId: number | undefined;
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
   private readonly subscriptions: IDisposable[] = [];
   private readonly toolCallStreamArgs = new Map<string, { args: string }>();
@@ -146,6 +167,10 @@ export class AcpSession {
   private readonly toolLocations = new Map<string, ToolCallLocation[]>();
   private readonly bashCallsAwaitingTerminal = new Map<string, string>();
   private readonly terminalBackedCalls = new Map<string, string>();
+  private readonly terminalsAwaitingCall: AcpTerminalCreatedEvent[] = [];
+  private readonly liveOutput = new LiveToolOutput((toolCallId, text) => {
+    this.emit(liveToolOutputToSessionUpdate(this.sessionId, toolCallId, text));
+  });
   private readonly interactionBridge: AcpInteractionBridge;
 
   constructor(
@@ -162,12 +187,25 @@ export class AcpSession {
     this.klient = klient;
     this.session = klient.session(sessionId);
     this.agent = this.session.agent('main');
-    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm);
+    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm, (dispatch) => {
+      this.dispatchInteraction(dispatch);
+    });
   }
 
-  async init(): Promise<void> {
+  async init(readMode?: () => AcpModeId | undefined): Promise<void> {
+    this.readMode = readMode;
+    this.currentModeId = readMode?.() ?? DEFAULT_MODE_ID;
     const events = this.agent.events;
     this.subscriptions.push(
+      events.on('agent.status.updated', (event) => {
+        if (this.modeChangesInFlight > 0) return;
+        if (typeof event['planMode'] !== 'boolean' && typeof event['permission'] !== 'string') return;
+        const mode = this.readMode?.();
+        if (mode !== undefined && mode !== this.currentModeId) void this.publishMode(mode);
+      }),
+      events.on('turn.started', ({ turnId, origin }) => {
+        if (isAgentStartedOrigin(origin)) this.agentStartedTurnId = turnId;
+      }),
       events.on('assistant.delta', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onAssistantDelta(event);
@@ -264,12 +302,13 @@ export class AcpSession {
       });
     }
     this.interactionBridge.dispose();
+    this.liveOutput.dispose();
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
   }
 
-  async replayHistory(): Promise<void> {
+  async replayHistory(cwd?: string): Promise<void> {
     let messages: readonly ContextMessage[];
     try {
       messages = (await this.agent.getContext()).history.map((message) => ({
@@ -293,7 +332,10 @@ export class AcpSession {
       });
       return;
     }
-    const updates = projectHistoryToSessionUpdates(this.sessionId, messages);
+    const updates = projectHistoryToSessionUpdates(this.sessionId, messages, {
+      cwd,
+      skillCommandMap: this.resolveCommands().skillCommandMap,
+    });
     for (const update of updates) {
       try {
         await this.conn.sessionUpdate(update);
@@ -451,7 +493,7 @@ export class AcpSession {
   }
 
   private assertNoActiveTurn(): void {
-    if (this.driver !== undefined && !this.driver.settled) {
+    if (this.agentStartedTurnId !== undefined || (this.driver !== undefined && !this.driver.settled)) {
       throw RequestError.invalidRequest(
         { code: TURN_AGENT_BUSY_CODE },
         'another turn is already in progress',
@@ -461,7 +503,7 @@ export class AcpSession {
 
   private driveTurn(input: readonly ContentPart[]): Promise<PromptResponse> {
     this.assertNoActiveTurn();
-    return this.driveLaunch(this.agent.prompt({ input }));
+    return this.driveLaunch(this.agent.prompt({ input, rejectIfBusy: true }));
   }
 
   private driveLaunch(launch: Promise<PromptLaunchResult>): Promise<PromptResponse> {
@@ -487,7 +529,7 @@ export class AcpSession {
             });
           }
           for (const early of driver.early.splice(0)) {
-            if (early.turnId === driver.turnId) early.dispatch();
+            if (early.kind === 'interaction' || early.turnId === driver.turnId) early.dispatch();
           }
         },
         (error) => {
@@ -500,18 +542,35 @@ export class AcpSession {
   }
 
   private dispatchTurnEvent(turnId: number, dispatch: () => void): void {
-    const driver = this.driver;
-    if (driver !== undefined && !driver.settled && driver.turnId === undefined) {
-      driver.early.push({ turnId, dispatch });
+    if (this.agentStartedTurnId === turnId) {
+      dispatch();
       return;
     }
-    dispatch();
+    const driver = this.driver;
+    if (driver === undefined || driver.settled) return;
+    if (driver.turnId === undefined) {
+      driver.early.push({ kind: 'turnEvent', turnId, dispatch });
+      return;
+    }
+    if (driver.turnId === turnId) dispatch();
+  }
+
+  private dispatchInteraction(dispatch: () => void): void {
+    const driver = this.driver;
+    if (driver === undefined || driver.settled || driver.turnId !== undefined) {
+      dispatch();
+      return;
+    }
+    driver.early.push({ kind: 'interaction', dispatch });
   }
 
   private settleDriver(driver: TurnDriver, action: () => void): void {
     if (driver.settled) return;
     driver.settled = true;
     if (this.driver === driver) this.driver = undefined;
+    for (const early of driver.early.splice(0)) {
+      if (early.kind === 'interaction') early.dispatch();
+    }
     action();
   }
 
@@ -524,28 +583,23 @@ export class AcpSession {
   }
 
   private onAssistantDelta(event: AgentEventPayloads['assistant.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     this.emit(assistantDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onThinkingDelta(event: AgentEventPayloads['thinking.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     this.emit(thinkingDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     const mapped = event as unknown as ToolCallStartedEvent;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const locations = toolCallLocations(mapped.name, mapped.args, mapped.display);
     if (locations !== undefined) {
       this.toolLocations.set(key, locations);
     }
-    if (mapped.name === 'Bash') {
-      const command = (mapped.args as { command?: unknown } | undefined)?.command;
-      if (typeof command === 'string') {
-        this.bashCallsAwaitingTerminal.set(key, command);
-      }
+    const command = mapped.name === 'Bash' ? (mapped.args as { command?: unknown } | undefined)?.command : undefined;
+    if (typeof command === 'string') {
+      this.bashCallsAwaitingTerminal.set(key, command);
     }
     const streamArgs = { args: stringifyArgs(mapped.args) };
     const lazyCreated = this.toolCallStreamArgs.has(key);
@@ -560,10 +614,14 @@ export class AcpSession {
         planFromDisplayBlock(this.sessionId, event.turnId, event.display as ToolInputDisplay),
       );
     }
+    if (typeof command === 'string' && command.length > 0) {
+      const index = this.terminalsAwaitingCall.findIndex((terminal) => terminal.shellCommand.endsWith(command));
+      const [terminal] = index < 0 ? [] : this.terminalsAwaitingCall.splice(index, 1);
+      if (terminal !== undefined) this.attachTerminal(key, terminal.terminalId);
+    }
   }
 
   private onToolCallDelta(event: AgentEventPayloads['tool.call.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     const mapped = event as unknown as ToolCallDeltaEvent;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const acc = this.toolCallStreamArgs.get(key);
@@ -576,8 +634,10 @@ export class AcpSession {
   }
 
   private onToolUpdated(event: AgentEventPayloads['tool.updated']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    if (event.output !== undefined && this.toolCallStreamArgs.has(key) && !this.terminalBackedCalls.has(key)) {
+      this.liveOutput.append(key, event.output.offset, event.output.text);
+    }
     const status = event.fields['status'];
     if (typeof status !== 'string' || status.length === 0 || this.toolStatuses.get(key) === status) return;
     this.toolStatuses.set(key, status);
@@ -586,8 +646,8 @@ export class AcpSession {
   }
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    this.liveOutput.end(key);
     this.toolStatuses.delete(key);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
@@ -617,18 +677,24 @@ export class AcpSession {
     if (event.sessionId !== this.sessionId) return;
     for (const [key, command] of this.bashCallsAwaitingTerminal) {
       if (command.length === 0 || !event.shellCommand.endsWith(command)) continue;
-      this.bashCallsAwaitingTerminal.delete(key);
-      this.terminalBackedCalls.set(key, event.terminalId);
-      this.emit({
-        sessionId: this.sessionId,
-        update: {
-          sessionUpdate: 'tool_call_update',
-          toolCallId: key,
-          content: [{ type: 'terminal', terminalId: event.terminalId }],
-        },
-      });
+      this.attachTerminal(key, event.terminalId);
       return;
     }
+    this.terminalsAwaitingCall.push(event);
+  }
+
+  private attachTerminal(key: string, terminalId: string): void {
+    this.liveOutput.end(key);
+    this.bashCallsAwaitingTerminal.delete(key);
+    this.terminalBackedCalls.set(key, terminalId);
+    this.emit({
+      sessionId: this.sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: key,
+        content: [{ type: 'terminal', terminalId }],
+      },
+    });
   }
 
   private onCompactionStarted(event: AgentEventPayloads['compaction.started']): void {
@@ -655,15 +721,32 @@ export class AcpSession {
   }
 
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
+    this.terminalsAwaitingCall.length = 0;
+    if (event.turnId === this.agentStartedTurnId) {
+      this.agentStartedTurnId = undefined;
+      void this.emitUsageUpdate();
+      return;
+    }
     const driver = this.driverFor(event.turnId);
     if (driver === undefined) return;
-    const error = event.error as { readonly code: string; readonly message?: string } | undefined;
+    const error = event.error as TurnEndError | undefined;
+    const answer =
+      event.reason === 'failed' && driver.cancelRequested === true
+        ? { stopReason: 'cancelled' as const }
+        : answerForTurnEnd(event.reason, error);
+    if ('error' in answer) {
+      log.warn('acp: turn failed', {
+        sessionId: this.sessionId,
+        code: error?.code,
+        error: error?.message,
+      });
+    }
     this.settleDriver(driver, () => {
-      if (event.reason === 'failed' && isAuthError(error)) {
-        driver.reject(RequestError.authRequired(undefined, error?.message));
+      if ('error' in answer) {
+        driver.reject(answer.error);
         return;
       }
-      driver.resolve({ stopReason: turnEndReasonToStopReason(event.reason, error) });
+      driver.resolve({ stopReason: answer.stopReason });
     });
     void this.emitUsageUpdate();
   }
@@ -717,9 +800,10 @@ export class AcpSession {
     }
     const driver = this.driver;
     if (driver === undefined || driver.settled) return;
+    driver.cancelRequested = true;
     const turnId = driver.turnId;
     if (turnId === undefined) {
-      driver.cancelRequested = true;
+      if (this.agentStartedTurnId !== undefined) return;
       void this.agent.cancel().catch((error) => {
         log.warn('acp: cancel (unaddressed) failed', {
           sessionId: this.sessionId,
@@ -794,12 +878,26 @@ export class AcpSession {
 
   async setMode(id: AcpModeId): Promise<void> {
     const { plan, permission } = acpModeToToggles(id);
-    if (plan) {
-      await this.agent.enterPlan();
-    } else {
-      await this.agent.cancelPlan();
+    let requestedMode: AcpModeId | undefined;
+    this.modeChangesInFlight += 1;
+    try {
+      if (plan) {
+        await this.agent.enterPlan();
+      } else {
+        await this.agent.cancelPlan();
+      }
+      await this.agent.setPermission(permission);
+      requestedMode = id;
+    } finally {
+      this.modeChangesInFlight -= 1;
+      const mode = this.readMode?.() ?? requestedMode;
+      if (mode !== undefined && (requestedMode !== undefined || mode !== this.currentModeId)) {
+        await this.publishMode(mode);
+      }
     }
-    await this.agent.setPermission(permission);
+  }
+
+  private async publishMode(id: AcpModeId): Promise<void> {
     this.currentModeId = id;
     this.emit(currentModeUpdateNotification(this.sessionId, id));
     await this.emitConfigOptionUpdate();

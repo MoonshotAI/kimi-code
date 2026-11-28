@@ -15,6 +15,7 @@ import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
+import { workDirToPin } from '#/session/workspaceContext/workspaceRoots';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -25,19 +26,21 @@ import {
   type SessionForkedEvent,
   type SessionWillCloseEvent,
   type SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
-import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceLease, type WorkspaceInstanceRef } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+} from '#/project/sessionLifecycle/sessionLifecycle';
+import type { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
+import { IProjectInstanceManager, type ProjectInstanceLease, type ProjectInstanceRef } from '#/project/projectInstance/projectInstanceManager';
 
 import {
   ISessionManager,
   type CreateManagedSessionOptions,
+  type MoveManagedSessionOptions,
   type UnguardedSessionLifecycle,
 } from './sessionManager';
+import { unlessProjectGone } from './sessionProject';
 
 interface SessionControllerEntry {
   readonly workspaceId: string;
-  readonly workspaceLease: WorkspaceInstanceLease;
+  readonly workspaceLease: ProjectInstanceLease;
   readonly generation: string;
   readonly controller: SessionLifecycleService;
   readonly subscriptions: DisposableStore;
@@ -72,7 +75,7 @@ export class SessionManager implements ISessionManager {
   readonly onDidForkSession = this.didForkEmitter.event;
 
   constructor(
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IProjectInstanceManager private readonly projects: IProjectInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
     @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
     @IEnvironmentService private readonly environments: IEnvironmentService,
@@ -93,14 +96,14 @@ export class SessionManager implements ISessionManager {
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
     const opened = await this.openCreation(options);
     try {
-      const effective = opened.environmentId === undefined && opened.environmentCwd === undefined
-        ? options
-        : { ...options, environmentId: opened.environmentId, environmentCwd: opened.environmentCwd };
+      const effective = {
+        ...options,
+        environmentId: opened.environmentId,
+        environmentCwd: opened.environmentCwd,
+        ensureMainAgent: options.ensureMainAgent === true || opened.environmentRequested,
+      };
       const create = async () => {
-        const entry = await this.controllerForWorkspace({
-          workspaceId: opened.workspaceId,
-          root: options.workDir,
-        });
+        const entry = await this.controllerForWorkspace({ workspaceId: opened.workspaceId });
         return this.runControllerOperation(entry, (controller) => controller.create(effective));
       };
       if (options.sessionId === undefined) return await create();
@@ -108,6 +111,49 @@ export class SessionManager implements ISessionManager {
     } finally {
       opened.lease.dispose();
     }
+  }
+
+  async move(options: MoveManagedSessionOptions): Promise<ISessionScopeHandle> {
+    await this.environments.ready;
+    await this.assertUsableWorkDir(options.workDir);
+    return this.serializeLifecycle(options.sessionId, async () => {
+      const entry = await this.controllerForSession(options.sessionId);
+      if (entry === undefined) {
+        throw new Error2(
+          ErrorCodes.SESSION_NOT_FOUND,
+          `session ${options.sessionId} does not exist`,
+        );
+      }
+      return this.runControllerOperation(entry, async (controller) => {
+        const targetLease = await this.projects.acquire({ cwd: options.workDir });
+        try {
+          if (targetLease.instance.id !== entry.workspaceId) {
+            throw new Error2(
+              ErrorCodes.REQUEST_INVALID,
+              `Directory "${options.workDir}" belongs to a different project`,
+              {
+                details: {
+                  sessionId: options.sessionId,
+                  workspaceId: entry.workspaceId,
+                  targetWorkspaceId: targetLease.instance.id,
+                },
+              },
+            );
+          }
+          const canonicalWorkDir = await this.hostFs
+            .realpath(options.workDir)
+            .catch(() => options.workDir);
+          const environmentCwd = workDirToPin(canonicalWorkDir, targetLease.instance.root);
+          return await controller.move({
+            sessionId: options.sessionId,
+            workDir: canonicalWorkDir,
+            environmentCwd,
+          });
+        } finally {
+          targetLease.dispose();
+        }
+      });
+    });
   }
 
   private async openCreation(options: CreateManagedSessionOptions) {
@@ -118,17 +164,16 @@ export class SessionManager implements ISessionManager {
     const environmentId = options.environmentId ?? declarations?.defaultId;
     const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
     if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
-    const lease = await this.workspaces.acquire(
-      options.workspaceId === undefined
-        ? { root: options.workDir }
-        : { workspaceId: options.workspaceId, root: options.workDir },
+    const lease = await this.projects.acquire(
+      options.workspaceId === undefined ? { cwd: options.workDir } : { workspaceId: options.workspaceId },
     );
     try {
       if (!remote) {
         return {
           workspaceId: lease.instance.id,
           environmentId,
-          environmentCwd: options.environmentCwd,
+          environmentCwd: options.environmentCwd ?? workDirToPin(options.workDir, lease.instance.root),
+          environmentRequested: options.environmentCwd !== undefined,
           lease,
         };
       }
@@ -154,6 +199,7 @@ export class SessionManager implements ISessionManager {
         workspaceId: lease.instance.id,
         environmentId,
         environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
+        environmentRequested: true,
         lease,
       };
     } catch (error) {
@@ -407,8 +453,8 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private async controllerForWorkspace(ref: WorkspaceInstanceRef): Promise<SessionControllerEntry> {
-    const workspaceLease = await this.workspaces.acquire(ref);
+  private async controllerForWorkspace(ref: ProjectInstanceRef): Promise<SessionControllerEntry> {
+    const workspaceLease = await this.projects.acquire(ref);
     try {
       if (this.disposed) throw new Error('session manager is disposed');
       const workspace = workspaceLease.instance;
@@ -507,7 +553,9 @@ export class SessionManager implements ISessionManager {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     await this.environments.ready;
-    return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });
+    return unlessProjectGone(
+      this.controllerForWorkspace({ workspaceId: summary.workspaceId, reviveFrom: summary.cwd }),
+    );
   }
 }
 

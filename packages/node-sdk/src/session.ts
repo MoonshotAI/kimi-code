@@ -91,21 +91,26 @@ export function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
 
 export class Session {
   readonly id: string;
-  readonly workDir: string;
+  private _workDir: string;
   summary?: SessionSummary | undefined;
   private resumeState: ResumedSessionState | undefined;
 
   private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
+  private staleReloadHandler: StaleReloadHandler | undefined;
   private closed = false;
 
   constructor(options: SessionOptions) {
     this.id = options.id;
-    this.workDir = options.workDir;
+    this._workDir = options.workDir;
     this.summary = options.summary;
     this.resumeState = options.resumeState ?? resumeStateFromSummary(options.summary);
     this.rpc = options.rpc;
     this.onClose = options.onClose;
+  }
+
+  get workDir(): string {
+    return this._workDir;
   }
 
   /** True once {@link close} began — the session may still be closing in the engine. */
@@ -124,6 +129,19 @@ export class Session {
       sessionId: this.id,
       forcePluginSessionStartReminder: options?.forcePluginSessionStartReminder,
     });
+    this._workDir = summary.workDir;
+    this.summary = summary;
+    this.resumeState = resumeStateFromSummary(summary);
+    return summary;
+  }
+
+  async moveSession(workDir: string): Promise<ResumedSessionSummary> {
+    this.ensureOpen();
+    const summary = await this.rpc.moveSession({
+      sessionId: this.id,
+      workDir,
+    });
+    this._workDir = summary.workDir;
     this.summary = summary;
     this.resumeState = resumeStateFromSummary(summary);
     return summary;
@@ -156,14 +174,12 @@ export class Session {
    */
   setStaleReloadHandler(handler: StaleReloadHandler | undefined): void {
     this.ensureOpen();
-    if (handler === undefined) {
-      this.rpc.setStaleReloadHandler(this.id, undefined);
-      return;
-    }
+    this.staleReloadHandler = handler;
     this.rpc.setStaleReloadHandler(this.id, async (summary) => {
+      this._workDir = summary.workDir;
       this.summary = summary;
       this.resumeState = resumeStateFromSummary(summary);
-      await handler();
+      await this.staleReloadHandler?.();
     });
   }
 

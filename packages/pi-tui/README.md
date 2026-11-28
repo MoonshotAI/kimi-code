@@ -248,18 +248,20 @@ All components implement:
 
 ```typescript
 interface Component {
-  render(width: number): string[];
+  render(width: number): readonly string[];
   handleInput?(data: string): void;
   handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
+  capturesViewportInput?: boolean;
   invalidate(): void;
 }
 ```
 
 | Method | Description |
 |--------|-------------|
-| `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
+| `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. The result is read-only: components, including `Container`, `Box`, `Text`, and `Markdown`, return the same cached array while nothing changed. Copy it before modifying it, for example `[...super.render(width)]`. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
 | `handleMouse?(event)` | Called by `TuiAltScreen` for normalized pointer input targeted at the component. |
+| `capturesViewportInput?` | If true while the component has focus, `TuiAltScreen` passes its viewport scrolling and prompt-jump keys (`tui.altScreen.*` except search) to it instead of scrolling the viewport, as it does for a focused overlay. Set by `SelectList`, `SettingsList`, and `Editor` while autocomplete is open, so PageUp/PageDown move the selection. Only the focused component is checked: a wrapper that forwards input to a list must expose the list's value itself. Use `getSelectPageIndex(keybindings, data, selectedIndex, itemCount, pageSize)` to compute the new selection. |
 | `invalidate()` | Required. Clear any cached render state so the next `render()` starts from scratch. Components without cached render state can use an empty implementation. |
 
 #### Immutable render results
@@ -307,7 +309,7 @@ const collapsible = new MouseRegion(content, (event) => {
 });
 ```
 
-`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, and `ScrollView` layouts use the alternate-screen layout frame directly.
+`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, `Box`, and `ScrollView` layouts use the alternate-screen layout frame directly.
 
 ### Focusable Interface (IME Support)
 
@@ -379,16 +381,18 @@ container.removeChild(component);
 
 ### Box
 
-Container that applies padding and background color to all children.
+Container that frames children with optional borders, title, and padding, and participates directly in `TuiAltScreen` viewport layout.
 
 ```typescript
-const box = new Box(
-  1,                              // paddingX (default: 1)
-  1,                              // paddingY (default: 1)
-  (text) => chalk.bgGray(text)   // optional background function
-);
-box.addChild(new Text("Content"));
-box.setBgFn((text) => chalk.bgBlue(text));  // Change background dynamically
+const box = new Box({
+  border: true,
+  borderStyle: "rounded",
+  borderColor: (text) => chalk.cyan(text),
+  title: " Notes ",
+  padding: { left: 1, right: 1 },
+});
+box.addChild(new Text("Content", 0, 0));
+box.setTitle(" Updated ");
 ```
 
 ### Text

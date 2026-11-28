@@ -1,12 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService } from '@moonshot-ai/agent-core-v2';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { Error2, ErrorCodes, IEnvironmentService, ISessionManager, IProjectInstanceManager, ProjectFsService, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { IProjectPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/projectPermissionRules';
+import { IProjectPersistence } from '@moonshot-ai/agent-core-v2/app/project/projectPersistence';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environment/environment';
+import { createGitRepository, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { sendMappedError } from '../src/routes/fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +19,7 @@ import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 import { fakeModelCatalog } from './helpers/fakeModelCatalog';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 interface Envelope<T> {
   code: number;
@@ -40,16 +45,18 @@ describe('server-v2 /api/v1 fs routes', () => {
   let home: string | undefined;
   let work: string | undefined;
   let base: string;
+  const previousKimiCodeHome = process.env['KIMI_CODE_HOME'];
 
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-home-'));
+    process.env['KIMI_CODE_HOME'] = home;
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelCatalog, fakeModelCatalog()]],
+      seeds: [[IProviderCatalogService, fakeModelCatalog()]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -74,6 +81,8 @@ describe('server-v2 /api/v1 fs routes', () => {
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
+    if (previousKimiCodeHome === undefined) delete process.env['KIMI_CODE_HOME'];
+    else process.env['KIMI_CODE_HOME'] = previousKimiCodeHome;
   });
 
   function git(cwd: string, ...args: string[]): void {
@@ -81,12 +90,14 @@ describe('server-v2 /api/v1 fs routes', () => {
   }
 
   function hasFd(): boolean {
-    try {
-      execFileSync('fd', ['--version'], { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
+    return ['fd', 'fdfind'].some((binary) => {
+      try {
+        execFileSync(binary, ['--version'], { stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    });
   }
 
   async function createWorkspaceSession(root: string, additionalDirs: string[]): Promise<string> {
@@ -718,6 +729,126 @@ describe('server-v2 /api/v1 fs routes', () => {
     }
   }, 20000);
 
+  it('serves project additional dirs but not the main checkout to a session pinned in a worktree', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-worktree-'));
+    try {
+      const main = join(lab, 'app');
+      const worktree = join(lab, 'app-fix');
+      const extra = join(lab, 'shared');
+      const files = { 'tracked.txt': 'one\n' };
+      await createGitWorktree({ main, worktree }, { files });
+      await createGitRepository(extra, { files });
+      await writeFile(join(extra, 'tracked.txt'), 'one\ntwo\n');
+      const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+      const first = (await (await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cwd: main }),
+      } as never)).json()) as Envelope<{ workspace_id: string }>;
+      expect(first.code).toBe(0);
+      const workspaceId = first.data.workspace_id;
+      const patched = (await (await fetch(`${base}/api/v1/workspaces/${workspaceId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ additional_dirs: [extra] }),
+      } as never)).json()) as Envelope<unknown>;
+      expect(patched.code).toBe(0);
+      const pinned = (await (await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ workspace_id: workspaceId, environment_id: 'local', environment_cwd: worktree }),
+      } as never)).json()) as Envelope<{ id: string }>;
+      expect(pinned.code).toBe(0);
+      const id = pinned.data.id;
+
+      const extraList = await postFs<{ items: FsEntryWire[] }>(id, 'list', { path: extra });
+      const extraStatus = await postFs<{ results: Record<string, { entries: Record<string, string> }> }>(
+        id,
+        'git_status:batch',
+        { roots: [extra], include_pull_request: false },
+      );
+      const mainList = await postFs<null>(id, 'list', { path: main });
+      const mainStatus = await postFs<{ results: Record<string, unknown>; errors: Record<string, { code: number }> }>(
+        id,
+        'git_status:batch',
+        { roots: [main], include_pull_request: false },
+      );
+      const ownList = await postFs<{ items: FsEntryWire[] }>(id, 'list', {});
+
+      expect(extraList.code).toBe(0);
+      expect(extraList.data.items.map((entry) => entry.name)).toContain('tracked.txt');
+      expect(extraStatus.code).toBe(0);
+      expect(extraStatus.data.results[extra]?.entries).toEqual({ 'tracked.txt': 'modified' });
+      expect(mainList.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+      expect(mainStatus.data.results).toEqual({});
+      expect(mainStatus.data.errors[main]?.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+      expect(ownList.code).toBe(0);
+      expect(ownList.data.items.map((entry) => entry.name)).toContain('tracked.txt');
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  it('reads and writes project permission rules in the checkout of the session working directory', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-rules-'));
+    try {
+      const main = join(lab, 'app');
+      const worktree = join(lab, 'app-fix');
+      const other = join(lab, 'other');
+      const shared = join(other, 'shared');
+      const files = { 'tracked.txt': 'one\n' };
+      await createGitWorktree({ main, worktree }, { files });
+      await createGitRepository(other, { files });
+      await mkdir(shared, { recursive: true });
+      for (const [root, pattern] of [[main, 'Bash(main)'], [worktree, 'Bash(worktree)'], [other, 'Bash(other)']] as const) {
+        await mkdir(join(root, '.kimi-code'), { recursive: true });
+        await writeFile(
+          join(root, '.kimi-code', 'local.toml'),
+          `[permission]\nrules = [{ decision = "deny", pattern = "${pattern}" }]\n`,
+        );
+      }
+      const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+      const post = async <T>(path: string, body: unknown, method = 'POST'): Promise<Envelope<T>> =>
+        (await (await fetch(`${base}/api/v1${path}`, { method, headers, body: JSON.stringify(body) } as never)).json()) as Envelope<T>;
+      const first = await post<{ workspace_id: string }>('/sessions', { cwd: main });
+      const workspaceId = first.data.workspace_id;
+      expect((await post(`/workspaces/${workspaceId}`, { additional_dirs: [shared] }, 'PATCH')).code).toBe(0);
+      expect((await post(`/workspaces/${workspaceId}/trust`, {})).code).toBe(0);
+      const rulesOf = async (body: Record<string, unknown>) => {
+        const created = await post<{ id: string }>('/sessions', { workspace_id: workspaceId, ...body });
+        expect(created.code).toBe(0);
+        const rules = getLiveSessionById((server as RunningServer).core.accessor, created.data.id)!
+          .accessor.get(IProjectPermissionRulesService);
+        await rules.ready;
+        return rules;
+      };
+
+      expect((await rulesOf({})).rules.map((rule) => rule.pattern)).toEqual(['Bash(main)']);
+      expect(
+        (await rulesOf({ environment_id: 'local', environment_cwd: worktree })).rules.map((rule) => rule.pattern),
+      ).toEqual(['Bash(worktree)']);
+      expect(
+        (await rulesOf({ environment_id: 'local', environment_cwd: other })).rules.map((rule) => rule.pattern),
+      ).toEqual(['Bash(other)']);
+      const sharedRules = await rulesOf({ environment_id: 'local', environment_cwd: shared });
+      expect(sharedRules.rules.map((rule) => rule.pattern)).toEqual(['Bash(other)']);
+
+      await sharedRules.appendRules([{ decision: 'allow', scope: 'project', pattern: 'Read' }]);
+      expect(sharedRules.rules.map((rule) => rule.pattern)).toEqual(['Bash(other)', 'Read']);
+      expect(await readFile(join(other, '.kimi-code', 'local.toml'), 'utf8')).toContain('Read');
+      expect(await readFile(join(main, '.kimi-code', 'local.toml'), 'utf8')).not.toContain('Read');
+
+      const worktreeProject = await post<{ id: string }>('/workspaces', { root: worktree });
+      expect((await post(`/workspaces/${worktreeProject.data.id}/trust`, {})).code).toBe(0);
+      expect(
+        (await rulesOf({ workspace_id: worktreeProject.data.id, environment_id: 'local', environment_cwd: main })).rules
+          .map((rule) => rule.pattern),
+      ).toEqual(['Bash(main)']);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  }, 30000);
+
   it('rejects an unknown action with VALIDATION_FAILED', async () => {
     const id = await createSession();
     const body = await postFs<null>(id, 'bogus', {});
@@ -1162,7 +1293,7 @@ describe('server-v2 /api/v1 fs routes', () => {
 
     const previewItem = { path: 'preview.ts', name: 'preview.ts', kind: 'file' as const, score: 1, match_positions: [] };
     const finalItem = { path: 'epsilon.ts', name: 'epsilon.ts', kind: 'file' as const, score: 1, match_positions: [0] };
-    const streamSpy = vi.spyOn(WorkspaceFsService.prototype, 'suggestStream');
+    const streamSpy = vi.spyOn(ProjectFsService.prototype, 'suggestStream');
     try {
       streamSpy.mockImplementation(async function* () {
         yield { phase: 'preview' as const, response: { items: [previewItem], truncated: true } };
@@ -1387,6 +1518,121 @@ describe('server-v2 /api/v1 fs routes', () => {
     return body.data.items;
   }
 
+  it('workspace fs routes serve a path ref without registering a project or opening a project instance', async () => {
+    await mkdir(join(work!, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(work!, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { local: { command: 'node', args: ['-e', ''] } } }),
+    );
+    await writeFile(join(work!, 'lambda.ts'), '');
+    const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+    const managed = (await (await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ root: work }),
+    } as never)).json()) as Envelope<{ id: string }>;
+    expect(managed.code).toBe(0);
+    const trusted = (await (await fetch(`${base}/api/v1/workspaces/${managed.data.id}/trust`, {
+      method: 'POST',
+      headers,
+      body: '{}',
+    } as never)).json()) as Envelope<unknown>;
+    expect(trusted.code).toBe(0);
+    const before = await listWorkspaces();
+    const instances = server!.core.accessor.get(IProjectInstanceManager);
+    const openBefore = instances.list().map((instance) => instance.id);
+
+    const listed = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: work });
+    const searched = await postWorkspaceSearch<{ items: { path: string }[] }>({ workspace: work, query: 'lambda' });
+    const suggested = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({ workspace: work, query: 'lambda' });
+    const sessionSearch = await postFs<{ items: { path: string }[] }>(encodeURIComponent(work!), 'search', { query: 'lambda' });
+
+    expect(listed.code).toBe(0);
+    expect(listed.data.items.map((item) => item.name)).toContain('lambda.ts');
+    expect(searched.data.items.map((item) => item.path)).toContain('lambda.ts');
+    expect(suggested.data.items.map((item) => item.path)).toContain('lambda.ts');
+    expect(sessionSearch.data.items.map((item) => item.path)).toContain('lambda.ts');
+    expect(await listWorkspaces()).toEqual(before);
+    expect(instances.list().map((instance) => instance.id)).toEqual(openBefore);
+  });
+
+  it('workspace fs routes keep the additional dirs of the implicit project whose primary is the path ref', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-path-ref-extra-'));
+    try {
+      await writeFile(join(extra, 'extra-file.ts'), '');
+      await mkdir(join(work!, 'nested'));
+      const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+      const created = (await (await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cwd: work }),
+      } as never)).json()) as Envelope<{ workspace_id: string }>;
+      expect(created.code).toBe(0);
+      const patched = (await (await fetch(`${base}/api/v1/workspaces/${created.data.workspace_id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ additional_dirs: [extra] }),
+      } as never)).json()) as Envelope<unknown>;
+      expect(patched.code).toBe(0);
+      const before = await listWorkspaces();
+
+      const fromPrimary = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: work, path: extra });
+      const fromSubdir = await postWorkspaceList<null>({ workspace: join(work!, 'nested'), path: extra });
+
+      expect(fromPrimary.code).toBe(0);
+      expect(fromPrimary.data.items.map((item) => item.name)).toEqual(['extra-file.ts']);
+      expect(fromSubdir.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+      expect(await listWorkspaces()).toEqual(before);
+    } finally {
+      await rm(extra, { recursive: true, force: true });
+    }
+  });
+
+  it('workspace fs routes keep the additional dirs of a worktree whose own implicit project holds no sessions', async () => {
+    const lab = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-path-ref-worktree-')));
+    try {
+      const { worktree } = await createGitWorktree({ main: join(lab, 'app'), worktree: join(lab, 'app-fix') });
+      const extra = join(lab, 'shared');
+      await mkdir(extra);
+      await writeFile(join(extra, 'extra-file.ts'), '');
+      await server!.core.accessor.get(IProjectPersistence).update((catalog) => ({
+        ...catalog,
+        workspaces: [
+          ...catalog.workspaces,
+          { id: encodeWorkDirKey(worktree), root: worktree, name: 'app-fix', kind: 'implicit', additionalDirs: [extra], createdAt: 0, lastOpenedAt: 0 },
+        ],
+      }));
+
+      const listed = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: worktree, path: extra });
+
+      expect(listed.code).toBe(0);
+      expect(listed.data.items.map((item) => item.name)).toEqual(['extra-file.ts']);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('workspace fs routes keep the errors of a path ref that is a file or does not exist', async () => {
+    await writeFile(join(work!, 'plain.txt'), '');
+    const before = await listWorkspaces();
+
+    const file = await postWorkspaceList<null>({ workspace: join(work!, 'plain.txt') });
+    const missing = await postWorkspaceList<null>({ workspace: join(work!, 'missing') });
+
+    expect(file.code).toBe(ErrorCode.WORKSPACE_NOT_FOUND);
+    expect(missing.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+    expect(await listWorkspaces()).toEqual(before);
+  });
+
+  it('reports a missing path ref under a symlinked directory as not found', async () => {
+    await mkdir(join(work!, 'real'));
+    await symlink(join(work!, 'real'), join(work!, 'link'), 'dir');
+
+    const missing = await postWorkspaceList<null>({ workspace: join(work!, 'link', 'missing') });
+
+    expect(missing.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+  });
+
   it('fs:suggest serves an unregistered root without touching the workspace catalog', async () => {
     await writeFile(join(work!, 'kappa.ts'), '');
     const body = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
@@ -1400,7 +1646,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect((await listWorkspaces()).some((w) => workAliases.has(w.root))).toBe(false);
     expect(
       server!.core.accessor
-        .get(IWorkspaceInstanceManager)
+        .get(IProjectInstanceManager)
         .list()
         .some((w) => workAliases.has(w.root)),
     ).toBe(false);

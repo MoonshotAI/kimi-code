@@ -1,23 +1,23 @@
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
-import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
-import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { IProjectMcpService } from '#/project/projectMcp/projectMcp';
+import { ProjectMcpService } from '#/project/projectMcp/projectMcpService';
+import type { McpDirs } from '#/project/projectMcpConfig/projectMcpConfig';
+import { ProjectMcpConfigService } from '#/project/projectMcpConfig/projectMcpConfigService';
+import type { IProjectTrust } from '#/project/projectTrust/projectTrust';
 
 import type { ProgramDependencies } from './programDependencies';
 
 export interface ProgramMcpLease {
-  readonly service: IWorkspaceMcpService;
+  readonly service: IProjectMcpService;
   dispose(): void;
 }
 
 interface McpSet {
-  readonly config: WorkspaceMcpConfigService;
-  readonly service: WorkspaceMcpService;
+  readonly config: ProjectMcpConfigService;
+  readonly service: ProjectMcpService;
   references: number;
 }
 
@@ -28,11 +28,11 @@ export class ProgramMcp {
 
   constructor(
     private readonly environments: IEnvironmentService,
-    private readonly context: IWorkspaceContext,
+    private readonly context: IProjectContext,
     private readonly dependencies: ProgramDependencies,
     private readonly hostFs: IHostFileSystem,
-    private readonly dirs: IWorkspaceDirs,
-    private readonly trust: IWorkspaceTrust,
+    private readonly dirs: McpDirs,
+    private readonly trust: IProjectTrust,
   ) {}
 
   async acquire(): Promise<ProgramMcpLease> {
@@ -63,9 +63,9 @@ export class ProgramMcp {
   }
 
   private open(): McpSet {
-    const { bootstrap, config, configStore, identity, log, oauth, plugins, sessionManager, telemetry } = this.dependencies;
-    const mcpConfig = new WorkspaceMcpConfigService(this.dirs, bootstrap, plugins, log, config, this.hostFs, this.trust, configStore, oauth);
-    const service = new WorkspaceMcpService(this.context, this.dirs, this.environments, mcpConfig, oauth, log, telemetry, identity, sessionManager);
+    const { bootstrap, config, configStore, identity, log, oauth, plugins, telemetry } = this.dependencies;
+    const mcpConfig = new ProjectMcpConfigService(this.dirs, bootstrap, plugins, log, config, this.hostFs, this.trust, configStore, oauth);
+    const service = new ProjectMcpService(this.dirs, this.environments, mcpConfig, oauth, log, telemetry, identity);
     return { config: mcpConfig, service, references: 0 };
   }
 

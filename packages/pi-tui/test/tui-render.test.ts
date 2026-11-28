@@ -486,6 +486,40 @@ describe("TUI debug logging", () => {
 });
 
 describe("TUI bounded render output", () => {
+	it("does not write duplicate cursor markers to the terminal", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Regression for #9257: terminals may render the payload of a leaked APC marker.
+		component.lines = [`\x1b[31m界🙂\x1b[0m${CURSOR_MARKER} world${CURSOR_MARKER}`];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(output.includes("\x1b[31m界🙂\x1b[0m world"), "visible styled text should be preserved");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		assert.ok(output.includes("\x1b[5G"), "the first marker should keep the cursor at visible column 4");
+	});
+
+	it("does not write cursor markers from other visible or scrollback lines", () => {
+		const terminal = new BoundedWriteTerminal();
+		terminal.rows = 2;
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Regression for #9257: cursor extraction must not leave markers on other rendered lines.
+		component.lines = [`offscreen${CURSOR_MARKER}`, `a${CURSOR_MARKER}`, `visible-b${CURSOR_MARKER}`];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(output.includes("offscreen"), "full renders should preserve scrollback content");
+		assert.ok(output.includes("a"), "full renders should preserve other visible lines");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		assert.ok(output.includes("\x1b[10G"), "the bottom visible marker should determine the cursor column");
+	});
+
 	it("splits a large full render without changing its output", () => {
 		const terminal = new BoundedWriteTerminal();
 		const tui = new TuiMainScreen(terminal);
@@ -527,6 +561,24 @@ describe("TUI bounded render output", () => {
 		assert.ok(output.startsWith("\x1b[?2026h"));
 		assert.ok(output.endsWith("\x1b[?2026l"));
 		assert.ok(!output.includes("\x1b[2J"), "the update should stay on the differential render path");
+	});
+});
+
+describe("TUI OSC 133 markers", () => {
+	it("does not write OSC 133 prompt markers to the terminal", () => {
+		// Terminals read 133;A as a new shell prompt and drop the OSC 7501 program status.
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["\x1b]133;A\x07prompt", "\x1b]133;B\x07\x1b]133;C\x07output"];
+		tui.renderNow();
+		component.lines = [...component.lines, "\x1b]133;A\x1b\\reply", "\x1b]133;B\x1b\\\x1b]133;C\x1b\\done"];
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(!output.includes("\x1b]133;"), "regular mode must not emit OSC 133 markers");
+		for (const text of ["prompt", "output", "reply", "done"]) assert.ok(output.includes(text));
 	});
 });
 
@@ -1518,7 +1570,7 @@ describe("Box structured render cache", () => {
 		let lines: TuiRenderLine[] = [
 			{ text: "content", softWrap: [{ logicalLineId: 1, start: 0, end: 7 }] },
 		];
-		const box = new Box(1, 0);
+		const box = new Box({ padding: { left: 1 } });
 		box.addChild(createComponent(() => lines));
 		const first = box[RENDER_LINES](80);
 		const origin = first[0]?.softWrap?.[0]?.origin;
@@ -1541,7 +1593,7 @@ describe("Box structured render cache", () => {
 				selectionExclusions: [{ start: 1, end: 2 }],
 			},
 		];
-		const box = new Box(2, 0);
+		const box = new Box({ padding: { left: 2 } });
 		box.addChild(createComponent(() => lines));
 
 		const rendered = box[RENDER_LINES](80);
@@ -1555,7 +1607,7 @@ describe("Box structured render cache", () => {
 
 	it("refreshes and removes selection exclusions when text is unchanged", () => {
 		let lines: TuiRenderLine[] = [{ text: "content", selectionExclusions: [{ start: 1, end: 2 }] }];
-		const box = new Box(1, 0);
+		const box = new Box({ padding: { left: 1 } });
 		box.addChild(createComponent(() => lines));
 		const first = box[RENDER_LINES](80);
 		assert.deepStrictEqual(first[0]?.selectionExclusions, [
@@ -1580,7 +1632,7 @@ describe("Box structured render cache", () => {
 
 	it("refreshes row count when existing text is unchanged", () => {
 		let lines: TuiRenderLine[] = [{ text: "content" }];
-		const box = new Box(1, 0);
+		const box = new Box({ padding: { left: 1 } });
 		box.addChild(createComponent(() => lines));
 		const first = box[RENDER_LINES](80);
 
@@ -1597,7 +1649,7 @@ describe("Box structured render cache", () => {
 			selectionExclusions: [{ start: 1, end: 2 }],
 		};
 		let lines = [line];
-		const box = new Box(1, 0);
+		const box = new Box({ padding: { left: 1 } });
 		box.addChild(createComponent(() => lines));
 		const first = box[RENDER_LINES](80);
 

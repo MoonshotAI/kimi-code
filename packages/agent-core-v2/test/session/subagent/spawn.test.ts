@@ -23,7 +23,7 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -41,7 +41,7 @@ import {
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -51,6 +51,7 @@ import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { StubConfigService } from '../../stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const CALLER_ID = 'main';
 
@@ -210,7 +211,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       inspect: (name: string) =>
         profiles.some((profile) => profile.name === name) ? { sourceId: 'builtin' } : undefined,
     } as unknown as ISessionAgentProfileCatalog);
-    ix.stub(IModelCatalog, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
       get: (alias: string) => {
         if (!modelIds.has(alias)) {
@@ -222,7 +223,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         }
         return { id: alias, ...modelMeta.get(alias) } as Model;
       },
-    } as unknown as IModelCatalog);
+    } as unknown as IProviderCatalogService);
     ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo', workspaceId: 'w1' } as unknown as ISessionContext);
     ix.stub(ILogService, stubLog());
     ix.stub(IEnvironmentService, new EnvironmentRegistry() as unknown as IEnvironmentService);

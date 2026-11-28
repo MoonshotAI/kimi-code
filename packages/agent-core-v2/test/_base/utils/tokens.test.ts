@@ -5,7 +5,7 @@ import {
   estimateTokensForContentPart,
   estimateTokensForMessage,
   MEDIA_TOKEN_ESTIMATE,
-} from '#/llm-adapter/contract/tokens';
+} from '#/session/tokenCounting/tokens';
 
 describe('token estimates for media content parts', () => {
   const imagePart: ContentPart = {

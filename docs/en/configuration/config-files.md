@@ -380,14 +380,15 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `startup_timeout_ms` | `integer` | `30000` (30 seconds) | Global default connection (startup + tool discovery) timeout in milliseconds for all MCP servers; a per-server `startupTimeoutMs` in `mcp.json` wins |
+| `startup_wait_ms` | `integer` | `2000` (2 seconds) | How long session initialization waits in milliseconds for initial MCP discovery before starting with the tools already available; pending servers keep connecting in the background without being terminated. `0` skips the wait; accepts `0` to `2147483647` |
 | `tool_timeout_ms` | `integer` | `60000` (60 seconds) | Global default single tool-call timeout in milliseconds for all MCP servers; a per-server `toolTimeoutMs` in `mcp.json` wins |
-| `default_deferred` | `boolean` | `false` | Global default for [loading tools on demand](../customization/mcp.md#loading-tools-on-demand): when `true`, every MCP server's tools load on demand unless the server opts out; a per-server `deferred` field in `mcp.json` wins |
-| `reconnect_initial_delay_ms` | `integer` | `5000` (5 seconds) | Initial delay in milliseconds before the first automatic reconnect attempt for a workspace-level MCP server that failed to connect or dropped unexpectedly; the delay doubles after each failed attempt |
-| `reconnect_max_delay_ms` | `integer` | `300000` (5 minutes) | Cap in milliseconds for the automatic reconnect backoff delay of workspace-level MCP servers |
+| `default_deferred` | `boolean` | `true` | Global default for [loading tools on demand](../customization/mcp.md#loading-tools-on-demand): every MCP server's tools load on demand unless the server sets `deferred: false` in `mcp.json`, which always wins |
+| `reconnect_initial_delay_ms` | `integer` | `5000` (5 seconds) | Initial delay in milliseconds before the first automatic reconnect attempt for an MCP server that is retrying a connection; the delay doubles after each failed attempt |
+| `reconnect_max_delay_ms` | `integer` | `300000` (5 minutes) | Cap in milliseconds for the automatic reconnect backoff delay of MCP servers |
 
-`startup_timeout_ms` and `tool_timeout_ms` can be overridden by the `KIMI_MCP_STARTUP_TIMEOUT_MS` and `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables respectively, which take higher priority than `config.toml`. See [MCP](../customization/mcp.md) for the full MCP server configuration.
+`startup_timeout_ms`, `startup_wait_ms`, and `tool_timeout_ms` can be overridden by the `KIMI_MCP_STARTUP_TIMEOUT_MS`, `KIMI_MCP_STARTUP_WAIT_MS`, and `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables respectively, which take higher priority than `config.toml`. See [MCP](../customization/mcp.md) for the full MCP server configuration.
 
-`reconnect_initial_delay_ms` and `reconnect_max_delay_ms` can likewise be overridden by the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` and `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. Automatic reconnect applies only to workspace-level MCP servers and stops for permanent failures (unknown command, invalid configuration, rejected static credentials); see [MCP](../customization/mcp.md).
+`reconnect_initial_delay_ms` and `reconnect_max_delay_ms` can likewise be overridden by the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` and `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. Automatic reconnect applies to HTTP/SSE startup failures and to unexpected drops of established connections; stdio servers that fail their initial startup stay `failed` until manually reconnected. See [MCP](../customization/mcp.md).
 
 ## `identity`
 
@@ -671,7 +672,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
-The deprecated `copy_on_select` field is still read when `cursor_copy_mode` is unset: `true` maps to `"immediate"` and `false` to `"off"`. Existing configurations can migrate using that mapping; saved configurations use `cursor_copy_mode`.
+The deprecated `copy_on_select` field is still read when `cursor_copy_mode` is unset: `true` maps to `"immediate"` and `false` to `"off"`. Existing configurations can migrate using that mapping; saved configurations use `cursor_copy_mode`. The top-level `wheel_scroll_lines` field is also read when `[mouse].wheel_scroll_lines` is unset; saved configurations use the `[mouse]` table.
 
 Fullscreen selection copy rejoins rows created only by width wrapping and preserves original newlines. Spaces collapsed at wrap points are restored, so a long logical line pastes as one line. Triple-clicking selects the entire logical line across automatic wraps. Message decoration columns, such as status bullets and their continuation indentation, are excluded from both the selection and copied text.
 
@@ -743,7 +744,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
-Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the project in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 

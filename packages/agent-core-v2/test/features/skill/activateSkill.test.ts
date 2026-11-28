@@ -5,9 +5,18 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { PromptCompleted, PromptStarted, PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+
+import { say } from '@moonshot-ai/testkit/model';
 
 import { stubSkill } from './catalog/stubs';
-import { createTestAgent, skillServices, type TestAgentContext } from '../../harness';
+import {
+  createTestAgent,
+  skillServices,
+  testkitAgentFixtures,
+  type TestAgentContext,
+  type TestkitAgentFixtures,
+} from '../../harness';
 
 describe('activateSkill', () => {
   let ctx: TestAgentContext;
@@ -475,5 +484,48 @@ describe('promptWithSkills', () => {
     });
     expect(reused).toEqual({ turn_id: 1 });
     await ctx.untilTurnEnd();
+  });
+});
+
+describe('skill session title metadata', () => {
+  const catalog = new InMemorySkillCatalog();
+  catalog.register(stubSkill('commit', { content: '# Commit body' }));
+  catalog.register(stubSkill('review', { content: '# Review body' }));
+  catalog.register(stubSkill('security', { content: '# Security body' }));
+  const testWithSkills = it.extend<TestkitAgentFixtures>(
+    testkitAgentFixtures(skillServices(catalog)),
+  );
+
+  testWithSkills('writes a non-empty initial title when the activation display text is empty', async ({ agent, model }) => {
+    model.script(say('committed'));
+
+    await agent.rpc.activateSkill({
+      name: 'commit',
+      args: '-m fix',
+      clientMetadata: [{ display_text: '' }],
+    });
+    await agent.untilTurnEnd();
+
+    await expect(agent.get(ISessionMetadata).read()).resolves.toMatchObject({
+      title: '/commit -m fix',
+      lastPrompt: '/commit -m fix',
+      titleKind: 'replaceable',
+    });
+  });
+
+  testWithSkills('writes skill labels as the initial title when the bundled prompt has no usable text', async ({ agent, model }) => {
+    model.script(say('done'));
+
+    await agent.rpc.promptWithSkills({
+      input: [{ type: 'text', text: '   ' }],
+      skills: [{ name: 'review', args: 'src' }, { name: 'security' }],
+    });
+    await agent.untilTurnEnd();
+
+    await expect(agent.get(ISessionMetadata).read()).resolves.toMatchObject({
+      title: '/review src /security',
+      lastPrompt: '/review src /security',
+      titleKind: 'replaceable',
+    });
   });
 });

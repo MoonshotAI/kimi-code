@@ -30,7 +30,7 @@ export function shouldRenderWallTime(toolName: string): boolean {
 }
 
 export function renderToolResultForModel(result: RenderableToolResult): ContentPart[] {
-  const rendered = renderStatus(result);
+  const rendered = renderStatus({ ...result, output: outputWithNote(result) });
   if (result.durationMs !== undefined) {
     const header = `Wall time: ${(result.durationMs / 1000).toFixed(3)} seconds`;
     const first = rendered[0];
@@ -40,12 +40,14 @@ export function renderToolResultForModel(result: RenderableToolResult): ContentP
       rendered.unshift(textPart(header));
     }
   }
-  if (result.note === undefined || result.note.length === 0) return rendered;
-  const only = rendered[0];
-  if (rendered.length === 1 && only?.type === 'text') {
-    return [textPart(only.text + '\n' + result.note)];
-  }
-  return [...rendered, textPart(result.note)];
+  return rendered;
+}
+
+function outputWithNote({ output, note }: RenderableToolResult): RenderableToolResult['output'] {
+  if (note === undefined || note.length === 0) return output;
+  const parts = typeof output === 'string' ? [textPart(output)] : output;
+  const empty = parts.every((part) => part.type === 'text' && part.text.length === 0);
+  return [...(empty ? [textPart(TOOL_OUTPUT_EMPTY_TEXT)] : parts), textPart(note)];
 }
 
 function renderStatus(result: RenderableToolResult): ContentPart[] {

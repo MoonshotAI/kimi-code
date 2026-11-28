@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import type { ContentPart } from '#/llm/message';
+import { isPromiseLike } from '#/hook/result';
 import { abortedToolOutput, isUserCancellation } from '#/utils/abort';
 import { clock } from '#/utils/clock';
 import { log, type LogContext } from '#/utils/log';
@@ -331,7 +332,8 @@ class CallControl<TContext> {
       if (tool === undefined) {
         throw new ToolStop(rejected('resolve', `Tool "${this.call.name}" not found`, undefined, 'resolve'));
       }
-      this.decideSync('validate', (ctx) => this.host.hook?.validating?.(ctx));
+      const validating = this.decide('validate', (ctx) => this.host.hook?.validating?.(ctx));
+      if (isPromiseLike(validating)) await validating;
       const synthetic = await this.prepare(tool);
       if (synthetic !== undefined) return this.returned(synthetic);
       if (tool.execute === undefined) {
@@ -392,39 +394,25 @@ class CallControl<TContext> {
     }
   }
 
-  private async decide<T extends ToolDecision | ToolStartingDecision>(
+  private decide<T extends ToolDecision | ToolStartingDecision>(
     phase: ToolPhase,
     decider: (
       context: ToolDecisionContext<unknown, TContext, any>,
     ) => T | void | Promise<T | void>,
-  ): Promise<T | void> {
+  ): T | void | Promise<T | void> {
     this.enter(phase);
-    const decision = await decider(this.decisionContext());
-    this.signal.throwIfAborted();
-    if (decision === undefined) return;
-    if ('reject' in decision) {
-      log.info({
-        ...this.logContext('tool.rejected'),
-        reason: decision.reject,
-        synthetic: decision.result !== undefined,
-      }, 'tool event');
-      throw new ToolStop(rejected(phase, decision.reject, decision.data), decision.result);
+    const returned = decider(this.decisionContext());
+    if (isPromiseLike(returned)) {
+      return (returned as Promise<T | void>).then((decision) => this.applyDecision<T>(phase, decision));
     }
-    if ('args' in decision) {
-      log.debug(this.logContext('tool.args_rewritten'), 'tool event');
-      this.setArgs(decision.args);
-    }
-    return decision;
+    return this.applyDecision<T>(phase, returned as T | void);
   }
 
-  private decideSync<T extends ToolDecision>(
+  private applyDecision<T extends ToolDecision | ToolStartingDecision>(
     phase: ToolPhase,
-    decider: (
-      context: ToolDecisionContext<unknown, TContext, any>,
-    ) => T | void,
+    decision: T | void,
   ): T | void {
-    this.enter(phase);
-    const decision = decider(this.decisionContext());
+    this.signal.throwIfAborted();
     if (decision === undefined) return;
     if ('reject' in decision) {
       log.info({

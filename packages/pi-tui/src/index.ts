@@ -46,7 +46,13 @@ export {
 	type TextStyle,
 } from "./colors.ts";
 // Components
-export { Box } from "./components/box.ts";
+export {
+	type BorderSides,
+	type BorderStyle,
+	Box,
+	type BoxOptions,
+	type BoxPadding,
+} from "./components/box.ts";
 export { CancellableLoader } from "./components/cancellable-loader.ts";
 export { Editor, type EditorOptions, type EditorTheme } from "./components/editor.ts";
 export { HStack } from "./components/h-stack.ts";
@@ -99,6 +105,7 @@ export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
 // Keybindings
 export {
 	getKeybindings,
+	getSelectPageIndex,
 	type Keybinding,
 	type KeybindingConflict,
 	type KeybindingDefinition,
@@ -127,6 +134,14 @@ export { type RenderLatexOptions, renderLatex } from "./latex.ts";
 // Native platform integration
 export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
 export { oklabToOkhslLightness } from "./oklab.ts";
+// Program resume reporting (OSC 7577)
+export {
+	formatProgramResume,
+	formatProgramResumeClear,
+	type ProgramResumeCommand,
+	type ProgramResumeSender,
+	takeProgramResumeToken,
+} from "./program-resume.ts";
 // Program status reporting (OSC 7501)
 export { formatProgramStatus, type ProgramStatus } from "./program-status.ts";
 // Input buffering for batch splitting
@@ -231,6 +246,7 @@ export {
 // Utilities
 export {
 	getOsc8LinkAtColumn,
+	replaceControlCharacters,
 	sliceByColumn,
 	stripTerminalSequences,
 	truncateToWidth,

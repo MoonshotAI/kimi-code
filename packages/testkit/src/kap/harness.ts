@@ -1,6 +1,9 @@
+import { join } from 'node:path';
+
 import { mergeKimiConfig, writeKimiConfig, type KimiConfig } from '#/fixtures/config';
 import { testEnv } from '#/fixtures/env';
 import { createTestHome, type TestHome } from '#/fixtures/home';
+import { writeMcpConfig, type McpServerEntry } from '#/fixtures/mcp';
 import { KapClient } from '#/kap/client';
 import type { KapFrame } from '#/kap/frames';
 import type { FakeModel } from '#/model/fake-model';
@@ -41,6 +44,7 @@ export interface StartKapOptions<O extends KapLaunchOptions, S extends KapRunnin
   readonly model?: FakeModel;
   readonly provider?: FakeProviderOptions;
   readonly config?: KimiConfig;
+  readonly mcpServers?: Readonly<Record<string, McpServerEntry>>;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly serverOptions?: Partial<O>;
   readonly home?: TestHome;
@@ -88,6 +92,7 @@ export class KapHarness<S extends KapRunningServer = KapRunningServer> extends K
       (merged, next) => mergeKimiConfig(merged, next),
     );
     await writeKimiConfig(home.dataDir, config);
+    if (options.mcpServers !== undefined) await writeMcpConfig(join(home.dataDir, 'mcp.json'), options.mcpServers);
     const restoreHome = options.isolateHome === false ? undefined : pointHomeAt(home.home);
     const generic = options as unknown as StartKapOptions<KapLaunchOptions, S>;
     try {

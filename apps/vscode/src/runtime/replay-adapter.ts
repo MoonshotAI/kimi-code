@@ -16,7 +16,7 @@ import type {
 } from "../../shared/legacy-sdk";
 import type { UIStreamEvent } from "../../shared/types";
 import { hookResultBody, isUserPromptSubmitHookPart, withoutUserPromptSubmitHookParts } from "../utils/hook-parts";
-import { toLegacyToolName } from "./event-adapter";
+import { toLegacyToolName, turnOutcomeEvent } from "./event-adapter";
 import { toLegacyDisplay } from "./tool-display";
 
 interface SubagentReplayInvocation {
@@ -55,8 +55,10 @@ function replayAgentToWebviewEvents(
 ): UIStreamEvent[] {
   const events: UIStreamEvent[] = [];
   let turnOpen = false;
+  let turnSettled = false;
   let step = 0;
   const toolDisplays = new Map<string, readonly DisplayBlock[]>();
+  const lastPromptIndex = agent.replay.findLastIndex(isVisiblePrompt);
 
   events.push(
     withSession(
@@ -74,9 +76,12 @@ function replayAgentToWebviewEvents(
 
   const completeTurn = () => {
     if (!turnOpen) return;
-    const result: RunResult = { status: "finished" };
-    events.push({ type: "stream_complete", result, _sessionId: sessionId });
+    if (!turnSettled) {
+      const result: RunResult = { status: "finished" };
+      events.push({ type: "stream_complete", result, _sessionId: sessionId });
+    }
     turnOpen = false;
+    turnSettled = false;
   };
 
   const ensureStep = () => {
@@ -87,7 +92,7 @@ function replayAgentToWebviewEvents(
     }
   };
 
-  for (const record of agent.replay) {
+  for (const [index, record] of agent.replay.entries()) {
     switch (record.type) {
       case "message": {
         const message = record.message;
@@ -215,6 +220,14 @@ function replayAgentToWebviewEvents(
           );
         }
         break;
+      case "turn_ended": {
+        if (!turnOpen) break;
+        const outcome = turnOutcomeEvent(record, sessionId);
+        if (outcome.type === "error" && index < lastPromptIndex) break;
+        events.push(outcome);
+        turnSettled = true;
+        break;
+      }
       case "config_updated":
       case "permission_updated":
       case "approval_result":
@@ -432,6 +445,7 @@ function renderSubagentInvocation(
       case "permission_updated":
       case "approval_result":
       case "goal_updated":
+      case "turn_ended":
         break;
     }
   }
@@ -635,11 +649,14 @@ function withSession<T extends LegacyWireEvent>(event: T, sessionId: string): T 
   return { ...event, _sessionId: sessionId };
 }
 
+function isVisiblePrompt(record: AgentReplayRecord): boolean {
+  return (
+    record.type === "message" &&
+    record.message.role === "user" &&
+    isVisibleUserMessage(record.message.origin)
+  );
+}
+
 export function replayRecordTurnCount(records: readonly AgentReplayRecord[]): number {
-  return records.filter(
-    (record) =>
-      record.type === "message" &&
-      record.message.role === "user" &&
-      isVisibleUserMessage(record.message.origin),
-  ).length;
+  return records.filter(isVisiblePrompt).length;
 }

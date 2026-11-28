@@ -30,7 +30,7 @@ import {
   registerDesktopBrowserMcp,
 } from '../../../src/main/browser/browser-mcp-registration';
 import { runBrowserAutomation } from '../../../src/main/browser/browser-automation';
-import { DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_DISABLED_ERROR, startDesktopBrowserMcp, type DesktopBrowserAgentControl } from '../../../src/main/browser/browser-mcp';
+import { DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE, DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE, DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE, startDesktopBrowserMcp, type DesktopBrowserAgentControl } from '../../../src/main/browser/browser-mcp';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { browserControlOwnership } from '../../../src/main/browser/browser-control-ownership';
@@ -258,7 +258,6 @@ it('reminds agents about the built-in browser and follows the agent control swit
     expect(disabledAfterStep.announcements).toContain(name);
     const denied = await agent!.accessor.get(IAgentMcpService).resolved('desktop_browser')!.client.callTool('run', { protocol: 'kimi.browser/1.0.0', operation: 'browser.get_state' });
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied.content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
     await reconcile(agent!);
     await reconcile(agent!);
     expect(reminders(agent!)).toHaveLength(2);
@@ -359,8 +358,7 @@ it('keeps the built-in browser for chats that already used it when agent control
     await reconcile(fresh!);
     expect(reminders(fresh!)).toHaveLength(2);
     expect(reminders(fresh!)[1]).toContain(DESKTOP_BROWSER_DISABLED_REMINDER.slice(0, 40));
-    const denied = await callBrowser(fresh!);
-    expect(JSON.stringify(denied.content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
+    expect((await callBrowser(fresh!)).isError).toBe(true);
 
     expect(tool(used!)).toBeDefined();
     expect(tool(schema!)).toBeDefined();
@@ -491,16 +489,16 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
     await vi.waitFor(() => expect(tool(live.rewritten!)).toBeUndefined());
     await vi.waitFor(() => expect(tool(live.select!)).toBeUndefined());
     expect(tool(live.erred!)).toBeDefined();
-    expect(JSON.stringify((await callBrowser(live.call!)).content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
-    expect(JSON.stringify((await callBrowser(live.rewritten!)).content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
-    expect(JSON.stringify((await callBrowser(live.select!)).content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
+    expect((await callBrowser(live.call!)).isError).toBe(true);
+    expect((await callBrowser(live.rewritten!)).isError).toBe(true);
+    expect((await callBrowser(live.select!)).isError).toBe(true);
     expect((await callBrowser(live.erred!)).isError).not.toBe(true);
 
     for (const kind of ['call', 'rewritten', 'select'] as const) {
       const resumed = await prepare((await sessions.resume(closed[kind]!))!);
       expect(access.kept.has(closed[kind]!)).toBe(false);
       expect(tool(resumed)).toBeUndefined();
-      expect(JSON.stringify((await callBrowser(resumed)).content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
+      expect((await callBrowser(resumed)).isError).toBe(true);
     }
     const resumed = await prepare((await sessions.resume(closed.erred!))!);
     expect(access.kept.has(closed.erred!)).toBe(true);
@@ -565,42 +563,65 @@ it('tells every agent why the built-in browser is blocked and allows other avail
         isError: result.outcome.type === 'success' ? undefined : true,
       };
     };
-    const expectGuidance = (result: Awaited<ReturnType<typeof call>>, reason: string) => {
+    const expectUnavailableGuidance = (result: Awaited<ReturnType<typeof call>>, reason: string) => {
       expect(result.isError).toBe(true);
       const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
       expect(output).toContain(reason);
-      expect(output).toContain('Use WebSearch, FetchURL, or other available tools if they fit the task.');
-      expect(output).toContain('tell the user (or your parent agent) that the built-in browser is unavailable and why.');
-      expect(output).not.toContain('workaround');
-      expect(output).not.toContain('computer use');
-      expect(output).not.toContain('Otherwise, stop');
+      expect(output).toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
+      expect(output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
+    };
+    const expectToolPolicyGuidance = (result: Awaited<ReturnType<typeof call>>, reason: string) => {
+      expect(result.isError).toBe(true);
+      const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+      expect(output).toContain(reason);
+      expect(output).toContain(DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE);
+      expect(output).not.toContain(DESKTOP_BROWSER_RESTRICTED_GUIDANCE);
+      expect(output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
+      expect(output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
     };
 
     for (const agent of [main!, worker!]) {
       await runReminderStep(agent.accessor.get(IAgentLoopService));
       expect(reminders(agent)).toHaveLength(1);
       expect(reminders(agent)[0]).toContain(DESKTOP_BROWSER_DISABLED_REMINDER.slice(0, 120));
-      expect(DESKTOP_BROWSER_DISABLED_REMINDER).toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
-      expect(DESKTOP_BROWSER_DISABLED_REMINDER).not.toContain('workaround');
-      expect(DESKTOP_BROWSER_DISABLED_REMINDER).not.toContain('computer use');
       expect(agent.accessor.get(IAgentToolRegistryService).resolve(name)).toBeUndefined();
-      expectGuidance(await call(agent), 'turned off in Kimi Code Settings > Browser');
+      expectUnavailableGuidance(await call(agent), 'turned off in Kimi Code Settings > Browser');
     }
-    expect(DESKTOP_BROWSER_DISABLED_ERROR).toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
-    expect(DESKTOP_BROWSER_DISABLED_ERROR).not.toContain('workaround');
 
     control.set(true);
     subagentControl.set(true);
     for (const agent of [explorer!, approver!, runner!]) {
       await vi.waitFor(() => expect(agent.accessor.get(IAgentToolRegistryService).resolve(name)).toBeDefined());
     }
-    expectGuidance(await call(explorer!), 'tool policy of this agent does not allow');
+    expectToolPolicyGuidance(await call(explorer!), 'tool policy of this agent does not allow');
 
     const approval = approver!.accessor.get(IAgentToolApprovalService);
+    let vetoOutput = approval.formatApprovalRejectionMessage(name, { decision: 'rejected' });
     approver!.accessor.get(IAgentToolExecutorService).registerLegacyStarting((event) => {
-      event.veto({ output: approval.formatApprovalRejectionMessage(name, { decision: 'rejected' }), isError: true });
+      event.veto({ output: vetoOutput, isError: true });
     });
-    expectGuidance(await call(approver!), 'was not run because the user rejected the approval request');
+    const rejected = await call(approver!);
+    expect(rejected.isError).toBe(true);
+    expect(rejected.output).toContain(vetoOutput);
+    expect(rejected.output).toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
+    expect(rejected.output).not.toContain(DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE);
+    expect(rejected.output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
+
+    vetoOutput = approval.formatApprovalRejectionMessage(name, { decision: 'rejected', feedback: 'Use another browser path' });
+    const rejectedWithFeedback = await call(approver!);
+    expect(rejectedWithFeedback.isError).toBe(true);
+    expect(rejectedWithFeedback.output).toContain(vetoOutput);
+    expect(rejectedWithFeedback.output).toContain(DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE);
+    expect(rejectedWithFeedback.output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
+    expect(rejectedWithFeedback.output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
+
+    vetoOutput = approval.formatApprovalRejectionMessage(name, { decision: 'cancelled' });
+    const cancelled = await call(approver!);
+    expect(cancelled.isError).toBe(true);
+    expect(cancelled.output).toContain(vetoOutput);
+    expect(cancelled.output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
+    expect(cancelled.output).not.toContain(DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE);
+    expect(cancelled.output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
 
     runner!.accessor.get(IAgentPermissionModeService).setMode('yolo');
     const runnerLoop = runner!.accessor.get(IAgentLoopService);
@@ -614,7 +635,7 @@ it('tells every agent why the built-in browser is blocked and allows other avail
     expect(reminders(worker!)).toHaveLength(2);
     expect(reminders(worker!)[1]).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
     await runReminderStep(runner!.accessor.get(IAgentLoopService));
-    expect(reminders(runner!)).toEqual([expect.stringContaining('built-in browser of Kimi Code Desktop')]);
+    expect(reminders(runner!)).toHaveLength(1);
   } finally {
     registration.dispose();
     await server.close();
@@ -743,8 +764,8 @@ it('injects trusted subagent runs through dynamic and direct tools without weake
     const subagentDisabled = await call(worker.agent, 9, 'browser.get_device_profiles');
     expect(subagentDisabled.isError).toBe(true);
     expect(JSON.stringify(subagentDisabled.output)).toContain('not currently running with built-in browser control enabled');
-    expect(JSON.stringify(subagentDisabled.output)).toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
-    expect(JSON.stringify(subagentDisabled.output)).not.toContain('workaround');
+    expect(JSON.stringify(subagentDisabled.output)).toContain(DESKTOP_BROWSER_RESTRICTED_GUIDANCE);
+    expect(JSON.stringify(subagentDisabled.output)).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
     expect(runBrowserAutomation).toHaveBeenCalledTimes(4);
     subagentControl.set(true);
     expect(browserControlOwnership.isBlocked(session.id, workerRun)).toBe(false);

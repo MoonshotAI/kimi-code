@@ -8,6 +8,7 @@ export interface SlashMenuDeps {
   editorRef: Ref<TextFieldLike | null>;
   skills: () => AppSkill[];
   emitCommand: (cmd: string) => void;
+  beforeExecute?: (cmd: string) => boolean;
   historyPush: (entry: string) => void;
   clearDraft?: () => void;
   insertSkillMention?: (
@@ -110,6 +111,7 @@ export function useSlashMenu(deps: SlashMenuDeps) {
       });
       return;
     }
+    if (deps.beforeExecute?.(item.name) === false) return;
     text.value = '';
     clearDraft?.();
     historyPush(item.name);

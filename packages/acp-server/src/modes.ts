@@ -15,12 +15,12 @@ export const ACP_MODES = [
   {
     id: 'auto',
     name: 'Auto',
-    description: 'Auto-approve safe operations.',
+    description: 'Run unattended, including sensitive operations, while honoring explicit deny rules.',
   },
   {
     id: 'yolo',
     name: 'YOLO',
-    description: 'Auto-approve everything.',
+    description: 'Approve routine operations automatically. Sensitive actions can still require confirmation.',
   },
 ] as const satisfies readonly SessionMode[];
 

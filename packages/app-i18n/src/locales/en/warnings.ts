@@ -13,6 +13,7 @@ export default {
     filtered: 'Response filtered by the provider',
     api: 'Model API error',
     contextOverflow: 'Context size exceeded',
+    compactionFailed: 'Context compaction failed',
   },
   details: {
     cause: 'Cause',

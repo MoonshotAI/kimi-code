@@ -11,9 +11,8 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reacti
 import { useKimiI18n } from '@moonshot-ai/app-i18n';
 import { MarkdownRender, enableKatex, enableMermaid, languageMap } from 'markstream-vue';
 import { ensureMarkdownWorkers } from './lib/markdownWorkers';
-import { useIsDark } from '@moonshot-ai/app-core';
-import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
-import { HistoryStateKey, OpenFileLinkKey, OpenLocalHtmlFileKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
+import { useIsDark } from '@moonshot-ai/app-core/composables';
+import { HistoryStateKey, OpenFileLinkKey, OpenLocalHtmlFileKey, OpenSidebarBrowserUrlKey, PinScrollKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { classifyMentionHref, decodeSessionMention, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, sessionMentionPath, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
 import { mentionHrefToPath, mentionIconSvg, truncateMentionName } from '@moonshot-ai/app-composer/features/mention';
 import { collectFilePathAliases, findFilePathLinks, isRelativeLinkCandidate, type FilePathResolution } from './lib/filePathLinks';
@@ -345,7 +344,14 @@ function processFileLinks(): void {
       link.className = 'md-file-link';
       link.setAttribute('role', 'button');
       link.tabIndex = 0;
-      link.textContent = match.text;
+      const icon = document.createElement('span');
+      icon.className = 'mention-pill-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = mentionIconSvg('file', match.path, match.text);
+      const label = document.createElement('span');
+      label.className = 'mention-pill-name';
+      label.textContent = match.text;
+      link.append(icon, label);
       link.title = fileLinkTitle(match.path, match.line);
       link.dataset.filePath = resolved !== null && !resolved.assumed ? resolved.path : match.path;
       link.dataset.rawPath = match.path;
@@ -978,21 +984,39 @@ watch([() => numberedDiffs.size, segments], async () => {
 }
 .md :deep(.md-file-link) {
   appearance: none;
-  display: inline;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-05);
+  max-width: 100%;
   border: 0;
-  padding: var(--markdown-link-padding-block) var(--markdown-link-padding-inline);
-  border-radius: var(--markdown-link-radius);
+  margin-inline: 0;
+  padding: 0;
   background: transparent;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
-  color: var(--markdown-link-color);
+  color: var(--p-pill-fg);
   font: inherit;
+  white-space: nowrap;
+  vertical-align: baseline;
   text-decoration: none;
   cursor: pointer;
-  transition: background-color var(--duration-base) var(--ease-out);
+  transition: color var(--duration-base) var(--ease-out);
 }
 .md :deep(.md-file-link:hover) {
-  background: var(--markdown-link-hover-background);
+  color: var(--color-link-hover);
+  text-decoration: underline;
+}
+.md :deep(.md-file-link .mention-pill-icon) {
+  color: var(--p-pill-icon);
+}
+.md :deep(.md-file-link .mention-pill-name) {
+  max-width: none;
+}
+.md :deep(.md-file-link:hover .mention-pill-icon) {
+  color: inherit;
+}
+.md :deep(.md-file-link:focus-visible) {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+  border-radius: var(--radius-xs);
 }
 .md :deep(pre),
 .md :deep(code),
@@ -1083,6 +1107,10 @@ watch([() => numberedDiffs.size, segments], async () => {
   padding: var(--markdown-inline-code-padding-block) var(--markdown-inline-code-padding-inline);
   border-radius: var(--markdown-inline-code-radius);
   box-decoration-break: clone;
+}
+.md :deep(:is(h1, h2, h3, h4, h5, h6) :not(pre) > code),
+.md :deep(:is(h1, h2, h3, h4, h5, h6) .inline-code) {
+  font-size: inherit;
 }
 .md :deep(:is(strong, b) code) { font-weight: var(--markdown-font-weight-emphasis); }
 
@@ -1237,20 +1265,25 @@ watch([() => numberedDiffs.size, segments], async () => {
   text-underline-offset: auto;
 }
 .md :deep(a:not(.mention-pill):not(:has(img))) {
-  padding: var(--markdown-link-padding-block) var(--markdown-link-padding-inline);
-  border-radius: var(--markdown-link-radius);
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
+  margin-inline: 0;
+  padding: 0;
   text-decoration: none;
-  transition: background-color var(--duration-base) var(--ease-out);
+  transition: color var(--duration-fast) var(--ease-out);
 }
 .md :deep(a:not(.mention-pill):not(:has(img)):hover) {
-  background: var(--markdown-link-hover-background);
+  color: var(--color-link-hover);
+  text-decoration: underline;
 }
 
 .md :deep(a.mention-pill) {
-  color: var(--markdown-secondary-icon-color);
   text-decoration: none;
+}
+.md :deep(a.mention-pill:hover) {
+  color: var(--color-link-hover);
+}
+.md :deep(a.mention-file:hover),
+.md :deep(a.mention-skill:not(.mention-inert):hover) {
+  text-decoration: underline;
 }
 .md :deep(a.mention-folder:hover) {
   text-decoration: none;

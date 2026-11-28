@@ -1,3 +1,4 @@
+import type { TuiRenderLine } from "./render-line.ts";
 import type { Component } from "./tui.ts";
 
 export const LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
@@ -39,7 +40,29 @@ export interface ScrollLayoutNode {
 	state: ScrollLayoutState;
 }
 
-export type LayoutNode = StackLayoutNode | ScrollLayoutNode;
+export interface BoxLayoutInsets {
+	readonly top: number;
+	readonly right: number;
+	readonly bottom: number;
+	readonly left: number;
+}
+
+export interface BoxLayoutRect {
+	readonly x: number;
+	readonly y: number;
+	readonly width: number;
+	readonly height: number;
+}
+
+export interface BoxLayoutNode {
+	type: "box";
+	children: readonly Component[];
+	insets: BoxLayoutInsets;
+	skipLayoutMouseDispatch: boolean;
+	paintFrame(rect: BoxLayoutRect, clip: BoxLayoutRect, screen: TuiRenderLine[], totalWidth: number): void;
+}
+
+export type LayoutNode = StackLayoutNode | ScrollLayoutNode | BoxLayoutNode;
 
 export interface LayoutComponent extends Component {
 	[LAYOUT_NODE](): LayoutNode;

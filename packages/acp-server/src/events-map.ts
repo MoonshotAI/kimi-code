@@ -1,15 +1,17 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
-import type {
-  AvailableCommand,
-  PlanEntry,
-  PlanEntryStatus,
-  SessionConfigOption,
-  SessionNotification,
-  ToolCallContent,
-  ToolCallLocation,
-  ToolKind,
+import {
+  type AvailableCommand,
+  type PlanEntry,
+  type PlanEntryStatus,
+  RequestError,
+  type SessionConfigOption,
+  type SessionNotification,
+  type ToolCallContent,
+  type ToolCallLocation,
+  type ToolKind,
 } from '@agentclientprotocol/sdk';
+import { isDaemonFileUrl } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   AssistantDeltaEvent,
@@ -39,20 +41,36 @@ export function assistantDeltaToSessionUpdate(
   };
 }
 
-export function turnEndReasonToStopReason(
-  reason: TurnEndReason,
-  error?: { readonly code: string },
-): AcpStopReason {
+const PROVIDER_FILTERED_CODE = 'provider.filtered';
+const INTERNAL_ERROR = -32603;
+
+export interface TurnEndError {
+  readonly code: string;
+  readonly message?: string;
+}
+
+export type TurnEndAnswer =
+  | { readonly stopReason: AcpStopReason }
+  | { readonly error: RequestError };
+
+export function answerForTurnEnd(reason: TurnEndReason, error?: TurnEndError): TurnEndAnswer {
   switch (reason) {
     case 'completed':
-      return 'end_turn';
+      return { stopReason: 'end_turn' };
     case 'cancelled':
-      return 'cancelled';
-    case 'failed':
-      if (error?.code === 'provider.filtered') return 'refusal';
-      return 'end_turn';
+      return { stopReason: 'cancelled' };
     case 'blocked':
-      return 'refusal';
+      return { stopReason: 'refusal' };
+    case 'failed':
+      if (error?.code === PROVIDER_FILTERED_CODE) return { stopReason: 'refusal' };
+      if (isAuthError(error)) return { error: RequestError.authRequired(undefined, error?.message) };
+      return {
+        error: new RequestError(
+          INTERNAL_ERROR,
+          error?.message ?? 'The turn failed.',
+          error === undefined ? undefined : { code: error.code },
+        ),
+      };
   }
 }
 
@@ -119,12 +137,22 @@ export function toolCallLocations(
   name: string,
   args: unknown,
   display: ToolInputDisplay | undefined,
+  cwd?: string,
 ): ToolCallLocation[] | undefined {
   const displayPath =
     display !== undefined && (display.kind === 'diff' || display.kind === 'file_io')
       ? display.path
       : undefined;
-  const path = [displayPath, argsPath(name, args)].find(
+  const requested = argsPath(name, args);
+  const argsLocation =
+    requested === undefined ||
+    cwd === undefined ||
+    isAbsolute(requested) ||
+    requested.startsWith('~') ||
+    isDaemonFileUrl(requested)
+      ? requested
+      : resolve(cwd, requested);
+  const path = [displayPath, argsLocation].find(
     (candidate): candidate is string => candidate !== undefined && isAbsolute(candidate),
   );
   if (path === undefined) return undefined;
@@ -256,6 +284,21 @@ export function toolUpdatedToSessionUpdate(
     };
   }
   return null;
+}
+
+export function liveToolOutputToSessionUpdate(
+  sessionId: string,
+  toolCallId: string,
+  text: string,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      content: [{ type: 'content', content: { type: 'text', text } }],
+    },
+  };
 }
 
 export function thinkingDeltaToSessionUpdate(

@@ -22,7 +22,7 @@ export function resolvePath(base: string, value: string): string {
   return isAbsolute(value) ? normalize(value) : resolve(base, value);
 }
 
-export function canonicalWorkspaceRoot(cwd: string): string {
+export function canonicalProjectRoot(cwd: string): string {
   const resolved = isWindowsAbsolutePath(cwd)
     ? nodePath.win32.resolve(cwd).replaceAll('\\', '/')
     : resolve(cwd);

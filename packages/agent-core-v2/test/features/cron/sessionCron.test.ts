@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -159,6 +163,9 @@ describe('session cron wire persistence', () => {
   });
 
   it('stops the poll timer on dispose without unhandled rejections', async () => {
+    const clockDir = mkdtempSync(join(tmpdir(), 'kimi-cron-dispose-'));
+    const frozenClockFile = join(clockDir, 'clock.txt');
+    writeFileSync(frozenClockFile, String(Date.UTC(2026, 0, 1, 0, 0, 30)));
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason);
@@ -174,6 +181,7 @@ describe('session cron wire persistence', () => {
         disabled: false,
         manualTick: false,
         pollIntervalMs: 10,
+        clock: `file:${frozenClockFile}`,
       },
     };
     let disposed = false;
@@ -189,6 +197,7 @@ describe('session cron wire persistence', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
       if (!disposed) await ctx.dispose();
+      rmSync(clockDir, { recursive: true, force: true });
     }
   });
 });

@@ -1,6 +1,7 @@
 import { assign, fromCallback, setup } from 'xstate';
 
 import { createDecorator, IInstantiationService } from '#/_base/di/instantiation';
+import { sameDir } from '#/_base/utils/workdir-slug';
 import {
   AgentActorService,
   type AgentActorContext,
@@ -8,7 +9,9 @@ import {
 } from '#/agent/actorService/agentActorService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { IAgentWorkdirMoveService } from '#/agent/workdirMove/workdirMove';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
   ContextInjectionContext,
@@ -80,20 +83,32 @@ const dateChangeInjection = fromCallback(({
   const profile = runtime.get(IAgentLoopService);
   const clock = runtime.get(IHostClock);
   const sessionContext = runtime.get(ISessionContext);
-  const bindingCwd = (): string | undefined => {
+  const binding = (): { readonly environmentId: string; readonly cwd?: string } | undefined => {
     try {
-      return runtime.get(IAgentEnvironmentBindingService).current.cwd;
+      return runtime.get(IAgentEnvironmentBindingService).current;
+    } catch {
+      return undefined;
+    }
+  };
+  const relocatedOriginCwd = (): string | undefined => {
+    try {
+      return runtime.get(IAgentWorkdirMoveService).originCwd;
     } catch {
       return undefined;
     }
   };
   const belongsToCurrentCwd = (): boolean => {
     const environment = profile.data().environmentDisclosure;
-    return !(
-      environment !== undefined &&
-      environment.cwd !== '' &&
-      environment.cwd !== (bindingCwd() ?? sessionContext.cwd)
-    );
+    if (environment === undefined || environment.cwd === '') return true;
+    const currentBinding = binding();
+    const originCwd =
+      (currentBinding?.environmentId ?? LOCAL_ENVIRONMENT_ID) === LOCAL_ENVIRONMENT_ID
+        ? relocatedOriginCwd()
+        : undefined;
+    if (originCwd !== undefined && sameDir(environment.cwd, originCwd)) {
+      return true;
+    }
+    return sameDir(environment.cwd, currentBinding?.cwd ?? sessionContext.cwd);
   };
   const registration = reminder.register<DateInjectionDisclosure>(
     DATE_CHANGE_INJECTION_VARIANT,

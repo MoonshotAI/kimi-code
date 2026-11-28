@@ -76,6 +76,7 @@ import type {
   ResumedSessionSummary,
   RefreshProviderModelsOptions,
   RefreshProviderModelsResponse,
+  SessionPlacement,
   SessionSummary,
   SessionSummaryPage,
   SessionEnvironmentsInfo,
@@ -92,6 +93,16 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 const MAIN_AGENT_ID = 'main';
 
@@ -117,6 +128,10 @@ export interface ImportContextRpcInput extends SessionIdRpcInput {
 
 export interface ReloadSessionRpcInput extends SessionIdRpcInput {
   readonly forcePluginSessionStartReminder?: boolean;
+}
+
+export interface MoveSessionRpcInput extends SessionIdRpcInput {
+  readonly workDir: string;
 }
 
 export interface SetSessionModelRpcInput extends SessionIdRpcInput {
@@ -212,6 +227,13 @@ export abstract class SDKRpcClientBase {
 
   abstract reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary>;
 
+  async moveSession(_input: MoveSessionRpcInput): Promise<ResumedSessionSummary> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Moving a session is not implemented for this engine',
+    );
+  }
+
   abstract forkSession(input: ForkSessionInput): Promise<SessionSummary>;
 
   abstract closeSession(input: SessionIdRpcInput): Promise<void>;
@@ -236,7 +258,17 @@ export abstract class SDKRpcClientBase {
     options?: WorkspaceTrustInfoOptions,
   ): Promise<WorkspaceTrustInfo>;
 
-  abstract trustWorkspace(workDir: string): Promise<void>;
+  abstract trustWorkspace(
+    workDir: string,
+    options?: Pick<WorkspaceTrustInfoOptions, 'sessionId'>,
+  ): Promise<void>;
+
+  async resolveSessionPlacement(_workDir: string): Promise<SessionPlacement> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Session placement is not implemented for this engine',
+    );
+  }
 
   abstract renameSession(input: RenameSessionInput): Promise<void>;
 
@@ -459,6 +491,44 @@ export abstract class SDKRpcClientBase {
 
   abstract getGitPullRequest(workDir: string, input: GitQueryInput): Promise<GitPullRequest | null>;
 
+  async resolveWorkLocation(_cwd: string): Promise<WorkLocation> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async listWorktrees(_cwd: string): Promise<WorktreeListing> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async createWorktree(
+    _input: CreateWorktreeInput,
+    _options?: CreateWorktreeOptions,
+  ): Promise<CreatedWorktree> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async inspectWorktreeRemoval(_input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async removeWorktree(_input: RemoveWorktreeInput): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
   ): Promise<readonly BackgroundTaskInfo[]>;
@@ -495,7 +565,10 @@ export abstract class SDKRpcClientBase {
 
   abstract listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]>;
 
-  abstract listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]>;
+  abstract listWorkspaceMcpServers(
+    workDir: string,
+    options?: Pick<CreateSessionOptions, 'environmentId' | 'environmentCwd'>,
+  ): Promise<readonly McpServerInfo[]>;
 
   abstract getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics>;
 

@@ -1,27 +1,71 @@
 import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 
-import { kimiCliCommand, kimiCliEnv, repoPath, TestProcess, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
-import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { kimiCliCommand, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
+import { chromium, test, type BrowserContext, type Page } from '@playwright/test';
 
-import type { Diagnostic, SurfaceDriver, SurfaceLaunch } from '../support/verbs';
+import { StartupFailure, type Diagnostic, type ReopenState, type SurfaceDriver, type SurfaceLaunch, type WindowSize } from '../support/verbs';
+import { productEnv } from './environment';
 import { offlineStubs } from './offline';
-import { OFFLINE_NAMES, PageDriver, reasonOf } from './page-driver';
+import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
+import { TerminalProcess } from './terminal-process';
+import { dynamicPorts, workerWebPorts } from './web-port';
 
-const ADDRESS = /^\s*Local:\s+(http:\/\/127\.0\.0\.1:\d+\/#token=\S+)\s*$/;
-const VIEWPORT = { width: 1440, height: 900 };
+const ADDRESS = /^\s*Local:\s+(http:\/\/127\.0\.0\.1:(\d+)\/#token=\S+)\s*$/;
+const SERVER_TERMINAL = { columns: 400, rows: 50 };
+const VIEWPORTS: Readonly<Record<WindowSize, { readonly width: number; readonly height: number }>> = {
+  normal: { width: 1440, height: 900 },
+  narrow: { width: 390, height: 844 },
+};
+
+interface WebLaunch {
+  readonly size: WindowSize;
+  readonly root: string;
+  readonly workspace: string;
+  readonly port: string;
+  readonly launch: number;
+  readonly lastPrompt: string | undefined;
+}
 
 class WebDriver extends PageDriver {
-  private readonly server: TestProcess;
-  private readonly browser: Browser;
+  private readonly server: TerminalProcess;
   private readonly workspace: string;
+  private readonly port: string;
+  private readonly reopening: boolean;
+  private readonly lastPrompt: string | undefined;
   private open = true;
+  private size: WindowSize;
 
-  constructor(server: TestProcess, browser: Browser, context: BrowserContext, root: string, workspace: string) {
-    super(context, root, 'web');
+  constructor(server: TerminalProcess, context: BrowserContext, { size, root, workspace, port, launch, lastPrompt }: WebLaunch) {
+    super(context, root, 'web', launch);
+    this.size = size;
     this.server = server;
-    this.browser = browser;
     this.workspace = workspace;
+    this.port = port;
+    this.reopening = launch > 1;
+    this.lastPrompt = lastPrompt;
+  }
+
+  reopenState(): ReopenState {
+    const { low, high } = dynamicPorts();
+    const port = Number(this.port);
+    if (port >= low && port <= high) {
+      throw new Error(
+        `restart() would reopen the web UI on port ${this.port}, inside the range ${low}–${high} this machine hands to any process that asks for a free port, so another process can take it while the product is closed and the page could not come back on the same origin.`,
+      );
+    }
+    return { port: this.port, size: this.size };
+  }
+
+  async resize(size: WindowSize): Promise<void> {
+    const { width, height } = VIEWPORTS[this.size];
+    if (size === this.size) throw new Error(`resize() found the window already ${size} (${width}×${height}); resize it to the other size.`);
+    await this.resizeWindow(VIEWPORTS[size]);
+    this.size = size;
+  }
+
+  reloadPage(): Promise<void> {
+    return this.reloadWindow();
   }
 
   async ready(address: string): Promise<void> {
@@ -38,35 +82,37 @@ class WebDriver extends PageDriver {
 
   async startupFailure(error: unknown): Promise<Error> {
     const page = await this.readPage();
-    await this.saveTrace();
+    const diagnostics = await this.diagnostics();
+    const state = this.describe();
     await this.kill();
-    return new Error(
-      [
-        `The Web interface did not become ready: ${reasonOf(error)}`,
-        page,
-        this.describe(),
-        ...(existsSync(this.trace) ? [`A trace of the start-up is at ${this.trace}`] : []),
-      ].join('\n'),
-      { cause: error },
-    );
+    return new StartupFailure(error, diagnostics, [`The Web interface did not become ready: ${reasonOf(error)}`, page, state].join('\n'));
   }
 
   async close(): Promise<void> {
     if (this.server.exited) throw new Error(`The web server exited before the scenario closed it.\n${this.describe()}`);
     await this.leave();
+    await this.shutDown();
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    if (this.server.exited) throw new Error(`The web server exited before the user quit it.\n${this.describe()}`);
+    await this.leaveDuringTurn();
+    await this.shutDown();
+  }
+
+  private async shutDown(): Promise<void> {
     this.open = false;
     await this.context.close();
-    await this.browser.close();
     if (this.server.exited) throw new Error(`The web server exited while the browser was closing.\n${this.describe()}`);
-    process.kill(-this.server.pid, 'SIGINT');
+    this.server.interrupt();
     let exit;
     try {
       exit = await until('the web server to exit', () => this.server.exit(), { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
-      throw new Error(`The web server did not exit after Ctrl+C.\n${this.describe()}`, { cause });
+      throw new Error(`The web server did not exit after the user pressed Ctrl+C in its terminal.\n${this.describe()}`, { cause });
     }
     const problems = [
-      ...(exit.code === 0 ? [] : [`The web server exited with code ${String(exit.code)} and signal ${String(exit.signal)} after Ctrl+C.`]),
+      ...(exit.code === 0 ? [] : [`The web server exited with code ${String(exit.code)} and signal ${String(exit.signal)} after the user pressed Ctrl+C in its terminal.`]),
       ...this.pageProblems(),
     ];
     if (problems.length > 0) throw new Error(`${problems.join('\n')}\n${this.describe()}`);
@@ -74,7 +120,7 @@ class WebDriver extends PageDriver {
 
   async kill(): Promise<void> {
     this.open = false;
-    await this.browser.close().catch(() => undefined);
+    await this.context.close().catch(() => undefined);
     if (!this.server.exited) await this.server.forceKill();
   }
 
@@ -91,9 +137,15 @@ class WebDriver extends PageDriver {
   private async prepare(address: string): Promise<void> {
     await this.startTrace();
     const page = await this.context.newPage();
-    this.show(page, this.workspace);
+    this.show(page, this.workspace, () => Promise.resolve(page));
     await page.goto(address, { timeout: TIMEOUTS.server });
-    const welcome = page.getByRole('dialog', { name: 'Welcome to Kimi Code' });
+    if (this.reopening) {
+      await page.getByRole('status', { name: 'Connecting…' }).first().waitFor({ state: 'hidden', timeout: TIMEOUTS.server });
+      await page.getByRole('combobox', { name: 'Message input' }).waitFor({ state: 'visible', timeout: TIMEOUTS.server });
+      await this.awaitResumed(this.lastPrompt);
+      return;
+    }
+    const welcome = page.getByRole('dialog', { name: WELCOME_DIALOG });
     await welcome.waitFor({ state: 'visible', timeout: TIMEOUTS.server });
     await welcome.getByRole('button', { name: 'Skip', exact: true }).click({ timeout: TIMEOUTS.wait });
     await welcome.waitFor({ state: 'hidden', timeout: TIMEOUTS.server });
@@ -121,38 +173,57 @@ class WebDriver extends PageDriver {
   }
 
   private describe(): string {
-    return [this.server.describe(), `stdout:\n${this.server.stdoutTail() === '' ? '(empty)' : this.server.stdoutTail()}`, this.describePage()].join('\n');
+    return [this.server.describe(), this.describePage()].join('\n');
   }
 }
 
-export async function startWeb({ home }: SurfaceLaunch): Promise<SurfaceDriver> {
-  if (process.platform === 'win32') throw new Error('The Web surface stops its server with Ctrl+C, which Windows cannot deliver to a child process; Windows is not supported yet.');
-  const assets = repoPath('apps', 'kimi-code', 'dist-web', 'index.html');
+export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'web'>> {
+  const assets = repoPath('apps', 'kimi-code', 'web-dist', 'index.html');
   if (!existsSync(assets)) throw new Error(`${assets} does not exist; build the web assets first with "pnpm sync:web".`);
-  const server = TestProcess.start({
+  const ownPorts = workerWebPorts(test.info().parallelIndex);
+  const server = await TerminalProcess.start({
     label: 'kimi web',
     command: kimiCliCommand(),
-    args: ['web', '--port', '0', '--no-open'],
+    args: ['web', '--port', reopen?.state.port ?? String(ownPorts.low), '--no-open'],
     cwd: home.workspace,
-    env: kimiCliEnv(home, { FORCE_COLOR: '0' }),
+    env: productEnv(home, { FORCE_COLOR: '0' }),
     logDir: home.root,
     fetchStubs: offlineStubs(),
+    ...SERVER_TERMINAL,
   });
-  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
   let driver: WebDriver | undefined;
   try {
-    const line = await server.waitForLine((text) => ADDRESS.test(text), { timeoutMs: TIMEOUTS.server, description: 'the address of the web interface' });
-    const address = ADDRESS.exec(line)?.[1];
-    if (address === undefined) throw new Error(`The web server printed an address the driver could not read: ${line}`);
-    browser = await chromium.launch({ args: [OFFLINE_NAMES], headless: process.env['E2E_HEADED'] !== '1', timeout: TIMEOUTS.server });
-    const context = await browser.newContext({ locale: 'en-US', viewport: VIEWPORT });
-    driver = new WebDriver(server, browser, context, home.root, home.workspace);
+    const line = await server.waitForLine((text) => ADDRESS.test(text), 'the address of the web interface');
+    const [, address, port] = ADDRESS.exec(line) ?? [];
+    if (address === undefined || port === undefined) throw new Error(`The web server printed an address the driver could not read: ${line}`);
+    const wanted = reopen?.state.port;
+    if (wanted !== undefined && port !== wanted) {
+      throw new Error(
+        `The restarted web server listens on port ${port} instead of ${wanted}, so the page would open on a different origin and lose the browser state a returning user keeps. Another process probably took the port.`,
+      );
+    }
+    if (Number(port) < ownPorts.low || Number(port) > ownPorts.high) {
+      throw new Error(
+        `The web server listens on port ${port}, outside ports ${ownPorts.low}–${ownPorts.high} that this worker keeps: other programs hold all of them, and a port past them belongs to another worker, which could take it while this one restarts.`,
+      );
+    }
+    const size = reopen?.state.size ?? 'normal';
+    context = await chromium.launchPersistentContext(join(home.root, 'web-profile'), {
+      args: [OFFLINE_NAMES],
+      headless: process.env['E2E_HEADED'] !== '1',
+      timeout: TIMEOUTS.server,
+      locale: 'en-US',
+      viewport: VIEWPORTS[size],
+    });
+    driver = new WebDriver(server, context, { size, root: home.root, workspace: home.workspace, port, launch: reopen?.launch ?? 1, lastPrompt: reopen?.lastPrompt });
     await driver.ready(address);
     return driver;
   } catch (error) {
     if (driver !== undefined) throw await driver.startupFailure(error);
-    await browser?.close().catch(() => undefined);
+    const state = server.describe();
+    await context?.close().catch(() => undefined);
     if (!server.exited) await server.forceKill();
-    throw error;
+    throw new StartupFailure(error, [{ name: 'web-server', body: state }], `${reasonOf(error)}\n${state}`);
   }
 }

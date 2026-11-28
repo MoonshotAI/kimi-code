@@ -130,6 +130,8 @@ export default {
   aborted: 'Failed',
   abortedTitle: "This session's latest turn ended on an error",
   trust: {
+    checking: 'Checking project trust…',
+    checkingHint: 'Checking project trust. You can send once it finishes.',
     title: 'Trust this project',
     desc: "Until trusted, you can't send messages in this project, and project-level configurations such as agent instructions and MCP config stay disabled. These files can direct Kimi to run commands, so make sure you trust their authors. After trusting, tool calls still ask for your approval one by one, and trust is remembered for future config changes.",
     trustAction: 'Trust project',

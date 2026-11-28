@@ -1,9 +1,14 @@
-import { TuiAltScreen } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import { Text, TuiAltScreen, type Component } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { applySelectionCopyModeChoice, applyTranscriptConfigChoice } from '#/tui/commands/config';
+import {
+  applyScrollSpeedChoice,
+  applySelectionCopyModeChoice,
+  applyTranscriptConfigChoice,
+  showSettingsSelector,
+} from '#/tui/commands/config';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import type { SelectionCopyMode, TranscriptConfig } from '#/tui/config';
+import type { SelectionCopyMode, TranscriptConfig, WheelScrollLines } from '#/tui/config';
 
 import { VirtualTerminal } from '../../../../../packages/pi-tui/test/virtual-terminal';
 
@@ -154,5 +159,138 @@ describe('selection copy mode preference', () => {
       'Failed to save selection copy setting: read-only file system',
       'error',
     );
+  });
+});
+
+describe('scroll speed preference', () => {
+  async function makeScrollSpeedHost(wheelScrollLines: WheelScrollLines | undefined) {
+    const vt = new VirtualTerminal(40, 12);
+    const ui = new TuiAltScreen(vt, undefined, undefined, {
+      wheelScrollLines: wheelScrollLines ?? 'auto',
+    });
+    ui.addChild(
+      new Text(Array.from({ length: 60 }, (_, index) => `line ${String(index + 1)}`).join('\n'), 0, 0),
+    );
+    ui.start();
+    onTestFinished(() => {
+      ui.stop();
+    });
+    await vt.waitForRender();
+
+    const host = makeHost({ toolCallDensity: 'compact', thinking: 'grouped' });
+    Object.assign(host.state, { ui });
+    Object.assign(host.state.appState, {
+      mouse: { wheelScrollLines: wheelScrollLines ?? 'auto', altWheelAcceleration: true },
+    });
+    return { host, ui, vt };
+  }
+
+  async function measureSingleWheelUp(ui: TuiAltScreen, vt: VirtualTerminal): Promise<number> {
+    const before = ui.viewportTop;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    return before - ui.viewportTop;
+  }
+
+  it('saves a preset, mirrors appState, and changes live TuiAltScreen wheel step immediately', async () => {
+    mocks.saveTuiConfig.mockReset();
+    const { host, ui, vt } = await makeScrollSpeedHost(undefined);
+
+    await applyScrollSpeedChoice(host, 5);
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mouse: expect.objectContaining({ wheelScrollLines: 5 }),
+        transcript: host.state.appState.transcript,
+      }),
+    );
+    expect(host.state.appState.mouse?.wheelScrollLines).toBe(5);
+    expect(host.showStatus).toHaveBeenCalledWith('Scroll speed set to 5 lines.', 'success');
+    expect(await measureSingleWheelUp(ui, vt)).toBe(5);
+
+    await applyScrollSpeedChoice(host, 1);
+
+    expect(host.state.appState.mouse?.wheelScrollLines).toBe(1);
+    expect(host.showStatus).toHaveBeenCalledWith('Scroll speed set to 1 line.', 'success');
+    expect(await measureSingleWheelUp(ui, vt)).toBe(1);
+  });
+
+  it.each<readonly [WheelScrollLines | undefined, WheelScrollLines, string]>([
+    [undefined, 'auto', 'Scroll speed already Auto.'],
+    [7, 7, 'Scroll speed already 7 lines.'],
+    [1, 1, 'Scroll speed already 1 line.'],
+  ])(
+    'reports an unchanged choice without saving (%j -> %j)',
+    async (current, selected, expectedMessage) => {
+      mocks.saveTuiConfig.mockReset();
+      const { host } = await makeScrollSpeedHost(current);
+
+      await applyScrollSpeedChoice(host, selected);
+
+      expect(mocks.saveTuiConfig).not.toHaveBeenCalled();
+      expect(host.setAppState).not.toHaveBeenCalled();
+      expect(host.showStatus).toHaveBeenCalledWith(expectedMessage);
+    },
+  );
+
+  it('keeps appState and live wheel step untouched when tui.toml cannot be saved', async () => {
+    mocks.saveTuiConfig.mockReset();
+    mocks.saveTuiConfig.mockRejectedValueOnce(new Error('read-only file system'));
+    const { host, ui, vt } = await makeScrollSpeedHost(2);
+
+    await applyScrollSpeedChoice(host, 10);
+
+    expect(host.state.appState.mouse?.wheelScrollLines).toBe(2);
+    expect(host.setAppState).not.toHaveBeenCalled();
+    expect(await measureSingleWheelUp(ui, vt)).toBe(2);
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'Failed to save scroll speed setting: read-only file system',
+      'error',
+    );
+  });
+
+  it('preserves a custom wheelScrollLines value when saving an unrelated preference', async () => {
+    mocks.saveTuiConfig.mockReset();
+    const { host } = await makeScrollSpeedHost(7);
+
+    await applySelectionCopyModeChoice(host, 'off');
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectionCopyMode: 'off',
+        mouse: expect.objectContaining({ wheelScrollLines: 7 }),
+      }),
+    );
+  });
+
+  it('opens Scroll speed from /settings and applies the chosen value live', async () => {
+    mocks.saveTuiConfig.mockReset();
+    mocks.saveTuiConfig.mockResolvedValue(undefined);
+    const { host, ui, vt } = await makeScrollSpeedHost(undefined);
+    let mounted: (Component & { handleInput(data: string): void }) | undefined;
+    Object.assign(host, {
+      mountEditorReplacement: vi.fn((panel: Component & { handleInput(data: string): void }) => {
+        mounted = panel;
+      }),
+      restoreEditor: vi.fn(),
+    });
+
+    showSettingsSelector(host);
+    const settings = mounted!;
+    for (let i = 0; i < 7; i++) settings.handleInput('\u001B[B');
+    settings.handleInput('\r');
+
+    const picker = mounted!;
+    expect(picker).not.toBe(settings);
+    for (let i = 0; i < 3; i++) picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(host.state.appState.mouse?.wheelScrollLines).toBe(3);
+    });
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ mouse: expect.objectContaining({ wheelScrollLines: 3 }) }),
+    );
+    expect(await measureSingleWheelUp(ui, vt)).toBe(3);
   });
 });

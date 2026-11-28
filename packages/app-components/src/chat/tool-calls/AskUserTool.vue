@@ -4,14 +4,14 @@ import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { toolLabel } from '@moonshot-ai/app-components';
+import { toolLabel } from '../../lib/toolMeta';
 import {
   answerFor,
   parseAskBackground,
   parseAskInput,
   parseAskOutput,
   resolveAnswer,
-} from '@moonshot-ai/app-components';
+} from './askUserToolParse';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';

@@ -16,15 +16,17 @@ import {
   useLocalFonts,
   type FontMode,
   type FontTarget,
-} from '@moonshot-ai/app-core';
+} from '@moonshot-ai/app-core/composables';
 import { bundledFontsOfKind, getBundledFont, isDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
-import { installImeCompositionLatch, isImeKeyEvent, movedOrder } from '@moonshot-ai/app-client/lib';
+import { movedOrder } from '@moonshot-ai/app-client/lib';
 import { useFontMetadata, useWrapReorderDrag } from '@moonshot-ai/app-client/composables';
 import { track } from '@moonshot-ai/app-client/contracts';
 import {
   Badge,
   Icon,
   IconButton,
+  installImeCompositionLatch,
+  isImeKeyEvent,
   Menu,
   MenuItem,
   NumberInput,

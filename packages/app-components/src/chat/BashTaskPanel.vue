@@ -94,7 +94,7 @@ function copyOutput(): void {
 </script>
 
 <template>
-  <div v-if="member" class="bp">
+  <div v-if="member" class="bp" data-panel-content>
     <div v-if="command" class="bp-cmd-wrap">
       <div class="bp-cmd">
         <span class="bp-dollar" aria-hidden="true">$</span> {{ command }}
@@ -214,6 +214,7 @@ function copyOutput(): void {
   display: flex;
   gap: var(--space-1);
   opacity: 0;
+  user-select: none;
   transition: opacity var(--duration-base) var(--ease-out);
 }
 .bp-cmd-wrap:hover .bp-actions,
@@ -254,6 +255,7 @@ function copyOutput(): void {
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   color: var(--color-text-muted);
+  user-select: none;
 }
 .bp-status-muted {
   color: var(--color-text-muted);

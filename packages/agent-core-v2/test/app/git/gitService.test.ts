@@ -1,25 +1,45 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { GitService } from '#/app/git/gitService';
-import { findGitWorkTree } from '#/app/git/workTree';
+import {
+  findGitWorkTree,
+  findNearestGitMarker,
+  isDegradedLocation,
+  locateCheckout,
+  type CheckoutLocation,
+} from '#/app/git/workTree';
+import { toAbsoluteDir, type AbsoluteDir } from '#/_base/utils/workdir-slug';
 import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager, type ProjectInstanceChange } from '#/project/projectInstance/projectInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { Event } from '#/_base/event';
 import type { Environment } from '#/environment/environment';
 import { normalize } from 'pathe';
+
+import {
+  bareContainer,
+  bareRepository,
+  createLayoutLab,
+  forgedCoreWorktree,
+  forgedPointer,
+  linkedWorktree,
+  mainCheckout,
+  separateGitDirCheckout,
+  submodule,
+  type LayoutLab,
+} from './checkoutLayouts';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, {
@@ -56,9 +76,9 @@ describe('GitService', () => {
           acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
           acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
-        reg.definePartialInstance(IWorkspaceInstanceManager, {
+        reg.definePartialInstance(IProjectInstanceManager, {
           findContaining: () => ({ id: 'workspace-1' } as never),
-          onDidChange: Event.None as Event<WorkspaceInstanceChange>,
+          onDidChange: Event.None as Event<ProjectInstanceChange>,
         });
         reg.define(IGitService, GitService);
       },
@@ -273,6 +293,53 @@ describe('GitService', () => {
     });
   });
 
+  describe('commands that cannot start in a remote environment', () => {
+    function remoteGitService(missing: ReadonlySet<string>): { readonly service: GitService; activeLeases(): number } {
+      const host = new HostProcessService();
+      const environment = {
+        process: {
+          spawn: (command: string, args: readonly string[], options: Parameters<HostProcessService['spawn']>[2]) =>
+            missing.has(command)
+              ? Promise.reject(Object.assign(new Error(`spawn ${command} ENOENT`), { code: 'ENOENT' }))
+              : host.spawn(command, args, options),
+        },
+      } as unknown as Environment;
+      let active = 0;
+      const resolver = {
+        acquire: () => {
+          active += 1;
+          let released = false;
+          return {
+            environment,
+            track: <T>(resource: T): T => resource,
+            dispose: () => {
+              if (released) return;
+              released = true;
+              active -= 1;
+            },
+          };
+        },
+      } as unknown as EnvironmentResolver;
+      return { service: new GitService(resolver, new HostFileSystem(), 'remote-box'), activeLeases: () => active };
+    }
+
+    it('releases the lease when gh is missing and still reports the status without a pull request', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'hello\n');
+      commitAll('init');
+      const remote = remoteGitService(new Set(['gh']));
+
+      await expect(remote.service.status(repo)).resolves.toMatchObject({ pullRequest: null });
+      expect(remote.activeLeases()).toBe(0);
+    });
+
+    it.each(['status', 'pullRequest'] as const)('releases the lease when git is missing and %s reports git unavailable', async (method) => {
+      const remote = remoteGitService(new Set(['git', 'gh']));
+
+      await expect(remote.service[method](repo)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+      expect(remote.activeLeases()).toBe(0);
+    });
+  });
+
   describe('diff', () => {
     it('returns the unified diff for a tracked modified file', async () => {
       writeFileSync(join(repo, 'a.txt'), 'old\n');
@@ -382,5 +449,472 @@ describe('GitService', () => {
     it('returns null for a relative cwd', async () => {
       await expect(findGitWorkTree(new HostFileSystem(), 'some/relative/path')).resolves.toBeNull();
     });
+  });
+});
+
+describe('findNearestGitMarker', () => {
+  let base: string;
+  const fs = new HostFileSystem();
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'git-marker-'));
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  function dir(...segments: string[]): string {
+    const path = join(base, ...segments);
+    mkdirSync(path, { recursive: true });
+    return path;
+  }
+
+  it('returns undefined when no ancestor holds a .git entry', async () => {
+    await expect(findNearestGitMarker(fs, dir('plain', 'nested'))).resolves.toBeUndefined();
+  });
+
+  it('reports a .git directory with HEAD from a nested directory', async () => {
+    const repo = dir('repo');
+    git(repo, 'init');
+
+    await expect(findNearestGitMarker(fs, dir('repo', 'a', 'b'))).resolves.toEqual({
+      kind: 'directory',
+      root: normalize(repo),
+      dotGitPath: normalize(join(repo, '.git')),
+    });
+  });
+
+  it('reports a .git directory without HEAD as a directory marker', async () => {
+    const repo = dir('repo');
+    dir('repo', '.git');
+
+    await expect(findNearestGitMarker(fs, repo)).resolves.toEqual({
+      kind: 'directory',
+      root: normalize(repo),
+      dotGitPath: normalize(join(repo, '.git')),
+    });
+  });
+
+  it.each([
+    ['an absolute pointer', (target: string) => `gitdir: ${target}\n`],
+    ['a relative pointer', () => 'gitdir: ../store/worktrees/wt\n'],
+    ['a BOM-prefixed pointer', () => '\uFEFFgitdir: ../store/worktrees/wt\n'],
+    ['a CRLF pointer', () => 'gitdir: ../store/worktrees/wt\r\n'],
+  ])('resolves %s in a .git file', async (_label, content) => {
+    const target = join(base, 'store', 'worktrees', 'wt');
+    const wt = dir('wt');
+    writeFileSync(join(wt, '.git'), content(target));
+
+    await expect(findNearestGitMarker(fs, dir('wt', 'src'))).resolves.toEqual({
+      kind: 'pointer',
+      root: normalize(wt),
+      dotGitPath: normalize(join(wt, '.git')),
+      gitDir: normalize(target),
+    });
+  });
+
+  it.each([
+    ['without a gitdir line', 'not a pointer\n'],
+    ['with an empty gitdir', 'gitdir:   \r\n'],
+    ['that is empty', ''],
+  ])('stops at a .git file %s and reports it invalid', async (_label, content) => {
+    const outer = dir('outer');
+    git(outer, 'init');
+    const inner = dir('outer', 'inner');
+    writeFileSync(join(inner, '.git'), content);
+
+    await expect(findNearestGitMarker(fs, dir('outer', 'inner', 'src'))).resolves.toEqual({
+      kind: 'invalid',
+      root: normalize(inner),
+      dotGitPath: normalize(join(inner, '.git')),
+    });
+  });
+
+  it('stops at a dangling .git symlink and reports it invalid', async () => {
+    const outer = dir('outer');
+    git(outer, 'init');
+    const inner = dir('outer', 'inner');
+    symlinkSync(join(base, 'missing'), join(inner, '.git'));
+
+    await expect(findNearestGitMarker(fs, inner)).resolves.toEqual({
+      kind: 'invalid',
+      root: normalize(inner),
+      dotGitPath: normalize(join(inner, '.git')),
+    });
+  });
+
+  it('prefers the nearest marker over an enclosing repository', async () => {
+    const outer = dir('outer');
+    git(outer, 'init');
+    const nested = dir('outer', 'nested');
+    writeFileSync(join(nested, '.git'), 'gitdir: ../.git/worktrees/nested\n');
+
+    await expect(findNearestGitMarker(fs, dir('outer', 'nested', 'src'))).resolves.toMatchObject({
+      kind: 'pointer',
+      root: normalize(nested),
+    });
+  });
+});
+
+describe('locateCheckout', () => {
+  const fs = new HostFileSystem();
+  let lab: LayoutLab;
+
+  beforeEach(() => {
+    lab = createLayoutLab('locate-checkout-');
+  });
+
+  afterEach(() => {
+    lab.dispose();
+  });
+
+  function locate(path: string): Promise<CheckoutLocation> {
+    return locateCheckout(fs, toAbsoluteDir(path)!);
+  }
+
+  function real(path: string): string {
+    return normalize(realpathSync(path));
+  }
+
+  function committedRepository(dir: string): string {
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, '-c', 'user.email=test@example.com', '-c', 'user.name=Test', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'initial');
+    return dir;
+  }
+
+  function grouped(
+    checkoutRoot: string,
+    mainDir: string,
+    canonicalMainDir = real(mainDir),
+  ): CheckoutLocation {
+    return {
+      kind: 'grouped',
+      checkoutRoot: normalize(checkoutRoot) as AbsoluteDir,
+      mainDir: normalize(mainDir) as AbsoluteDir,
+      canonicalMainDir: canonicalMainDir as AbsoluteDir,
+    };
+  }
+
+  it('leaves a directory outside any checkout on its own', async () => {
+    await expect(locate(lab.dir('plain', 'nested'))).resolves.toEqual({ kind: 'own', reason: 'not-a-repo' });
+  });
+
+  it('groups a main checkout and its subdirectories under the literal checkout path', async () => {
+    const main = mainCheckout(lab.dir('app'));
+
+    await expect(locate(main)).resolves.toEqual(grouped(main, main));
+    await expect(locate(lab.dir('app', 'src', 'lib'))).resolves.toEqual(grouped(main, main));
+  });
+
+  it.each([
+    ['an absolute pointer', {}],
+    ['a CRLF pointer', { lineEnding: '\r\n' as const }],
+    ['a BOM-prefixed pointer', { bom: true }],
+  ])('groups a linked worktree written with %s into its main checkout', async (_label, style) => {
+    const main = mainCheckout(lab.dir('app'));
+    const worktree = linkedWorktree(`${main}/.git`, lab.dir('app-fix'), style);
+
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(main)));
+    await expect(locate(lab.dir('app-fix', 'src'))).resolves.toEqual(grouped(worktree, real(main)));
+  });
+
+  it('keeps the literal main checkout path a relative worktree pointer leads to', async () => {
+    const main = mainCheckout(lab.dir('app'));
+    const worktree = linkedWorktree(`${main}/.git`, lab.dir('app-fix'), { relative: true });
+
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, main));
+  });
+
+  it('groups a .bare container and its worktrees under the container', async () => {
+    const container = lab.dir('layout');
+    const bare = bareContainer(container);
+    const worktree = linkedWorktree(bare, lab.dir('layout', 'feat'));
+
+    await expect(locate(container)).resolves.toEqual(grouped(container, container));
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(container)));
+  });
+
+  it('groups a worktree of an independent bare repository under the bare repository', async () => {
+    const bare = bareRepository(lab.dir('repo.git'));
+    const worktree = linkedWorktree(bare, lab.dir('repo-wt'));
+
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(bare)));
+  });
+
+  it('treats a submodule as its own checkout and groups its worktrees under it', async () => {
+    const superproject = mainCheckout(lab.dir('super'));
+    const modules = submodule(superproject, 'sub');
+    const checkout = `${superproject}/sub`;
+    const worktree = linkedWorktree(modules, lab.dir('sub-wt'));
+
+    await expect(locate(checkout)).resolves.toEqual(grouped(checkout, checkout));
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(checkout)));
+  });
+
+  it('keeps grouping the worktrees of a bare repository after git sparse-checkout moved its settings to config.worktree', async () => {
+    const source = committedRepository(lab.dir('source'));
+    const bare = join(lab.base, 'app.git');
+    git(lab.base, 'clone', '-q', '--bare', source, bare);
+    const [worktree, sparse] = ['one', 'two'].map((name) => {
+      git(bare, 'worktree', 'add', '-q', '-b', name, join(lab.base, name));
+      return join(lab.base, name);
+    }) as [string, string];
+
+    git(sparse, 'sparse-checkout', 'init', '--cone');
+
+    expect(readFileSync(join(bare, 'config.worktree'), 'utf8')).toContain('bare = true');
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(bare)));
+    await expect(locate(sparse)).resolves.toEqual(grouped(sparse, real(bare)));
+  });
+
+  it('keeps grouping the worktrees of a submodule after git sparse-checkout moved its settings to config.worktree', async () => {
+    const source = committedRepository(lab.dir('source'));
+    const superproject = committedRepository(lab.dir('super'));
+    git(superproject, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'sub');
+    const checkout = join(superproject, 'sub');
+    const worktree = join(lab.base, 'sub-fix');
+    git(checkout, 'worktree', 'add', '-q', '-b', 'fix', worktree);
+
+    git(worktree, 'sparse-checkout', 'init', '--cone');
+
+    expect(readFileSync(join(superproject, '.git', 'modules', 'sub', 'config.worktree'), 'utf8')).toContain('worktree = ../../../sub');
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(checkout)));
+  });
+
+  it('leaves the worktrees of a submodule on their own when git quotes the path of the submodule in its config', async () => {
+    const source = committedRepository(lab.dir('source'));
+    const superproject = committedRepository(lab.dir('super'));
+    git(superproject, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'a # b');
+    const checkout = join(superproject, 'a # b');
+    const worktree = join(lab.base, 'sub-fix');
+    git(checkout, 'worktree', 'add', '-q', '-b', 'fix', worktree);
+
+    expect(readFileSync(join(superproject, '.git', 'modules', 'a # b', 'config'), 'utf8')).toContain('worktree = "../../../a # b"');
+    await expect(locate(worktree)).resolves.toMatchObject({ kind: 'rejected', reason: 'core-worktree-mismatch' });
+  });
+
+  it('lets the core.worktree of config.worktree override a stale one in the shared config, as git does', async () => {
+    const superproject = mainCheckout(lab.dir('super'));
+    const modules = submodule(superproject, 'sub');
+    const checkout = `${superproject}/sub`;
+    const worktree = linkedWorktree(modules, lab.dir('sub-wt'));
+    writeFileSync(join(modules, 'config'), '[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = ../../../stale\n');
+    writeFileSync(join(modules, 'config.worktree'), '[core]\n\tworktree = ../../../sub\n');
+
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(checkout)));
+  });
+
+  it('groups a separate-git-dir checkout under itself and leaves its worktrees on their own', async () => {
+    const checkout = lab.dir('sep');
+    const gitDir = separateGitDirCheckout(checkout, lab.dir('gitdirs', 'sep.git'));
+    const worktree = linkedWorktree(gitDir, lab.dir('sep-fix'));
+
+    await expect(locate(checkout)).resolves.toEqual(grouped(checkout, checkout));
+    await expect(locate(worktree)).resolves.toEqual({
+      kind: 'own',
+      reason: 'main-unknown',
+      checkoutRoot: normalize(worktree),
+    });
+  });
+
+  it('follows the checkout reached through a symlinked path', async () => {
+    const main = mainCheckout(lab.dir('app'));
+    const worktree = linkedWorktree(`${main}/.git`, lab.dir('app-fix'));
+    const mainLink = `${lab.base}/app-link`;
+    const worktreeLink = `${lab.base}/app-fix-link`;
+    symlinkSync(main, mainLink, 'dir');
+    symlinkSync(worktree, worktreeLink, 'dir');
+
+    await expect(locate(mainLink)).resolves.toEqual(grouped(mainLink, mainLink, real(main)));
+    await expect(locate(worktreeLink)).resolves.toEqual(grouped(worktreeLink, real(main)));
+  });
+
+  it('groups worktrees whose paths hold spaces and non-ASCII names', async () => {
+    const main = mainCheckout(lab.dir('中文 目录', '项目'));
+    const worktree = linkedWorktree(`${main}/.git`, lab.dir('中文 目录', '项目-修复'));
+
+    await expect(locate(worktree)).resolves.toEqual(grouped(worktree, real(main)));
+  });
+
+  describe('forged pointers', () => {
+    function trustedRepository(): string {
+      const trusted = mainCheckout(lab.dir('trusted'));
+      linkedWorktree(`${trusted}/.git`, lab.dir('trusted-fix'));
+      submodule(trusted, 'sub');
+      return trusted;
+    }
+
+    it.each([
+      ['beside the trusted repository', ''],
+      ['inside an ignored directory of the trusted repository', 'trusted/ignored/'],
+    ])('rejects a borrowed worktree pointer %s', async (_label, prefix) => {
+      const trusted = trustedRepository();
+      const evil = forgedPointer(lab.dir(`${prefix}evil`), `${trusted}/.git/worktrees/trusted-fix`);
+
+      await expect(locate(evil)).resolves.toEqual({
+        kind: 'rejected',
+        reason: 'backpointer-mismatch',
+        checkoutRoot: normalize(evil),
+      });
+    });
+
+    it.each([
+      ['beside the trusted repository', ''],
+      ['inside an ignored directory of the trusted repository', 'trusted/ignored/'],
+    ])('keeps a borrowed submodule pointer %s on its own checkout', async (_label, prefix) => {
+      const trusted = trustedRepository();
+      const evil = forgedPointer(lab.dir(`${prefix}evil`), `${trusted}/.git/modules/sub`);
+
+      await expect(locate(evil)).resolves.toEqual(grouped(evil, evil));
+    });
+
+    it.each([
+      ['beside the trusted repository', ''],
+      ['inside an ignored directory of the trusted repository', 'trusted/ignored/'],
+    ])('rejects a forged core.worktree %s', async (_label, prefix) => {
+      const trusted = trustedRepository();
+      const worktree = forgedCoreWorktree(lab.dir(`${prefix}attacker`), trusted);
+
+      await expect(locate(worktree)).resolves.toEqual({
+        kind: 'rejected',
+        reason: 'core-worktree-mismatch',
+        checkoutRoot: normalize(worktree),
+      });
+    });
+
+    it('rejects a forged core.worktree that only config.worktree declares', async () => {
+      const trusted = trustedRepository();
+      const attacker = lab.dir('attacker');
+      const worktree = forgedCoreWorktree(attacker, trusted);
+      renameSync(join(attacker, 'fake.git', 'config'), join(attacker, 'fake.git', 'config.worktree'));
+
+      await expect(locate(worktree)).resolves.toEqual({
+        kind: 'rejected',
+        reason: 'core-worktree-mismatch',
+        checkoutRoot: normalize(worktree),
+      });
+    });
+
+    it('rejects worktree metadata whose registered path is not a .git entry', async () => {
+      const main = mainCheckout(lab.dir('app'));
+      const worktree = linkedWorktree(`${main}/.git`, lab.dir('app-fix'));
+      writeFileSync(`${main}/.git/worktrees/app-fix/gitdir`, `${real(worktree)}/elsewhere\n`);
+
+      await expect(locate(worktree)).resolves.toEqual({
+        kind: 'rejected',
+        reason: 'registered-path-not-dotgit',
+        checkoutRoot: normalize(worktree),
+      });
+    });
+  });
+
+  describe('unreadable .git entries', () => {
+    it('stops at an unparseable .git file instead of grouping into the enclosing repository', async () => {
+      mainCheckout(lab.dir('outer'));
+      const inner = lab.dir('outer', 'inner');
+      writeFileSync(`${inner}/.git`, 'not a pointer\n');
+
+      await expect(locate(lab.dir('outer', 'inner', 'src'))).resolves.toEqual({
+        kind: 'own',
+        reason: 'unreadable-dotgit',
+        checkoutRoot: normalize(inner),
+      });
+    });
+
+    it('stops at a .git directory without HEAD, which git does not recognize, instead of grouping under it', async () => {
+      mainCheckout(lab.dir('outer'));
+      const inner = lab.dir('outer', 'inner');
+      mkdirSync(`${inner}/.git`);
+      const own = { kind: 'own', reason: 'unreadable-dotgit', checkoutRoot: normalize(inner) };
+
+      await expect(locate(inner)).resolves.toEqual(own);
+      await expect(locate(lab.dir('outer', 'inner', 'src'))).resolves.toEqual(own);
+    });
+
+    it('keeps a .git directory whose HEAD is a dangling symlink as a checkout', async () => {
+      const main = lab.dir('app');
+      mkdirSync(`${main}/.git`);
+      symlinkSync('refs/heads/main', `${main}/.git/HEAD`);
+
+      await expect(locate(lab.dir('app', 'src'))).resolves.toEqual(grouped(main, main));
+    });
+
+    it('reports a pointer to a git directory without HEAD', async () => {
+      const checkout = lab.dir('sep');
+      const gitDir = separateGitDirCheckout(checkout, lab.dir('gitdirs', 'sep.git'));
+      rmSync(`${gitDir}/HEAD`);
+
+      await expect(locate(lab.dir('sep', 'src'))).resolves.toEqual({
+        kind: 'own',
+        reason: 'invalid-gitdir',
+        checkoutRoot: normalize(checkout),
+      });
+    });
+
+    it('rejects a .git pointer that is a symlink', async () => {
+      const main = mainCheckout(lab.dir('app'));
+      const worktree = linkedWorktree(`${main}/.git`, lab.dir('app-fix'));
+      const link = lab.dir('linked-pointer');
+      symlinkSync(`${worktree}/.git`, `${link}/.git`);
+
+      await expect(locate(link)).resolves.toEqual({
+        kind: 'own',
+        reason: 'unreadable-dotgit',
+        checkoutRoot: normalize(link),
+      });
+    });
+
+    it('reports a pointer to a missing git directory', async () => {
+      const worktree = lab.dir('app-fix');
+      writeFileSync(`${worktree}/.git`, `gitdir: ${lab.base}/missing/.git/worktrees/app-fix\n`);
+
+      await expect(locate(worktree)).resolves.toEqual({
+        kind: 'own',
+        reason: 'invalid-gitdir',
+        checkoutRoot: normalize(worktree),
+      });
+    });
+
+    it('reports worktree metadata without its commondir file', async () => {
+      const main = mainCheckout(lab.dir('app'));
+      const worktree = linkedWorktree(`${main}/.git`, lab.dir('app-fix'));
+      rmSync(`${main}/.git/worktrees/app-fix/commondir`);
+
+      await expect(locate(worktree)).resolves.toEqual({
+        kind: 'own',
+        reason: 'incomplete-worktree-metadata',
+        checkoutRoot: normalize(worktree),
+      });
+    });
+  });
+
+  it('reads only the disk and ignores GIT_* variables of the process', async () => {
+    const other = mainCheckout(lab.dir('other'));
+    const plain = lab.dir('plain');
+    vi.stubEnv('GIT_DIR', `${other}/.git`);
+    vi.stubEnv('GIT_WORK_TREE', other);
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+
+    await expect(locate(plain)).resolves.toEqual({ kind: 'own', reason: 'not-a-repo' });
+  });
+
+  it('flags unreadable and rejected results as degraded and narrows them to a checkout root', () => {
+    const checkoutRoot = '/repo' as AbsoluteDir;
+    const results: readonly CheckoutLocation[] = [
+      { kind: 'own', reason: 'not-a-repo' },
+      { kind: 'own', reason: 'main-unknown', checkoutRoot },
+      { kind: 'own', reason: 'unreadable-dotgit', checkoutRoot },
+      { kind: 'own', reason: 'invalid-gitdir', checkoutRoot },
+      { kind: 'own', reason: 'incomplete-worktree-metadata', checkoutRoot },
+      { kind: 'rejected', reason: 'backpointer-mismatch', checkoutRoot },
+      { kind: 'grouped', checkoutRoot, mainDir: checkoutRoot, canonicalMainDir: checkoutRoot },
+    ];
+
+    expect(results.map(isDegradedLocation)).toEqual([false, false, true, true, true, true, false]);
+    const degraded = results.find(isDegradedLocation);
+    expectTypeOf(degraded?.checkoutRoot).toEqualTypeOf<AbsoluteDir | undefined>();
   });
 });

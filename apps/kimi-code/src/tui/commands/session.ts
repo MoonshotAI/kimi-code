@@ -174,7 +174,7 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
     await session.init();
     host.track('init_complete');
     host.streamingUI.timeline.turnEnded('completed');
-    host.streamingUI.finalizeTurn((item) => {
+    host.streamingUI.finalizeTurnlessRequest((item) => {
       host.sendQueuedMessage(session, item);
     });
   } catch (error) {

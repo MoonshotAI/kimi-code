@@ -23,9 +23,13 @@ export const promptPartSchema = z.discriminatedUnion('type', [
 
 export const emptyPayloadSchema = z.object({});
 
-export const promptPayloadSchema = z.object({
+const promptInputSchema = z.object({
   input: z.array(promptPartSchema),
   promptId: z.string().min(1).optional(),
+});
+
+export const promptPayloadSchema = promptInputSchema.extend({
+  rejectIfBusy: z.boolean().optional(),
 });
 
 export const promptSkillActivationSchema = z.object({
@@ -34,7 +38,7 @@ export const promptSkillActivationSchema = z.object({
   args: z.string().optional(),
 });
 
-export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
+export const promptWithSkillsPayloadSchema = promptInputSchema.extend({
   skills: z.array(promptSkillActivationSchema).min(1),
   steerIfActive: z.boolean().optional(),
 });

@@ -525,6 +525,8 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .sm-picker__option.is-active { background: var(--color-hover); color: var(--color-text-strong); }
+.sm-picker__option:focus,
+.sm-picker__option:focus-visible { outline: none; }
 .sm-picker__option.is-muted { color: var(--color-text-muted); }
 .sm-picker__option-label {
   min-width: 0;

@@ -2,30 +2,27 @@ name: CI
 
 on:
   pull_request:
+    branches-ignore:
+      - 'release/*'
   push:
     branches:
       - main
-      - 'release/*'
 
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Only a newer push to a pull request cancels the run in progress. Pushes to
+# main and manual runs never cancel one, so every merged commit gets a
+# finished result and main's state is always known. A newer run on the same
+# branch waits, and GitHub keeps only the latest waiting run. Release branches
+# group by commit, so their runs never wait on each other.
 concurrency:
   group: ci-${{ github.ref }}-${{ startsWith(github.ref, 'refs/heads/release/') && github.sha || '' }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  release-workflow-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-      - run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
-
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -42,8 +39,24 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Check for generated declarations in agent-core-v2 source and tests
+        shell: bash
+        run: |
+          declarations=$(git status --porcelain=v1 --untracked-files=all --ignored=matching -- \
+            ':(glob)packages/agent-core-v2/src/**/*.d.ts' \
+            ':(glob)packages/agent-core-v2/src/**/*.d.[cm]ts' \
+            ':(glob)packages/agent-core-v2/test/**/*.d.ts' \
+            ':(glob)packages/agent-core-v2/test/**/*.d.[cm]ts')
+          if [ -n "$declarations" ]; then
+            printf 'Unexpected declarations in agent-core-v2 source and tests:\n%s\n' "$declarations"
+            exit 1
+          fi
       - name: Smoke test CLI bundle
         run: pnpm -C apps/kimi-code run smoke
+      - name: Test automatic reconnect on the built CLI
+        run: pnpm exec vitest run packages/app-core/test/reconnect/server-restart.test.ts
+        env:
+          TESTKIT_CLI_BUILD: dist
       # Temporarily disabled while the E2E suite is being replaced.
       - name: Run the TUI and KAP subprocess journeys on the built CLI
         if: false
@@ -55,7 +68,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: cli-web-${{ github.sha }}
-          path: apps/kimi-code/dist-web/
+          path: apps/kimi-code/web-dist/
           if-no-files-found: error
           retention-days: 7
           overwrite: true
@@ -79,75 +92,35 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      # Keep the KAP server suite and every tests/scenarios case in these shards.
-      - run: pnpm run test --shard=${{ matrix.shard }}/5 --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**' --reporter=default --reporter=github-actions --reporter=./scripts/vitest-l0-gate.mjs
-        env:
-          KIMI_L0_RESULTS: .vitest-reports/l0-${{ matrix.shard }}.json
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
-        with:
-          name: l0-results-${{ matrix.shard }}
-          path: .vitest-reports/l0-${{ matrix.shard }}.json
-          if-no-files-found: error
-          retention-days: 3
-
-  # Every L0 test in tests/protected.yaml must pass on its first attempt in
-  # the sharded run above, whatever its kind (smoke, regression, contract).
-  # Temporarily disabled while the E2E suite is being replaced.
-  l0-gate:
-    name: L0 protected tests
-    needs: test
-    if: ${{ !cancelled() && false }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
         with:
           fetch-depth: 2
-      - name: Include L0 IDs protected on the base revision
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          git cat-file -e "$BASE_SHA^{commit}" || git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          entry=$(git ls-tree "$BASE_SHA" -- tests/protected.yaml)
-          if [[ -n "$entry" ]]; then
-            git show "${BASE_SHA}:tests/protected.yaml" > "$RUNNER_TEMP/l0-base.yaml"
-            echo "KIMI_L0_BASE_MANIFEST=$RUNNER_TEMP/l0-base.yaml" >> "$GITHUB_ENV"
-          fi
+
+      # Pull requests run only the packages their diff reaches through the
+      # workspace dependency graph, on as many shards as that needs; shards
+      # left over stop here before installing. Pushes and manual runs test
+      # everything, so a manual run on a branch is the way to get a full run.
+      - name: Select tests
+        id: select
+        run: node scripts/select-vitest-targets.mjs ${{ github.event_name == 'pull_request' && '--pull-request' || '' }} ${{ matrix.shard == 1 && '--summary' || '' }}
 
       - uses: pnpm/action-setup@v6
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
 
       - uses: actions/setup-node@v6
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
         with:
           node-version-file: .nvmrc
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/protected-smoke.test.mjs
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: l0-results-*
-          path: .vitest-reports
-          merge-multiple: true
-      - name: Check every L0 test in the shard results
-        run: node scripts/vitest-l0-gate.mjs .vitest-reports
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
+      # Keep the KAP server suite and every tests/scenarios case in these shards.
+      - run: pnpm run test ${{ steps.select.outputs.filters }} --shard=${{ matrix.shard }}/${{ steps.select.outputs.shards }} --passWithNoTests --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**' --reporter=default --reporter=github-actions
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
 
-  # pi-tui's suite runs on node:test (not vitest), so the root `pnpm run test`
-  # does not execute it; it needs its own job.
-  test-pi-tui:
+  # Suites the sharded root run above does not cover. They take seconds each,
+  # so they share one runner instead of holding one each.
+  test-standalone-suites:
     runs-on: ubuntu-latest
 
     steps:
@@ -161,28 +134,10 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @moonshot-ai/pi-tui test
-
-  # The VS Code extension suite runs on the default (v2) engine as part of the
-  # sharded root run above; this job reruns it on the legacy v1 engine, which
-  # the extension selects through the rollback env var.
-  test-vscode-legacy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter kimi-code test
-        env:
-          KIMI_CODE_LEGACY_FLAG: "1"
+      # pi-tui's suite runs on node:test (not vitest), so the root
+      # `pnpm run test` does not execute it.
+      - name: pi-tui (node:test)
+        run: pnpm --filter @moonshot-ai/pi-tui test
 
   test-windows:
     runs-on: windows-latest
@@ -224,7 +179,10 @@ jobs:
       - run: pnpm run lint
       - run: node --test 'scripts/checks/*.test.mjs'
       - run: node --test scripts/check-comments.test.mjs
-      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
+      - name: Release workflow tests
+        if: ${{ !cancelled() }}
+        run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
+      - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs scripts/main-history.test.mjs scripts/e2e-nightly-notify.test.mjs scripts/e2e-rerun-failures.test.mjs
       - run: pnpm run sherif
       - name: Check new code duplication
         id: duplication

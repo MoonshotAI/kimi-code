@@ -26,18 +26,18 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (67 record types)
+// Index (68 record types)
 //   changeNotifier.snapshot            changeNotifier.snapshot                                    src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      (none)                                                     src/agent/profile/profileOps.ts
 //   context.append_loop_event          changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
-//   context.append_message             swarmReminderDelivered                                     src/agent/contextMemory/contextEvents.ts
+//   context.append_message             (none)                                                     src/agent/contextMemory/contextEvents.ts
 //   context.apply_compaction           changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
 //   context.clear                      changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
 //   context.undo                       changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
 //   cron.add                           (none)                                                     src/features/cron/cronOps.ts
 //   cron.cursor                        (none)                                                     src/features/cron/cronOps.ts
 //   cron.delete                        (none)                                                     src/features/cron/cronOps.ts
-//   environment.set_binding            environmentBinding                                         src/agent/environmentBinding/environmentBindingOps.ts
+//   environment.set_binding            environmentBinding, workdirMove                            src/agent/environmentBinding/environmentBindingOps.ts
 //   file_history.checkpoint            fileHistory                                                src/features/fileHistory/fileHistoryOps.ts
 //   file_history.tracked               fileHistory                                                src/features/fileHistory/fileHistoryOps.ts
 //   forked                             (none)                                                     src/session/agentLifecycle/forked.ts
@@ -72,8 +72,8 @@
 //   subagent.failed                    (none)                                                     src/session/subagent/mirrorAgentRun.ts
 //   subagent.spawned                   (none)                                                     src/session/subagent/mirrorAgentRun.ts
 //   subagent.started                   (none)                                                     src/session/subagent/mirrorAgentRun.ts
-//   swarm_mode.enter                   swarm, swarmReminderDelivered                              src/features/swarm/swarmOps.ts
-//   swarm_mode.exit                    swarm, swarmReminderDelivered                              src/features/swarm/swarmOps.ts
+//   swarm_mode.enter                   swarm                                                      src/features/swarm/swarmOps.ts
+//   swarm_mode.exit                    swarm                                                      src/features/swarm/swarmOps.ts
 //   task.started                       task                                                       src/agent/task/taskOps.ts
 //   task.terminated                    task                                                       src/agent/task/taskOps.ts
 //   token_counting.measured            (none)                                                     src/agent/tokenCounting/tokenCountingOps.ts
@@ -85,6 +85,7 @@
 //   tools.register_user_tool           userTool                                                   src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           (none)                                                     src/agent/profile/profileOps.ts
 //   tools.set_active_tools             (none)                                                     src/agent/profile/profileOps.ts
+//   tools.settled                      turn                                                       src/agent/loop/turnOps.ts
 //   tools.unregister_user_tool         userTool                                                   src/agent/userTool/userToolOps.ts
 //   tools.update_store                 (none)                                                     src/features/todo/todoOps.ts
 //   tower_mode.enter                   tower, tower.owner                                         src/features/tower/towerOps.ts
@@ -144,7 +145,7 @@ interface ContextAppendLoopEventPayload {
 }
 
 /**
- * states: swarmReminderDelivered
+ * states: (none)
  * owner: src/agent/contextMemory/contextEvents.ts
  */
 interface ContextAppendMessagePayload {
@@ -237,7 +238,7 @@ interface CronDeletePayload {
 }
 
 /**
- * states: environmentBinding
+ * states: environmentBinding, workdirMove
  * owner: src/agent/environmentBinding/environmentBindingOps.ts
  */
 interface EnvironmentSetBindingPayload {
@@ -245,6 +246,8 @@ interface EnvironmentSetBindingPayload {
   agentId: string;
   environmentId: string;
   cwd?: string;
+  originCwd?: string | null;
+  pendingBaseline?: object | null;
 }
 
 /**
@@ -307,6 +310,50 @@ interface FullCompactionBeginPayload {
 interface FullCompactionCancelPayload {
   _name: 'full_compaction.cancel';
   agentId: string;
+  /** KimiErrorPayload */
+  error?: {
+    code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+    message: string;
+    name?: string;
+    details?: Readonly<Record<string, unknown>>;
+    retryable: boolean;
+    cause?: {
+      code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+      message: string;
+      name?: string;
+      details?: Readonly<Record<string, unknown>>;
+      retryable: boolean;
+      cause?: {
+        code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+        message: string;
+        name?: string;
+        details?: Readonly<Record<string, unknown>>;
+        retryable: boolean;
+        cause?: {
+          code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+          message: string;
+          name?: string;
+          details?: Readonly<Record<string, unknown>>;
+          retryable: boolean;
+          cause?: {
+            code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+            message: string;
+            name?: string;
+            details?: Readonly<Record<string, unknown>>;
+            retryable: boolean;
+            cause?: {
+              code: ErrorCode;
+              message: string;
+              name?: string;
+              details?: Readonly<Record<string, unknown>>;
+              retryable: boolean;
+              cause?: ErrorPayload;
+            };
+          };
+        };
+      };
+    };
+  };
 }
 
 /**
@@ -700,7 +747,7 @@ interface SubagentStartedPayload {
 }
 
 /**
- * states: swarm, swarmReminderDelivered
+ * states: swarm
  * owner: src/features/swarm/swarmOps.ts
  */
 interface SwarmModeEnterPayload {
@@ -711,7 +758,7 @@ interface SwarmModeEnterPayload {
 }
 
 /**
- * states: swarm, swarmReminderDelivered
+ * states: swarm
  * owner: src/features/swarm/swarmOps.ts
  */
 interface SwarmModeExitPayload {
@@ -838,6 +885,21 @@ interface ToolsSetActiveToolsPayload {
   _name: 'tools.set_active_tools';
   agentId: string;
   names: string[];
+}
+
+/**
+ * states: turn
+ * owner: src/agent/loop/turnOps.ts
+ */
+interface ToolsSettledPayload {
+  _name: 'tools.settled';
+  agentId: string;
+  tools: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    deferred?: true;
+  }[];
 }
 
 /**
@@ -1066,6 +1128,7 @@ interface WirePayloadMap {
   "tools.register_user_tool": ToolsRegisterUserToolPayload;
   "tools.reset_active_tools": ToolsResetActiveToolsPayload;
   "tools.set_active_tools": ToolsSetActiveToolsPayload;
+  "tools.settled": ToolsSettledPayload;
   "tools.unregister_user_tool": ToolsUnregisterUserToolPayload;
   "tools.update_store": ToolsUpdateStorePayload;
   "tower_mode.enter": TowerModeEnterPayload;

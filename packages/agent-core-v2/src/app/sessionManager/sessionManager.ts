@@ -14,10 +14,15 @@ import type {
   SessionForkedEvent,
   SessionWillCloseEvent,
   SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 
 export interface CreateManagedSessionOptions extends CreateSessionOptions {
   readonly workspaceId?: string;
+}
+
+export interface MoveManagedSessionOptions {
+  readonly sessionId: string;
+  readonly workDir: string;
 }
 
 export interface UnguardedSessionLifecycle {
@@ -40,6 +45,7 @@ export interface ISessionManager {
     readonly environmentCwd?: string;
   }>;
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
+  move(options: MoveManagedSessionOptions): Promise<ISessionScopeHandle>;
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   status(sessionId: string): Promise<SessionSummary | undefined>;

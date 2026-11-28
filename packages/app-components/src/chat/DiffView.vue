@@ -246,7 +246,7 @@ function treeRowStyle(depth: number): Record<string, string> {
         </div>
       </PanelHeader>
 
-      <div class="dv-detail-body" :class="{ dim: refreshing }">
+      <div class="dv-detail-body" data-panel-content :class="{ dim: refreshing }">
         <Transition name="diff-content" mode="out-in">
           <div v-if="loading" key="loading" class="empty-state diff-loading">
             <Spinner size="md" />
@@ -300,7 +300,7 @@ function treeRowStyle(depth: number): Record<string, string> {
       </PanelHeader>
 
       <!-- File list (flat) -->
-      <ScrollArea v-if="hasChanges && viewMode === 'list'" class="ch-list">
+      <ScrollArea v-if="hasChanges && viewMode === 'list'" class="ch-list" data-panel-content>
         <div class="ch-list-content">
           <Tooltip
             v-for="entry in changes"
@@ -322,7 +322,7 @@ function treeRowStyle(depth: number): Record<string, string> {
       </ScrollArea>
 
       <!-- File tree -->
-      <ScrollArea v-else-if="hasChanges && viewMode === 'tree'" class="ch-list ch-tree">
+      <ScrollArea v-else-if="hasChanges && viewMode === 'tree'" class="ch-list ch-tree" data-panel-content>
         <TransitionGroup name="tree-collapse" tag="ul" class="tree-list ch-list-content">
           <li
             v-for="{ node, depth } in flatTree"
@@ -357,13 +357,13 @@ function treeRowStyle(depth: number): Record<string, string> {
       </ScrollArea>
 
       <!-- Empty state when git info present but no changes -->
-      <div v-else-if="hasGitInfo" class="empty-state">
+      <div v-else-if="hasGitInfo" class="empty-state" data-panel-content>
         <span class="empty-state-icon" aria-hidden="true"><Icon name="check" size="lg" /></span>
         {{ t('diff.clean') }}
       </div>
 
       <!-- No git info at all -->
-      <div v-else class="empty-state">
+      <div v-else class="empty-state" data-panel-content>
         {{ t('diff.empty') }}
       </div>
     </template>

@@ -31,7 +31,7 @@ import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
@@ -47,6 +47,7 @@ import {
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -206,9 +207,9 @@ describe('TowerSpawnTool', () => {
               ? { enabled: thinkingEnabled }
               : undefined) as IConfigService['get'],
     });
-    ix.stub(IModelCatalog, {
+    ix.stub(IProviderCatalogService, {
       get: (alias: string) => ({ id: alias, ...modelMeta[alias] }) as Model,
-    } as unknown as IModelCatalog);
+    } as unknown as IProviderCatalogService);
     ix.set(ITowerSpawnTool, new SyncDescriptor(TowerSpawnTool));
     executor = new HandlerToolExecutor<LegacyToolAgentContext>([]);
     executor.addExecute(new LegacyExecutableToolAdapter(ix.get(ITowerSpawnTool)));

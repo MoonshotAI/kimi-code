@@ -16,7 +16,7 @@ import {
 import {
   fromLlmMessage,
   type Message as LegacyMessage,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+} from '@moonshot-ai/agent-core-v2/wire/message';
 import type {
   ContextMessage as CoreContextMessage,
   ContextMessageTiming,
@@ -77,6 +77,7 @@ export interface AgentFacade {
   prompt(input: {
     input: readonly ContentPart[];
     promptId?: string;
+    rejectIfBusy?: boolean;
   }): Promise<PromptLaunchResult>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   steer(input: { input: readonly ContentPart[]; promptId?: string }): Promise<SteerResult>;

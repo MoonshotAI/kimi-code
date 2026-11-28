@@ -43,6 +43,7 @@ interface MountOptions {
   manageHosts?: () => void;
   importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
   busy?: boolean;
+  primaryImmutable?: boolean;
 }
 
 function mountDialog(opts: MountOptions = {}) {
@@ -61,6 +62,7 @@ function mountDialog(opts: MountOptions = {}) {
         manageHosts: opts.manageHosts,
         importProjectConfig: opts.importProjectConfig,
         busy: opts.busy,
+        primaryImmutable: opts.primaryImmutable,
         onSubmit: submit,
         onCancel: cancel,
       }),
@@ -353,6 +355,35 @@ describe('WorkspaceEditDialog edit mode', () => {
       projectConfigDirs: [],
     });
   });
+
+  it('offers no way to replace an immutable primary while the name and other directories stay editable', async () => {
+    const { submit } = mountDialog({
+      mode: 'edit',
+      initialName: 'repo',
+      initialDirs: ['/a/repo', '/a/extra'],
+      pick: async () => ['/a/more'],
+      primaryImmutable: true,
+    });
+    await nextTick();
+
+    expect(primaryRow()?.textContent).toContain('repo');
+    expect(document.querySelector('.we-dir-primary')).toBeNull();
+    expect(dirRows()[0]!.querySelector('button.we-dir-rm')).toBeNull();
+
+    await setName('renamed');
+    document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(3));
+    expect(document.querySelector('.we-dir-primary')).toBeNull();
+    dirRows()[1]!.querySelector<HTMLButtonElement>('.we-dir-rm')!.click();
+    await nextTick();
+    submitButton().click();
+    await nextTick();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'renamed',
+      dirs: ['/a/repo', '/a/more'],
+      projectConfigDirs: [],
+    });
+  });
 });
 
 describe('WorkspaceEditDialog shared behavior', () => {
@@ -405,6 +436,40 @@ describe('WorkspaceEditDialog shared behavior', () => {
       name: 'root',
       dirs: ['/a/root', '/a/second', '/a/extra'],
       projectConfigDirs: ['/a/extra'],
+    });
+  });
+
+  it('treats a picked directory as listed when it differs only in separators, letter case or a trailing slash', async () => {
+    const pick = vi.fn(async () => ['C:\\repo\\extra', 'c:\\repo\\EXTRA\\', 'C:\\repo\\new']);
+    const { submit } = mountDialog({ mode: 'edit', initialName: 'repo', initialDirs: ['C:/repo', 'C:/repo/extra'], pick });
+    await nextTick();
+
+    document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
+    await vi.waitFor(() => expect(pick).toHaveBeenCalledOnce());
+    await nextTick();
+    expect(dirRows()).toHaveLength(3);
+    submitButton().click();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'repo',
+      dirs: ['C:/repo', 'C:/repo/extra', 'C:\\repo\\new'],
+      projectConfigDirs: [],
+    });
+  });
+
+  it('imports only the project config directories that are not listed under another separator form', async () => {
+    const { submit } = mountDialog({
+      initialDirs: ['C:/repo', 'C:/repo/shared'],
+      importProjectConfig: async () => ['C:\\repo\\shared', 'C:\\repo\\docs'],
+    });
+    await nextTick();
+
+    document.querySelector<HTMLButtonElement>('.we-dirs-actions .ui-button')!.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(3));
+    submitButton().click();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'repo',
+      dirs: ['C:/repo', 'C:/repo/shared', 'C:\\repo\\docs'],
+      projectConfigDirs: ['C:\\repo\\docs'],
     });
   });
 });

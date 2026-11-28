@@ -21,7 +21,7 @@ export const PREVIEW_LINES = RESULT_PREVIEW_LINES;
 export class CardOnly implements Component {
   constructor(private readonly inner: Component) {}
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     return this.inner.render(width);
   }
 

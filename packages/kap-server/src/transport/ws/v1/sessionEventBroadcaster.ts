@@ -9,7 +9,7 @@ import type {
   QuestionResult,
   Scope,
   SessionActivityState,
-  Workspace,
+  Project,
 } from '@moonshot-ai/agent-core-v2';
 import {
   Error2,
@@ -25,7 +25,7 @@ import {
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
-  IWorkspaceService,
+  IProjectService,
   followSessionLifecycles,
   getLiveSessionById,
   missingConfiguredModelAlias,
@@ -137,6 +137,8 @@ function releaseConversation(subscription: AgentSubscription): void {
   subscription.conversation?.listener.dispose();
   subscription.conversation = undefined;
 }
+
+const AGENT_STATE_CONFIG_DOMAINS = new Set(['models', 'providers']);
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
@@ -469,9 +471,20 @@ export class SessionEventBroadcaster {
     const tasks = new SessionTaskFeed(agents, (agentId, info) => {
       this.sendAgentFrame(state, agentId, toTaskMessage(state.sessionId, agentId, info));
     });
-    const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
-      this.sendAgentFrame(state, agentId, message);
-    });
+    const config = this.opts.core.accessor.get(IConfigService) as IConfigService | undefined;
+    const agentStates = new SessionAgentFeed(
+      sessionId,
+      agents,
+      (agentId, message) => {
+        this.sendAgentFrame(state, agentId, message);
+      },
+      (listener) => {
+        const subscription = config?.onDidSectionChange?.((event) => {
+          if (AGENT_STATE_CONFIG_DOMAINS.has(event.domain)) listener();
+        });
+        return toDisposable(() => subscription?.dispose());
+      },
+    );
     state.tasks = tasks;
     state.agents = agentStates;
     state.lifecycleDisposables.push(tasks, agentStates);
@@ -590,12 +603,13 @@ export class SessionEventBroadcaster {
         const live = getLiveSessionById(this.opts.core.accessor, sessionId);
         if (live !== undefined) {
           try {
-            const meta = await live.accessor.get(ISessionMetadata).read();
+            const metadata = live.accessor.get(ISessionMetadata);
+            const meta = await metadata.read();
             const ctx = live.accessor.get(ISessionContext);
             summary = {
               id: meta.id,
               workspaceId: ctx.workspaceId,
-              cwd: ctx.cwd,
+              cwd: metadata.effectiveCwd,
               environmentId: meta.environmentId,
               environmentCwd: meta.environmentCwd,
               title: meta.title,
@@ -615,7 +629,7 @@ export class SessionEventBroadcaster {
         | (SessionWireFields & { cwd?: string })
         | undefined;
       if (summary === undefined) return undefined;
-      const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
+      const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IProjectService).get(summary.workspaceId))?.root;
       if (cwd === undefined) return undefined;
       const workspaceRoot = await workspaceRootOf(this.opts.core, summary.workspaceId);
       session = toWireSession(
@@ -754,6 +768,7 @@ export class SessionEventBroadcaster {
     if (event.type === 'event.model_catalog.changed') {
       const payload = modelCatalogChangedPayload(corePayload);
       if (payload === undefined) return;
+      for (const state of this.sessions.values()) state.agents?.refresh();
       this.enqueueGlobal(event.type, () => ({ type: 'invalidated', kind: 'models' }));
       return;
     }
@@ -991,13 +1006,13 @@ function sessionLifecyclePayload(
   return { sessionId: candidate.sessionId, workspaceId: candidate.workspaceId, session: candidate.session };
 }
 
-function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
+function workspaceLifecyclePayload(payload: unknown): Project | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const candidate = (payload as { workspace?: unknown }).workspace;
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
     return undefined;
   }
-  const ws = candidate as Partial<Workspace>;
+  const ws = candidate as Partial<Project>;
   if (typeof ws.id !== 'string' || ws.id.length === 0) return undefined;
   if (typeof ws.root !== 'string' || ws.root.length === 0) return undefined;
   if (typeof ws.name !== 'string') return undefined;
@@ -1018,7 +1033,7 @@ function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
 
 function workspaceDeletedPayload(
   payload: unknown,
-): { workspaceId: string; root: string; workspace?: Workspace } | undefined {
+): { workspaceId: string; root: string; workspace?: Project } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const candidate = payload as { workspaceId?: unknown; root?: unknown; workspace?: unknown };
   if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.length === 0) {
@@ -1028,7 +1043,7 @@ function workspaceDeletedPayload(
   return {
     workspaceId: candidate.workspaceId,
     root: candidate.root,
-    workspace: candidate.workspace as Workspace | undefined,
+    workspace: candidate.workspace as Project | undefined,
   };
 }
 

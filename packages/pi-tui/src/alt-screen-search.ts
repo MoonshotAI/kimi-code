@@ -7,6 +7,7 @@ import type {
 	SelectionInputResult,
 } from "./editor-component.ts";
 import { getKeybindings } from "./keybindings.ts";
+import type { KeyId } from "./keys.ts";
 import {
 	RENDER_LINES,
 	textRenderLine,
@@ -207,6 +208,24 @@ export function getAltScreenSearchMatchKey(match: AltScreenSearchMatch): string 
 	return first && last ? `${first.row}:${first.startCol}:${last.row}:${last.endCol}` : "";
 }
 
+function formatKey(key: KeyId | undefined): string {
+	return key
+		? key
+				.split("+")
+				.map((part) => {
+					if (process.platform === "darwin" && part.toLowerCase() === "alt") return "Option";
+					return part.charAt(0).toUpperCase() + part.slice(1);
+				})
+				.join("+")
+		: "Unbound";
+}
+
+function formatSearchNavigationLabel(direction: -1 | 1, key: KeyId | undefined): string {
+	if (direction === -1 && key?.toLowerCase() === "up") return "↑ Previous";
+	if (direction === 1 && key?.toLowerCase() === "down") return "↓ Next";
+	return `${direction < 0 ? "↑" : "↓"} ${formatKey(key)}`;
+}
+
 export class AltScreenSearchComponent implements Component, Focusable, SelectionEditComponent {
 	private readonly input = new Input({
 		prompt: " ",
@@ -240,6 +259,11 @@ export class AltScreenSearchComponent implements Component, Focusable, Selection
 	set focused(value: boolean) {
 		this._focused = value;
 		this.input.focused = value;
+	}
+
+	setQuery(query: string): void {
+		this.input.setValue(query);
+		this.input.setCursor(query.length);
 	}
 
 	setResult(index: number, count: number): void {
@@ -345,21 +369,9 @@ export class AltScreenSearchComponent implements Component, Focusable, Selection
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
 		const innerWidth = Math.max(0, safeWidth - 2);
-		const formatKey = (key: string | undefined): string =>
-			key
-				? key
-						.split("+")
-						.map((part) => {
-							if (process.platform === "darwin" && part.toLowerCase() === "alt") return "Option";
-							return part.charAt(0).toUpperCase() + part.slice(1);
-						})
-						.join("+")
-				: "Unbound";
 		const keybindings = getKeybindings();
-		const previousKey = formatKey(keybindings.getKeys("tui.altScreen.searchPrevious")[0]);
-		const nextKey = formatKey(keybindings.getKeys("tui.altScreen.searchNext")[0]);
 		const query = this.input.getValue();
-		const result = !query
+		const result = !query.trim()
 			? ""
 			: this.resultCount === 0
 				? "No matches"
@@ -373,8 +385,8 @@ export class AltScreenSearchComponent implements Component, Focusable, Selection
 		const inputPadding = " ".repeat(Math.max(0, inputWidth - visibleWidth(inputLine)));
 		const content = `${inputLine}${inputPadding}${resultText}`;
 
-		let previousButton = `↑ ${previousKey}`;
-		let nextButton = `↓ ${nextKey}`;
+		let previousButton = formatSearchNavigationLabel(-1, keybindings.getKeys("tui.altScreen.searchPrevious")[0]);
+		let nextButton = formatSearchNavigationLabel(1, keybindings.getKeys("tui.altScreen.searchNext")[0]);
 		let separator = " · ";
 		const outerGapWidth = 1;
 		const availableControlsWidth = Math.max(0, innerWidth - outerGapWidth * 2 - 1);

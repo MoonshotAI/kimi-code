@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useFontPrefs, useIsDark } from '@moonshot-ai/app-core';
+import { useIsDark } from '@moonshot-ai/app-core/composables';
 import { Button, Checkbox, IconButton, Menu, Pill, Skeleton, Textarea } from '@moonshot-ai/app-ui';
 import { DesktopFeedbackKey, FEEDBACK_DESCRIPTION_LIMIT, type FeedbackForm, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
 import FeedbackGuideLink from './FeedbackGuideLink.vue';
@@ -14,7 +14,6 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: [] }>();
 const { t, locale } = useI18n();
-const { fontPrefs } = useFontPrefs();
 const isDark = useIsDark();
 const feedback = inject(DesktopFeedbackKey);
 const menu = ref<InstanceType<typeof Menu>>();
@@ -139,7 +138,7 @@ async function submit(): Promise<void> {
     ref="menu"
     role="dialog"
     class="feedback-popover"
-    :class="{ 'feedback-default-font': fontPrefs.ui.mode === 'kimi', 'feedback-popover-light': !isDark }"
+    :class="{ 'feedback-popover-light': !isDark }"
     tabindex="-1"
     :aria-label="t('feedback.detailTitle')"
     :style="position ? { top: `${position.top}px`, left: `${position.left}px`, maxHeight: `${position.maxHeight}px` } : { visibility: 'hidden' }"
@@ -228,7 +227,6 @@ async function submit(): Promise<void> {
   font-size: var(--ui-b2);
   line-height: calc(var(--ui-b2) + 6px);
 }
-.feedback-popover.feedback-default-font { font-family: 'PingFang SC', var(--font-ui); }
 .feedback-popover.feedback-popover-light { gap: var(--space-4); }
 .feedback-popover > * { flex-shrink: 0; }
 .feedback-popover-header, .feedback-popover-footer, .feedback-consent {

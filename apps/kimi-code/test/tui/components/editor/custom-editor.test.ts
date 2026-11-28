@@ -413,6 +413,25 @@ describe('CustomEditor slash argument hint', () => {
     expect(plain).toContain('[list] | <path>');
   });
 
+  it('preserves hardware cursor marker, fake cursor, and exact line width with an argument hint', () => {
+    const editor = makeEditor();
+    editor.focused = true;
+    editor.setArgumentHints(new Map([['find', '[query]']]));
+
+    for (const input of ['/find', '/find ']) {
+      editor.setText(input);
+      const rendered = editor.render(60);
+      const contentLine = rendered[1] ?? '';
+
+      expect(rendered.every((line) => visibleWidth(line) === 60)).toBe(true);
+      expect(contentLine).toContain(CURSOR_MARKER);
+      expect(contentLine).toContain(`${FAKE_CURSOR_START} ${FAKE_CURSOR_END}`);
+      const markerIdx = contentLine.indexOf(CURSOR_MARKER);
+      expect(visibleWidth(contentLine.slice(0, markerIdx))).toBe(4 + input.length);
+      expect(contentLine.indexOf(FAKE_CURSOR_END)).toBeLessThan(contentLine.indexOf('[query]'));
+    }
+  });
+
   it('hides the hint once an argument is typed', () => {
     const editor = makeEditor();
     editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
@@ -688,8 +707,12 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toBe('');
     expect(submit).not.toHaveBeenCalled();
 
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
     resolvePaste(true);
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
 
     expect(submit).toHaveBeenCalledWith('[image #1 (1×1)] hello');
   });
@@ -726,8 +749,12 @@ describe('CustomEditor paste marker expansion', () => {
       generation: 1,
     });
     expect(result).toEqual({ handled: true, clearSelection: true });
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
     resolvePaste(true);
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
     expect(editor.getText()).toBe('alpha beta');
 
     editor.handleInput('X');
@@ -752,8 +779,12 @@ describe('CustomEditor paste marker expansion', () => {
     const result = editor.handleSelectionInput('new\nvalue', { start: 6, end: 11, generation: 1 });
     expect(result).toEqual({ handled: false });
 
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
     resolvePaste(true);
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
     expect(editor.getText()).toBe('alpha beta');
   });
 
@@ -771,8 +802,12 @@ describe('CustomEditor paste marker expansion', () => {
     expect(result).toEqual({ handled: true, clearSelection: true });
     expect(editor.getText()).toBe('alpha beta');
 
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
     resolvePaste(true);
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
 
     expect(editor.getText()).toBe('alpha X');
     editor.handleInput('\u001F');
@@ -1109,8 +1144,12 @@ describe('CustomEditor alternate submit keys', () => {
     editor.handleInput(CTRL_Q);
     expect(submits).toEqual([]);
 
+    const pasteQueueFlushed = vi.spyOn(
+      editor as unknown as { flushPasteInputQueue(): void },
+      'flushPasteInputQueue',
+    );
     resolvePaste(true);
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(pasteQueueFlushed).toHaveBeenCalled());
 
     expect(submits).toEqual([['[image #1 (1×1)] hello', 'ctrl-q']]);
   });

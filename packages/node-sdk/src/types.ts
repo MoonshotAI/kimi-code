@@ -194,6 +194,12 @@ export interface WorkspaceTrustInstructionSources {
 /** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
+  /**
+   * Primary directory of the project the queried directory or session belongs
+   * to. Trust is recorded for this directory, and a worktree or subdirectory
+   * of a repository reports the repository's main checkout here.
+   */
+  readonly projectRoot: string;
   /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
   /** Directories outside the project that trusting grants access to (symlink-resolved). */
@@ -204,8 +210,27 @@ export interface WorkspaceTrustInfo {
 }
 
 export interface WorkspaceTrustInfoOptions {
+  /**
+   * Ask about the project this session belongs to, whichever project `workDir`
+   * resolves to, and about what the session's own directory would activate.
+   * Rejects with `session.not_found` when the session or its project no longer
+   * exists.
+   */
+  readonly sessionId?: string;
   readonly additionalDirs?: readonly string[];
   readonly environmentId?: string;
+  readonly environmentCwd?: string;
+}
+
+/** Where a session started in a directory is kept. */
+export interface SessionPlacement {
+  /** Project the session belongs to; its sessions live in `sessions/<projectId>`. */
+  readonly projectId: string;
+  /** The primary directory of that project. */
+  readonly projectRoot: string;
+  /** The directory in the spelling a session records. */
+  readonly workDir: string;
+  /** Set when the session stays in `workDir`; a session without it follows the project's primary directory. */
   readonly environmentCwd?: string;
 }
 
@@ -404,6 +429,11 @@ export interface ReloadSessionInput extends ResumeSessionInput {
   readonly forcePluginSessionStartReminder?: boolean;
 }
 
+export interface MoveSessionInput {
+  readonly id: string;
+  readonly workDir: string;
+}
+
 export interface AddAdditionalDirInput {
   readonly id: string;
   readonly path: string;
@@ -448,6 +478,7 @@ export interface ExportSessionResult {
 
 export interface ListSessionsOptions {
   readonly workDir?: string;
+  readonly scope?: 'workdir' | 'project';
   readonly sessionId?: string;
   /**
    * Include archived sessions in the listing. Defaults to non-archived only.
@@ -552,6 +583,7 @@ export interface SessionSummary {
   readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly workDir: string;
+  readonly projectWorkDir?: string;
   readonly sessionDir: string;
   readonly createdAt: number;
   readonly updatedAt: number;

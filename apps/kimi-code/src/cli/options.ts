@@ -40,6 +40,8 @@ export interface CLIOptions {
   addDirs?: string[];
   environment: string | undefined;
   environmentCwd?: string;
+  worktree?: string;
+  worktreeBase?: string;
 }
 
 export interface ValidatedOptions {
@@ -120,6 +122,22 @@ export function validateOptions(
   }
   if (opts.yolo && opts.auto) {
     throw new OptionConflictError('Cannot combine --yolo with --auto.');
+  }
+  if (opts.worktreeBase !== undefined && opts.worktree === undefined) {
+    throw new OptionConflictError('--worktree-base requires -w/--worktree.');
+  }
+  if (opts.worktreeBase !== undefined && opts.worktreeBase.trim().length === 0) {
+    throw new OptionConflictError('Worktree base cannot be empty.');
+  }
+  if (opts.worktree !== undefined && (opts.session !== undefined || opts.continue)) {
+    throw new OptionConflictError(
+      'Cannot combine -w/--worktree with -c/--continue or -S/--session: -w starts a new session in a new worktree.',
+    );
+  }
+  if (opts.worktree !== undefined && opts.environment !== undefined) {
+    throw new OptionConflictError(
+      'Cannot combine -w/--worktree with --environment: a worktree session runs in a local checkout.',
+    );
   }
   if (promptMode) resolveOutputFormat(opts, env);
   return { options: opts, uiMode: promptMode ? 'print' : 'shell' };

@@ -9,9 +9,9 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
-import { IProviderService } from '#/llm-adapter/provider/provider';
 
 import { IRegionService } from './region';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export function kimiRegionEnv(bootstrap: IBootstrapService): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -34,7 +34,7 @@ export class RegionService extends Disposable implements IRegionService {
   private providerHydrated = false;
 
   constructor(
-    @IProviderService private readonly providers: IProviderService,
+    @IProviderCatalogService private readonly providers: IProviderCatalogService,
     @IBootstrapService bootstrap: IBootstrapService,
   ) {
     super();
@@ -46,7 +46,7 @@ export class RegionService extends Disposable implements IRegionService {
           process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
       readAuth: () => {
         if (!this.providerHydrated) return { status: 'unreadable' };
-        const ref = this.providers.get(KIMI_CODE_PROVIDER_NAME)?.oauth;
+        const ref = this.providers.getProviderConfig(KIMI_CODE_PROVIDER_NAME)?.oauth;
         return ref === undefined ? { status: 'logged-out' } : { status: 'logged-in', ref };
       },
     });

@@ -1,5 +1,5 @@
 import type { CompactionBlockedEvent, CompactionCancelledEvent, CompactionCompletedEvent, CompactionStartedEvent } from '#/agent/fullCompaction/compactionOps';
-import type { TurnStartedEvent, TurnStepCompletedEvent, TurnStepInterruptedEvent, TurnStepRetryingEvent, TurnStepStartedEvent, AssistantDeltaEvent, ThinkingDeltaEvent } from '#/agent/loop/turnEvents';
+import type { TurnStartedEvent, TurnStepCompletedEvent, TurnStepInterruptedEvent, TurnStepRetryingEvent, TurnStepStartedEvent, TurnStepStreamResetEvent, AssistantDeltaEvent, ThinkingDeltaEvent } from '#/agent/loop/turnEvents';
 import type { TurnEndedEvent } from '#/agent/loop/turnOps';
 import type { PluginCommandActivatedEvent } from '#/agent/pluginCommand/pluginCommand';
 import type { PromptAbortedEvent, PromptCompletedEvent, PromptQueuedEvent, PromptSteeredEvent, PromptSubmittedEvent } from '#/agent/prompt/promptEvents';
@@ -22,7 +22,7 @@ import type { ConfigChangedEvent, ConfigWarningEvent } from '#/app/config/config
 import type { ModelCatalogChangedEvent } from '#/app/kosongConfig/discovery';
 import type { PluginChangedEvent } from '#/app/plugin/pluginEvents';
 import type { SessionCreatedEvent, SessionStatusChangedEvent, SessionWorkChangedEvent } from '#/app/sessionLegacy/sessionProtocol';
-import type { WorkspaceCreatedEvent, WorkspaceDeletedEvent, WorkspaceUpdatedEvent } from '#/app/workspace/workspaceProtocol';
+import type { ProjectCreatedEvent, ProjectDeletedEvent, ProjectUpdatedEvent } from '#/app/project/projectProtocol';
 import type { CronFiredEvent } from '#/features/cron/cronOps';
 import type { HookResultEvent } from '#/features/externalHooks/agent/agentExternalHooksService';
 import type { GoalUpdatedEvent } from '#/features/goal/goalOps';
@@ -43,9 +43,9 @@ export type AgentEvent =
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
-  | WorkspaceCreatedEvent
-  | WorkspaceUpdatedEvent
-  | WorkspaceDeletedEvent
+  | ProjectCreatedEvent
+  | ProjectUpdatedEvent
+  | ProjectDeletedEvent
   | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
@@ -63,6 +63,7 @@ export type AgentEvent =
   | TurnStepCompletedEvent
   | TurnStepRetryingEvent
   | TurnStepInterruptedEvent
+  | TurnStepStreamResetEvent
   | AssistantDeltaEvent
   | HookResultEvent
   | ThinkingDeltaEvent

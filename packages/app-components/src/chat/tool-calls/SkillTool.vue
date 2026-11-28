@@ -1,40 +1,24 @@
 <script setup lang="ts">
-import { useHistoryState } from '../historyState';
-import { computed, watch } from 'vue';
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { parseArgRecord, str, toolSummary } from '@moonshot-ai/app-components';
+import { parseArgRecord, str } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';
+import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
-const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
-
-const { t } = useI18n();
-
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
-
+const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
 const argRecord = computed(() => parseArgRecord(props.tool.arg));
 const skillName = computed(() => str(argRecord.value?.skill) ?? str(argRecord.value?.name) ?? '');
 const skillArgs = computed(() => str(argRecord.value?.args) ?? '');
-
-const summary = computed(() => toolSummary(props.tool.name, props.tool.arg));
-const summaryFull = computed(() => toolSummary(props.tool.name, props.tool.arg, true));
-
-const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
+const { t } = useI18n();
+const { status, summary, summaryFull, hasOutput } = useToolCard(props);
 const showOutput = computed(() => status.value === 'error' && hasOutput.value);
 const canExpand = computed(
   () => Boolean(skillArgs.value) || showOutput.value || summaryFull.value !== summary.value,
 );
-const open = useHistoryState(`tool:${props.tool.id}:open`, props.tool.defaultExpanded === true && canExpand.value);
-
-watch(
-  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status, props.tool.name] as const,
-  () => {
-    if (props.tool.defaultExpanded === true && canExpand.value) open.value = true;
-  },
-);
+const { open } = useToolCardExpansion(props, canExpand);
 </script>
 
 <template>

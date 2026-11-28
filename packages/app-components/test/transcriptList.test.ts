@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createApp, defineComponent, h, inject, nextTick, onMounted, reactive, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
@@ -387,5 +390,22 @@ describe('useTranscriptScroll', () => {
     expect(scroll.activeRowKey.value).toBe(before);
     await settle();
     expect(scroll.activeRowKey.value).toBe(top);
+  });
+});
+
+describe('focus ring suppression on non-interactive containers', () => {
+  it('suppresses focus rings on programmatic transcript rows and scrollable font previews', () => {
+    const row = rowEl('a45')!;
+    expect(row.getAttribute('tabindex')).toBe('-1');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const transcriptSfc = readFileSync(resolve(here, '../src/chat/TranscriptList.vue'), 'utf8');
+    const transcriptCss = Array.from(transcriptSfc.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g), (match) => match[1]).join('\n');
+    expect(transcriptCss).toMatch(/\.history-row:focus,\s*\.history-row:focus-visible\s*\{\s*outline:\s*none;\s*\}/);
+    expect(transcriptCss).not.toMatch(/\.history-row:focus-visible\s*\{[^}]*box-shadow/);
+
+    const previewSfc = readFileSync(resolve(here, '../src/settings/FontSettingsPreview.vue'), 'utf8');
+    const previewCss = Array.from(previewSfc.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g), (match) => match[1]).join('\n');
+    expect(previewCss).toMatch(/\.font-preview:focus,\s*\.font-preview:focus-visible\s*\{\s*outline:\s*none;\s*\}/);
+    expect(previewCss).not.toMatch(/\.font-preview:focus-visible\s*\{[^}]*box-shadow/);
   });
 });

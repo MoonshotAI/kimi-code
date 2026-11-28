@@ -2,11 +2,12 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, test as base, vi } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import type { ISessionScopeHandle } from '#/_base/di/scope';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import type { ISessionScopeHandle, IAgentScopeHandle } from '#/_base/di/scope';
 import {
   createServices,
   type ServiceRegistration,
@@ -24,7 +25,10 @@ import {
   hooksToToml,
 } from '#/features/externalHooks/configSection';
 import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
-import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooksService';
+import {
+  AgentExternalHooksService,
+  HookResult,
+} from '#/features/externalHooks/agent/agentExternalHooksService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import {
   IAgentScopeContext,
@@ -64,7 +68,7 @@ import {
   type SessionCreatedEvent,
   type SessionCreateSource,
   type SessionWillCloseEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 import { createHooks, OrderedHookSlot } from '#/hooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -79,14 +83,17 @@ import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { IModelService } from '#/llm-adapter/model/model';
 
-import { createTestAgent } from '../../harness';
+import { createTestAgent, testkitAgentFixtures, type TestkitAgentFixtures } from '../../harness';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
 import { registerStateServices } from '../../state/stubs';
-import { registerTestAgentWireServices } from '../../wire/stubs';
+import { registerTestAgentWireServices, stubAgentWire } from '../../wire/stubs';
+import { IWireService } from '#/wire/wire';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
@@ -171,11 +178,11 @@ function stubProfileCatalog(name = 'default'): ISessionAgentProfileCatalog {
   } as unknown as ISessionAgentProfileCatalog;
 }
 
-function stubModelService(model = 'kimi-test'): IModelService {
+function stubModelService(model = 'kimi-test'): IProviderCatalogService {
   return {
     _serviceBrand: undefined,
-    getDefaultModel: () => model,
-  } as unknown as IModelService;
+    getDefaultModelId: () => model,
+  } as unknown as IProviderCatalogService;
 }
 
 function hookLogPath(): string {
@@ -261,6 +268,13 @@ function registerHookTestServices(reg: ServiceRegistration, cwd = '/tmp'): void 
   reg.defineInstance(IAgentLoopService, stubContextMemory());
   registerAgentEventBus(reg);
   reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+  reg.defineInstance(IWireService, stubAgentWire());
+  reg.definePartialInstance(IAgentToolResultTruncationService, {
+    truncateForModel: (input) => Promise.resolve(input.result),
+  });
+  reg.definePartialInstance(ISessionExternalHooksService, {
+    takeSessionStartContext: () => undefined,
+  });
   reg.definePartialInstance(IAgentPermissionGate, {});
   reg.definePartialInstance(IAgentTaskService, {});
 }
@@ -327,11 +341,14 @@ describe('IExternalHooksRunnerService integration', () => {
       hookEngine: {
         trigger: async () => [],
         fireAndForgetTrigger: async () => [],
+        hasHooksFor: (event: string) => event === 'Stop',
         triggerBlock: async (event: string, args?: { inputData?: unknown }) => {
           if (event !== 'Stop') return undefined;
           stopStates.push(loop.snapshot().state);
-          stopInputs.push(args?.inputData as Record<string, unknown>);
-          return stopInputs.length === 1
+          const inputData = args?.inputData as Record<string, unknown>;
+          stopInputs.push(inputData);
+          const active = inputData?.['stop_hook_active'] === true;
+          return stopInputs.length === 1 || active
             ? { block: true, reason: 'continue once from Stop' }
             : undefined;
         },
@@ -385,16 +402,27 @@ describe('IExternalHooksRunnerService integration', () => {
       });
       await settle();
 
-      expect(stopStates).toEqual(['idle']);
-      expect(stopInputs).toHaveLength(1);
+      expect(stopStates).toEqual(['idle', 'idle']);
+      expect(stopInputs).toHaveLength(2);
       expect(stopInputs[0]).toMatchObject({
         turnId: 1,
         step: 2,
         firstStepOfTurn: false,
         finishReason: 'completed',
         usage: expect.objectContaining({ output: expect.any(Number) }),
+        responseText: 'First final answer.',
         stopHookActive: false,
       });
+      expect(
+        stopInputs[0]?.['transcriptPath'] === null ||
+          typeof stopInputs[0]?.['transcriptPath'] === 'string',
+      ).toBe(true);
+      expect(stopInputs[1]).toMatchObject({
+        turnId: 2,
+        responseText: 'Continued answer.',
+        stopHookActive: true,
+      });
+      expect(ctx.llmCalls).toHaveLength(4);
       expect(ctx.contextData().history).toContainEqual(
         expect.objectContaining({
           role: 'user',
@@ -402,6 +430,10 @@ describe('IExternalHooksRunnerService integration', () => {
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
+      const continuations = ctx.contextData().history.filter(
+        (message) => message.origin?.kind === 'system_trigger' && message.origin.name === 'stop_hook',
+      );
+      expect(continuations).toHaveLength(1);
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next ordinary turn' }] });
       await vi.waitFor(() => {
@@ -409,15 +441,16 @@ describe('IExternalHooksRunnerService integration', () => {
       });
       await settle();
 
-      expect(stopInputs).toHaveLength(2);
-      expect(stopInputs[1]).toMatchObject({
+      expect(stopInputs).toHaveLength(3);
+      expect(stopInputs[2]).toMatchObject({
         turnId: 3,
         step: 1,
         firstStepOfTurn: true,
         finishReason: 'completed',
+        responseText: 'Next ordinary answer.',
         stopHookActive: false,
       });
-      expect(stopStates).toEqual(['idle', 'idle']);
+      expect(stopStates).toEqual(['idle', 'idle', 'idle']);
       expect(ctx.llmCalls).toHaveLength(5);
 
       loop.hooks.onDidFinishStep.register('test-queued-notify', async (hookCtx, next) => {
@@ -440,9 +473,9 @@ describe('IExternalHooksRunnerService integration', () => {
       });
       await settle();
 
-      expect(stopInputs).toHaveLength(3);
-      expect(stopInputs[2]).toMatchObject({ turnId: 5, step: 1 });
-      expect(stopStates).toEqual(['idle', 'idle', 'idle']);
+      expect(stopInputs).toHaveLength(4);
+      expect(stopInputs[3]).toMatchObject({ turnId: 5, step: 1 });
+      expect(stopStates).toEqual(['idle', 'idle', 'idle', 'idle']);
     } finally {
       await ctx.dispose();
     }
@@ -486,6 +519,12 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentToolResultTruncationService, {
+            truncateForModel: (input) => Promise.resolve(input.result),
+          });
+          reg.definePartialInstance(ISessionExternalHooksService, {
+            takeSessionStartContext: () => undefined,
+          });
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -604,7 +643,8 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
@@ -691,12 +731,19 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentToolResultTruncationService, {
+            truncateForModel: (input) => Promise.resolve(input.result),
+          });
+          reg.definePartialInstance(ISessionExternalHooksService, {
+            takeSessionStartContext: () => undefined,
+          });
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
           reg.definePartialInstance(IAgentTaskService, {});
           reg.define(IHostProcessService, HostProcessService);
+          reg.defineInstance(IWireService, stubAgentWire());
           reg.defineInstance(IEventDispatcher, {
             _serviceBrand: undefined,
             hooks: { onDidRestore: new OrderedHookSlot() },
@@ -957,7 +1004,8 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, lifecycle.service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata(undefined, () => effectiveCwd));
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1020,6 +1068,120 @@ describe('IExternalHooksRunnerService integration', () => {
           cwd: promotedCwd,
         },
       ]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('delivers SessionStart additionalContext to the existing main agent as a hidden injection', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const lifecycle = stubSessionLifecycle();
+      const command = nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { additionalContext: "project uses pnpm" } }));',
+      );
+      const reminded: unknown[] = [];
+      const loopRecorder = {
+        remind: (...messages: readonly unknown[]) => {
+          reminded.push(...messages);
+        },
+      };
+      const mainHandle = {
+        accessor: { get: () => loopRecorder },
+      } as unknown as IAgentScopeHandle;
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          registerLogServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.definePartialInstance(ISessionManager, lifecycle.service);
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, {
+            handleOf: (agentId: string) => (agentId === 'main' ? mainHandle : undefined),
+          });
+          reg.definePartialInstance(ISessionSubagentService, {
+            hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+            onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
+          });
+          reg.definePartialInstance(IConfigService, {
+            ready: Promise.resolve(),
+            get: <T = unknown>(domain: string): T =>
+              (domain === HOOKS_SECTION
+                ? [{ event: 'SessionStart' as const, command, timeout: 5 }]
+                : undefined) as T,
+          });
+          reg.definePartialInstance(IPluginService, {
+            enabledHooks: async () => [],
+            onDidReload: Event.None as IPluginService['onDidReload'],
+          });
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.define(IHostProcessService, HostProcessService);
+        },
+      });
+      ix.stub(ITelemetryService, { track2: () => {} });
+      ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
+      ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
+      const service = ix.get(ISessionExternalHooksService);
+
+      await lifecycle.fireDidCreate('startup');
+
+      expect(reminded).toHaveLength(1);
+      const serialized = JSON.stringify(reminded[0]);
+      expect(serialized).toContain('project uses pnpm');
+      expect(serialized).toContain('session_start_hook');
+      expect(serialized).toContain('hook_event=\\"SessionStart\\"');
+      expect(service.takeSessionStartContext()).toBeUndefined();
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('injects pending SessionStart context when the main agent hooks service is created later', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const reminded: unknown[] = [];
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerHookTestServices(reg);
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(IAgentLoopService, {
+            ...stubContextMemory(),
+            remind: (...messages: readonly unknown[]) => {
+              reminded.push(...messages);
+            },
+          } as unknown as IAgentLoopService);
+          reg.definePartialInstance(ISessionExternalHooksService, {
+            takeSessionStartContext: () => 'pending session context',
+          });
+          reg.defineInstance(IEventDispatcher, {
+            _serviceBrand: undefined,
+            hooks: { onDidRestore: new OrderedHookSlot() },
+            dispatch: async () => {},
+          } as unknown as IEventDispatcher);
+          reg.definePartialInstance(IAgentFullCompactionService, {
+            hooks: createHooks(['onWillCompact']),
+          });
+          reg.definePartialInstance(IAgentTaskService, {});
+        },
+      });
+      ix.set(IExternalHooksRunnerService, stubHookRunner({}));
+      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.get(IAgentExternalHooksService);
+
+      expect(reminded).toHaveLength(1);
+      const serialized = JSON.stringify(reminded[0]);
+      expect(serialized).toContain('pending session context');
+      expect(serialized).toContain('session_start_hook');
     } finally {
       ix?.dispose();
       disposables.dispose();
@@ -1159,7 +1321,8 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, lifecycle.service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog('coder'));
-          reg.defineInstance(IModelService, stubModelService('kimi-k2'));
+          reg.defineInstance(IProviderCatalogService, stubModelService('kimi-k2'));
+          reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1255,6 +1418,12 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentToolResultTruncationService, {
+            truncateForModel: (input) => Promise.resolve(input.result),
+          });
+          reg.definePartialInstance(ISessionExternalHooksService, {
+            takeSessionStartContext: () => undefined,
+          });
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -1323,6 +1492,7 @@ describe('IExternalHooksRunnerService integration', () => {
         promptMessage: { role: 'user', content: submittedContent, origin: { kind: 'user' } },
         isSteer: false,
         hookParts: [],
+        signal: new AbortController().signal,
         block: false,
       });
 
@@ -1444,7 +1614,8 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1489,7 +1660,8 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1536,7 +1708,8 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
+          reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
@@ -1585,6 +1758,7 @@ describe('IExternalHooksRunnerService integration', () => {
           seen.push({ event, cwd: args.cwd });
           return [];
         },
+        hasHooksFor: () => true,
       };
       const compactionHooks = createHooks<{ onWillCompact: FullCompactionTask }, 'onWillCompact'>([
         'onWillCompact',
@@ -1633,6 +1807,7 @@ describe('IExternalHooksRunnerService integration', () => {
         promptMessage: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
         isSteer: false,
         hookParts: [],
+        signal: new AbortController().signal,
         block: false,
       });
       await loop.hooks.onDidFinishStep.run(makeAfterStep(new AbortController().signal));
@@ -1665,5 +1840,83 @@ describe('IExternalHooksRunnerService integration', () => {
       ix?.dispose();
       disposables.dispose();
     }
+  });
+});
+
+describe('UserPromptSubmit hook during a cancelled turn start', () => {
+  const promptSubmitHook = vi.fn<IExternalHooksRunnerService['trigger']>(async () => []);
+  const test = base.extend<TestkitAgentFixtures>(
+    testkitAgentFixtures({
+      hookEngine: {
+        trigger: (event, args) =>
+          event === 'UserPromptSubmit' ? promptSubmitHook(event, args) : Promise.resolve([]),
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async () => [],
+      },
+    }),
+  );
+
+  test('aborts the hook and drops the block it returns after the whole turn is cancelled', async ({
+    agent,
+    model,
+  }) => {
+    model.script(say('first answer'), say('second answer'));
+    const loop = agent.get(IAgentLoopService);
+    const hookResults: HookResult[] = [];
+    agent.get(IEventBus).subscribe(HookResult, (event) => hookResults.push(event));
+
+    let markHookEntered!: () => void;
+    const hookEntered = new Promise<void>((resolve) => {
+      markHookEntered = resolve;
+    });
+    let finishHook!: () => void;
+    const hookFinished = new Promise<void>((resolve) => {
+      finishHook = resolve;
+    });
+    let hookAbortedOnReturn: boolean | undefined;
+    promptSubmitHook.mockImplementationOnce(async (_event, args) => {
+      markHookEntered();
+      await hookFinished;
+      hookAbortedOnReturn = args?.signal?.aborted;
+      return [{ action: 'block', message: 'blocked by policy' }];
+    });
+    let markHookChainSettled!: () => void;
+    const hookChainSettled = new Promise<void>((resolve) => {
+      markHookChainSettled = resolve;
+    });
+    loop.hooks.onBeforeSubmitPrompt.register(
+      'test-observe-external-hooks',
+      async (_ctx, next) => {
+        try {
+          await next();
+        } finally {
+          markHookChainSettled();
+        }
+      },
+      { before: 'externalHooks' },
+    );
+
+    const firstLaunch = agent.rpc.prompt({ promptId: 'first', input: [{ type: 'text', text: 'first' }] });
+    await hookEntered;
+    expect(loop.cancel()).toBe(true);
+    finishHook();
+    await hookChainSettled;
+
+    await agent.rpc.prompt({ promptId: 'second', input: [{ type: 'text', text: 'second' }] });
+    await expect(firstLaunch).resolves.toEqual({ turn_id: expect.any(Number) });
+    await expect(loop.promptHandle('second')!.completion).resolves.toMatchObject({ state: 'completed' });
+    await loop.settled();
+
+    expect(promptSubmitHook).toHaveBeenCalledTimes(3);
+    expect(hookResults).toEqual([]);
+    expect(loop.history().filter((entry) => entry.origin?.kind === 'hook_result')).toEqual([]);
+    const requests = model.requests('main');
+    const promptTexts = requests.map((request) =>
+      request.texts('user').filter((text) => !text.includes('<system-reminder>')),
+    );
+    expect(promptTexts).toEqual([['first'], ['first', 'second']]);
+    const requestTexts = requests.flatMap((request) => request.view.messages.map((message) => message.text));
+    expect(requestTexts.join('\n')).not.toContain('blocked by policy');
+    expect(hookAbortedOnReturn).toBe(true);
   });
 });

@@ -8,7 +8,7 @@ Update this section after every sync. Do not reuse the previous range.
 
 - **Repo:** `https://github.com/earendil-works/pi.git`
 - **Subtree:** `packages/tui`
-- **Commit:** `7c22a93d0ed02092142fa63823e63d76aa4e2406` (2026-10-22; v1.4.0 plus upstream main through this commit)
+- **Commit:** `cf419553da817fefd2f86f170ff3e93eff0bfd28` (2026-11-26; v1.6.1 plus upstream main through this commit)
 - **This commit is an upstream marker.** It may not exist in this repo's object database.
 
 ## Reconstruct the fork
@@ -114,6 +114,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** The host can filter history entries, decorate a recalled entry, and save/restore its own state next to the history draft.
 
 **Why not in the app:** History recall mutates editor state internally; the host is not on that path unless the editor calls out.
+
+### editor-clear-history — keep
+
+**Decision:** `Editor.clearHistory()` clears the editor's stored prompt history and resets any in-progress history recall index, so a host switching working directories can swap in the new directory's history cleanly.
+
+**Why not in the app:** Prompt history and its recall cursor are private fields on `Editor`; the host cannot clear or reset them without recreating the editor instance.
 
 ### unbracketed-paste-enter-is-newline — keep
 
@@ -297,7 +303,7 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 ### alt-screen-search-editor-selection-focus — keep
 
-**Decision:** While transcript search is active, selecting Editor text does not transfer keyboard focus or the hardware cursor to the editor. With `editorSelection` enabled, the same mouse bypass applies to directly mounted or delegated `SelectionEditComponent` targets, including Input and mouse-aware third-party components: press, drag, click, and release stay on the selection path rather than moving the caret, capturing the mouse, or taking focus. Press and drag gestures still create an editable text selection, while a click clears the selection without dispatching a caret-moving click. Keyboard input continues to reach the transcript search field. With `editorSelection` disabled, only the pre-existing Editor bypass applies, and non-editable mouse targets always retain their existing dispatch and focus behavior.
+**Decision:** While transcript search is active, selecting Editor text does not transfer keyboard focus or the hardware cursor to the editor. With `editorSelection` enabled, the same mouse bypass applies to directly mounted or delegated `SelectionEditComponent` targets, including Input and mouse-aware third-party components: selection press, drag, and release stay on the selection path rather than moving the caret, capturing the mouse, or taking focus. Keyboard input continues to reach the transcript search field throughout a selection drag. A single click follows ordinary component dispatch, closes search, and moves focus and the caret to the editor. With `editorSelection` disabled, non-editable mouse targets retain their existing dispatch and focus behavior.
 
 **Why not in the app:** Structural editable-target hit testing, synthesized click dispatch, focus ownership, and hardware cursor placement are private to the alternate-screen renderer; the host cannot suppress a component's internal caret or mouse-capture mutation after dispatch.
 
@@ -348,3 +354,32 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** `ScrollViewOptions` accepts `scrollbarLayout: "overlay" | "dedicated"`, defaulting to `overlay`. Dedicated layout reserves the rightmost column for both `auto` and `always` whenever the viewport is wider than one column, including while an automatic track is hidden; `hidden` reserves nothing. A one-column viewport keeps its only content column selectable, and a visible automatic track retains the existing overlay hit-testing and gestures. Automatic visibility, proportional geometry, hover, track clicks, dragging, and release reuse the existing scrollbar state machine. A column is excluded from visual text selection only when dedicated layout actually reserves it. Omitting the option preserves overlay sizing and selection behavior.
 
 **Why not in the app:** Content width is allocated inside scroll layout before the child renders, and scrollbar hit testing competes with text selection inside the alternate-screen mouse dispatcher. The app cannot reserve that column or arbitrate those gestures through component composition without duplicating the layout and input state machines.
+### alt-screen-search-bindings-and-open-search — keep
+
+**Decision:** Default alternate-screen search keybindings in `TUI_KEYBINDINGS` use `["ctrl+f", "ctrl+shift+f"]` for `tui.altScreen.search`, `["up", "shift+enter", "ctrl+shift+g"]` for `tui.altScreen.searchPrevious`, and `["down", "enter", "ctrl+g"]` for `tui.altScreen.searchNext`. `TuiAltScreen.openSearch(query?)` idempotently opens or refocuses transcript search (when the active layout has a searchable scroll view) and optionally prefills a single-line sanitized query with the cursor at the end via `Input.setCursor(position)` (paired with `Input.getCursor()`). When primary search navigation keys are `up`/`down`, `AltScreenSearchComponent` renders semantic `↑ Previous` and `↓ Next` labels (with narrow fallback `↑ ↓`), and whitespace-only queries do not show `No matches`. The `tui.altScreen.search` binding requires a searchable scroll view so full-screen layout takeovers without a `ScrollView` keep their own `Ctrl+F` handling. While transcript search is active, non-wheel mouse focus transfers to a component outside the search overlay close active search before moving focus, whereas wheel events, clicking search controls, and drag-selecting transcript text keep search open; when search is inactive, wheel focus requests keep upstream semantics.
+
+**Why not in the app:** Default keybindings live in `TUI_KEYBINDINGS` shared by all `pi-tui` components; search overlay lifecycle, `ActiveSearch` state, viewport key dispatch, mouse focus dispatch, search label formatting, and `Input` cursor positioning are private to `TuiAltScreen`, `AltScreenSearchComponent`, and `Input`.
+
+### kitty-caps-lock-modified-letter-normalization — keep
+
+**Decision:** When Kitty CSI-u input reports an uppercase Latin letter (`A`–`Z`) with Caps Lock and any non-lock modifier (`ctrl`, `alt`, `super`, or `shift`) active, key matching and `parseKey` normalize the letter identity to lowercase so modified letter bindings match while plain Caps Lock uppercase text input stays unaffected.
+
+**Why not in the app:** `KeybindingsManager`, `TuiAltScreen`, and all `pi-tui` components dispatch keybindings directly through `keys.ts` before any app component input handler runs.
+
+### box-layout-and-borders — keep
+
+**Decision:** `Box` is a layout-participating `Container` configured via `BoxOptions` (`border`, `borderStyle`, `borderColor`, `title`, `padding`), defaulting to zero padding and no border. In fullscreen layout frames it insets its child clip rectangle inside its border and padding, allocates its inner height to a single child (such as `ScrollView`) or stacks multiple children vertically, renders its frame even when empty, and paints borders outside the child clip so scrollbars and text selection stay inside the frame.
+
+**Why not in the app:** `LAYOUT_NODE` is internal to `pi-tui`; an app-level wrapper around `ScrollView` collapses it into a leaf component without viewport clipping, scrollbar geometry, wheel routing, or offscreen text selection.
+
+### scroll-view-on-scroll-and-overscroll-contain — keep
+
+**Decision:** `ScrollViewOptions.onScroll` notifies callers whenever `scrollTop` changes (via `scrollTo`, `scrollBy`, `scrollToStart`, `scrollToEnd`, or layout clamping), and `TuiAltScreen.routeWheel` zeroes remaining wheel delta when stopping at a `ScrollView` with `overscroll: "contain"` so wheel overscroll does not leak to `primaryScrollView`.
+
+**Why not in the app:** Wheel routing to `primaryScrollView` and scrollbar-drag `scrollTo` happen inside `TuiAltScreen` and `ScrollView`; intercepting `handleMouse` in the app bypassed viewport-only render caching and missed scrollbar drags.
+
+### component-click-horizontal-cell-tolerance — keep
+
+**Decision:** Component-handled pointer gestures synthesize `click` (and preserve consecutive `clickCount`) when the pointer stays on the pressed row and within at most 1 horizontal column (`|dx| <= 1`, `dy === 0`) between `press` and `release`, dispatching `click` at the pressed coordinates.
+
+**Why not in the app:** `TuiAltScreen.handleMouseEvent` suppresses `click` synthesis before calling component mouse handlers whenever `mousePressMoved` flips.

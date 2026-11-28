@@ -5,7 +5,7 @@ import {
   IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
-  IWorkspaceAliases,
+  IProjectAliases,
   environmentBindingId,
   LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
@@ -14,10 +14,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost, type PostRouteHost } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   batchSessionsRequestSchema,
@@ -40,24 +41,7 @@ import type { HostSources } from '../services/hosts/hostFanout';
 import { resolveSessionFacts, toWireSession, type SessionFacts } from './sessions';
 import { listAllSessionsAcrossHosts, listSessionsAcrossHosts, type SessionsListOutcome } from './sessionsAcrossHosts';
 
-interface SessionListRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-  post(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
+type SessionListRouteHost = GetRouteHost & PostRouteHost;
 
 const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_GROUP_PAGE_SIZE = 5;
@@ -350,7 +334,7 @@ async function listSessionsHere(
 
       let workspaceIds: string[] | undefined;
       if (query.workspaceFilter !== undefined) {
-        const aliases = core.accessor.get(IWorkspaceAliases);
+        const aliases = core.accessor.get(IProjectAliases);
         const sets = await Promise.all(
           query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
         );
@@ -376,7 +360,7 @@ async function listSessionsHere(
       };
 
       const cwdOf = (summary: SessionSummary): string | undefined => {
-        const candidate = summary.cwd ?? roots.get(summary.workspaceId);
+        const candidate = sessionWorkDir(summary, roots.get(summary.workspaceId));
         return candidate !== undefined && candidate.length > 0 ? candidate : undefined;
       };
 
@@ -441,7 +425,7 @@ async function listSessionsHere(
           readonly rep: SessionSummary;
           readonly items: SessionSummary[];
         }
-        const aliasService = core.accessor.get(IWorkspaceAliases);
+        const aliasService = core.accessor.get(IProjectAliases);
         const canonicalById = new Map<string, string>();
         const canonicalIdOf = async (workspaceId: string): Promise<string> => {
           let canonical = canonicalById.get(workspaceId);

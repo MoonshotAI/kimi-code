@@ -4,8 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { abortable, abortError, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage } from '#/provider-catalog/errors';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
@@ -137,28 +136,25 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         prediction_id: active.predictionId,
         turn_id: active.expectedTurnId,
       });
-      const source = {
-        type: 'operation',
-        turnId: active.expectedTurnId,
-        requestKind: 'prompt_prediction',
-      } as const;
-      let trace: LLMRequestTrace | undefined;
-      const requester = await scope.loop.requester.prepareOperation({
-        maxOutputSize: PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
-        source: () => source,
-        onTrace: (value) => {
-          trace = value;
+      let requestId: string | undefined;
+      const outcome = await abortable(scope.loop.requester.with({
+        model: {
+          maxOutputTokens: scope.loop.resolveMaxOutputTokens(PROMPT_PREDICTION_MAX_OUTPUT_TOKENS),
+          responseFormat: PROMPT_PREDICTION_RESPONSE_FORMAT,
         },
-      }, active.deadline.signal);
-      const outcome = await abortable(requester.generate(
+        content: {
+          messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
+        },
+        attributes: { kind: 'prediction', turnId: active.expectedTurnId },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      }).generate(
+        {},
         {
-          content: {
-            messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
+          signal: active.deadline.signal,
+          onEvent: (event) => {
+            if (event.type === 'llm.delta.request_id') requestId = event.requestId;
           },
-          model: { responseFormat: PROMPT_PREDICTION_RESPONSE_FORMAT },
-          profile: {},
         },
-        { signal: active.deadline.signal },
       ), active.deadline.signal);
       if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
       if (outcome.type === 'aborted') {
@@ -166,7 +162,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         throw new DOMException(message, 'AbortError');
       }
       active.usage = outcome.usage;
-      active.requestId = outcome.requestId ?? trace?.requestId;
+      active.requestId = outcome.requestId ?? requestId;
       active.timing = outcome.timing;
       const prediction = parsePrediction(outcome);
       if (prediction.text === null) {

@@ -63,7 +63,7 @@ import '#/app/kosongConfig/envOverlay';
 import { IOAuthService } from '#/app/auth/auth';
 import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
-import { type ThinkingConfig } from '#/llm-adapter/model/thinking';
+import { type ThinkingConfig } from '#/provider-catalog/model/thinking';
 import {
   BASH_TASK_TIMEOUT_S_ENV,
   KEEP_ALIVE_ON_EXIT_ENV,
@@ -107,6 +107,7 @@ import {
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
+  MCP_STARTUP_WAIT_ENV,
   MCP_TOOL_TIMEOUT_ENV,
   McpSectionSchema,
   type McpSection,
@@ -329,11 +330,13 @@ describe('Agent config', () => {
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [emit] turn.step.started               { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
+      [wire] tools.settled                   { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
-      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"original\\"}" }
+      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "" }
+      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "argumentsPart": "{\\"query\\":\\"original\\"}" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"original\\"}" } ], "providerMessageId": "mock-1", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "contextTokens": 26 }
@@ -1931,6 +1934,20 @@ describe('applyPrintModeConfigDefaults', () => {
     disposables.dispose();
   });
 
+  it('does not override a subagent env override equal to the default', async () => {
+    const env: Record<string, string> = {
+      [SUBAGENT_TIMEOUT_ENV]: String(DEFAULT_SUBAGENT_TIMEOUT_MS),
+    };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+    expect(config.inspect('subagent').memoryValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
   it('does not override the swarm timeout env override', async () => {
     const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '3000' };
     const { config, disposables } = await createConfig(env);
@@ -1938,6 +1955,35 @@ describe('applyPrintModeConfigDefaults', () => {
     await applyPrintModeConfigDefaults(config);
 
     expect(resolveSwarmTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
+  it('does not override a swarm env override equal to the default', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: String(DEFAULT_SWARM_TIMEOUT_MS) };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+    expect(config.inspect('swarm').memoryValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('does not override a config value equal to the default', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      `[subagent]\ntimeout_ms = ${DEFAULT_SUBAGENT_TIMEOUT_MS}\n\n` +
+        `[swarm]\ntimeout_ms = ${DEFAULT_SWARM_TIMEOUT_MS}\n`,
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+    expect(config.inspect('subagent').memoryValue).toBeUndefined();
+    expect(config.inspect('swarm').memoryValue).toBeUndefined();
 
     disposables.dispose();
   });
@@ -2457,6 +2503,39 @@ describe('mcp config section', () => {
     expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
 
     disposables.dispose();
+  });
+
+  it('reads startup_wait_ms from config.toml and lets the env var win, including 0', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_wait_ms = 5000\n');
+    try {
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = 'abc';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '-1';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '   ';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '0';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(0);
+
+      env[MCP_STARTUP_WAIT_ENV] = '2500';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(2500);
+    } finally {
+      disposables.dispose();
+    }
+
+    expect(McpSectionSchema.safeParse({ startupWaitMs: 0 }).success).toBe(true);
+    expect(McpSectionSchema.safeParse({ startupWaitMs: -1 }).success).toBe(false);
+    expect(McpSectionSchema.safeParse({ startupWaitMs: 2_147_483_647 }).success).toBe(true);
+    expect(McpSectionSchema.safeParse({ startupWaitMs: 2_147_483_648 }).success).toBe(false);
   });
 
   it('reads tool_timeout_ms from config.toml and lets the env var win', async () => {

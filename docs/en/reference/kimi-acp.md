@@ -8,6 +8,8 @@ kimi acp
 
 Once started, the command prints no banner and immediately waits for the ACP client to send an `initialize` request on stdin. Logs are written to stderr (as well as the diagnostic log under `~/.kimi-code/logs/`), so the ACP channel itself stays clean.
 
+When Kimi starts a turn on its own — to report a completed background task, to continue after a `Stop` hook blocks, or to run a scheduled task — `kimi acp` sends the reply and tool calls to the IDE through `session/update`, even after the previous `session/prompt` has ended. A new prompt sent while that turn is running receives `turn.agent_busy` and can be retried when the turn is complete.
+
 ::: tip Who calls this?
 You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md).
 :::
@@ -56,21 +58,25 @@ With `@agentclientprotocol/sdk@1.x`, the ACP method set is organized by namespac
 | `session/list` | Yes | Enumerates sessions on disk, filterable by `cwd` |
 | `session/fork` | Yes | Branches a source session; `cwd` / `additionalDirectories` / `mcpServers` on the request are ignored with a warning |
 | `session/close` | Yes | Best-effort teardown: cancels any in-flight turn, disposes per-session resources, and closes the live session; an unknown id is not an error |
-| `session/delete` | Yes | Permanently removes a session and its persisted data; an unknown id returns `invalidParams (-32602)` |
-| `session/prompt` | Yes | Accepts `text` / `image` / `resource` / `resource_link` content blocks; streams `agent_message_chunk` |
+| `session/delete` | Yes | Permanently removes a session and its persisted data. Subsequent `session/list` calls omit the deleted session. An unknown ID returns `invalidParams (-32602)`. |
+| `session/prompt` | Yes | Accepts `text` / `image` / `resource` / `resource_link` content blocks; streams `agent_message_chunk`. A turn that fails after it has started returns a JSON-RPC error: `authRequired (-32000)` for an authentication failure, otherwise `-32603` with the error message as `message` and its error code in `data.code`. A response blocked by the provider's content filter ends with the `refusal` stop reason, and a turn that fails after `session/cancel` still ends with `cancelled` |
 | `session/cancel` | Yes | Interrupts the current turn (a JSON-RPC `$/cancel_request` for a prompt lands in the same cancel path) |
 | `session/set_mode` | Yes | Validates `modeId`; the same underlying mode switch as `set_config_option({configId:'mode'})` |
 | `session/set_config_option` | Yes | Unified model / thinking / mode picker dispatcher |
+
+In the mode picker, Auto (`auto`) can approve sensitive operations automatically and honors explicit deny rules. YOLO (`yolo`) automatically approves routine operations and can still prompt for sensitive actions.
+
+Sessions created or restored with Plan mode active report Plan in both mode pickers. Approving a plan or choosing Reject and Exit updates the pickers to the effective permission mode.
 
 ### Client-side reverse-RPC — agent → IDE (10 / 11)
 
 | Method | Implemented | Description |
 | --- | --- | --- |
 | `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
-| `session/request_permission` | Yes | Shared channel for tool approval and question prompts |
+| `session/request_permission` | Yes | Shared channel for tool approvals and questions. Bash approvals include the complete command and working directory. Resolved absolute file targets appear in `toolCall.locations` |
 | `fs/read_text_file` | Yes | Engine file reads are routed to the client when it advertises `fsCapabilities` |
 | `fs/write_text_file` | Yes | Engine file writes are routed to the client |
-| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | Yes | Shell executions reverse-RPC to the client when it advertises `clientCapabilities.terminal` |
+| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | Yes | Shell executions reverse-RPC to the client when it advertises `clientCapabilities.terminal`. Otherwise the command runs locally, and what it has printed so far is sent as `tool_call_update` text content while it runs |
 | `elicitation/create` | Yes | Ask-user questions go through the native form when the client advertises `elicitation.form`; RPC failures fall back to `session/request_permission` |
 | `elicitation/complete` | No | |
 

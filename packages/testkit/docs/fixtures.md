@@ -30,11 +30,34 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 
 只需要检查序列化结果时，可以对 `kimiConfigToml(config)` 返回的字符串做断言。需要测试损坏的配置时，用 `raw` 附加故意写坏的 TOML。覆盖已有配置用 `mergeKimiConfig(base, override)`。同名 provider 或 model 的配置项会整体替换，hooks 数组会依次拼接。[配置写入与合并](../src/fixtures/config.ts)
 
+需要真实的 git 仓库时，用 `await createGitRepository(dir, { files })`：它在 `dir` 初始化仓库，写入 `files`（相对路径到内容）并提交一次。要验证 worktree 相关的行为，用 `await createGitWorktree({ main, worktree }, { files })`：它在 `main` 建同样的仓库，再用 `git worktree add` 在 `worktree` 检出新分支。两者都调用系统的 `git`，提交身份和关闭签名用命令行参数指定，不改动全局 git 配置。断言 Bash 工具打印的工作目录时，用 `bashPathOf(path)` 把本机路径换成 Git Bash 的写法：Windows 上 `C:\Users\me\app` 写成 `/c/Users/me/app`，其他平台原样返回。[git 夹具](../src/fixtures/git.ts)
+
+## 挂一个假的 MCP 服务
+
+仓库里所有测试用的 MCP 服务都来自这里，测试不要自己用 SDK 搭服务：`pnpm lint` 里的 `scripts/checks/test-doubles.mjs` 会拦下测试文件里新出现的 `new McpServer(`、`new StdioServerTransport(`、`new StreamableHTTPServerTransport(`、`new SSEServerTransport(`。两种服务共用同一份工具目录：每个工具有名字、描述、JSON Schema 和回复，给了 `callLog` 就把每次调用按行写进这个文件，用 `readMcpCalls(callLog)` 读回。
+
+| 回复写法 | 服务返回什么 |
+|---|---|
+| 不写 `reply` | 文字 `<工具名> done` |
+| `reply: 'found 2 pages'` | 这段固定文字 |
+| `reply: { text: { argument: 'text' } }` | 调用参数 `text` 的值，也就是回显 |
+| `reply: { text: { envNamedBy: 'name' } }` | 参数 `name` 所指的环境变量的值，没有就是空字符串 |
+| `reply: { text: { cwd: true } }`、`{ text: { clientName: true } }` | 服务进程的工作目录、客户端在 initialize 时报的名字 |
+| `reply: { text, structuredContent, meta, isError: true }` | 按字段组成结果；不写 `text` 就没有 `content` 文字块 |
+
+工具上的 `delayMs` 让这次调用晚一点回复，目录上的 `hangListTools: true` 让 `tools/list` 永远不回，用来测客户端的超时。
+
+**stdio 服务**：`fakeMcpServer(name, options)` 返回 `mcp.json` 里的一项服务配置，产品按它启动一个真实的 stdio 进程。进程的生命周期也由选项决定：`startDelayMs` 晚一点再握手，`ignoreSigterm` 不理会 SIGTERM，`exitBeforeConnect: { code, stderr }` 写完 stderr 就退出，`exitAfterConnect: { whenFile, code, stderr }` 握手后等测试创建 `whenFile` 这个文件再退出（用信号而不是固定延时，握手再慢也不会提前退出），工具上的 `exitAfterReply` 回复之后退出。给了 `startLog`，进程启动时写一行 `{ server, cwd }`，用 `readMcpStarts(startLog)` 读回，可以断言哪些服务在哪个目录启动过。要从 spawn 的参数认出是哪台服务，用 `fakeMcpServerName(args)`。服务配置里的 `deferred: true` 让产品把这台服务的工具放到渐进加载后面。[MCP 夹具](../src/fixtures/mcp.ts)
+
+**HTTP 服务**：`await startFakeMcpHttpServer({ tools, transport })` 在本机回环地址起一个服务，`transport` 是 `'streamable-http'`（默认）或 `'sse'`，返回的 `url` 交给客户端。每个客户端拿到自己的会话。`addTool`、`updateTool`、`removeTool` 改工具目录，并给每个会话发一次 `tools/list_changed`。`bearerToken` 拒绝没带这个令牌的请求。`intercept(request)` 先看到每个请求（方法、路径、头、原文和其中的 JSON-RPC 方法名），返回 `{ status, headers, json | text }` 就由测试自己回答，返回 `undefined` 就交给服务；它也可以返回 Promise，把某个请求挂到测试放行为止。`requests` 按顺序记下所有请求。用完调用 `close()`。[HTTP 服务](../src/fixtures/mcp-http.ts)
+
+KAP 场景把配置交给 `scenarioFixtures({ mcpServers: { docs: fakeMcpServer('docs', { tools }) } })`，夹具启动服务前写好数据目录下的 `mcp.json`。模型调用的工具名是 `mcp__<服务名>__<工具名>`，例如 `call('mcp__docs__search', { query: 'cache' })`。其他直接启动产品的测试用 `writeMcpConfig(join(testHome.dataDir, 'mcp.json'), servers)` 写同样的文件。[官方客户端对照](../test/fixtures.test.ts) · [经过真实引擎](../../../tests/scenarios/prompt-cache.test.ts) · [MCP 客户端的生命周期用例](../../agent-core-v2/test/mcpCore/connection-manager.test.ts)
+
 ## 控制环境和网络
 
-- **被测代码接收环境参数时**，传入 `testEnv({ set: { HOME: testHome.home } })`。它返回新的对象，过滤继承来的 `KIMI_*`、已列出的厂商凭据和代理变量，再设置测试默认值。要保留某个原值用 `keep`，要模拟变量缺失用 `set: { MY_OPTION: undefined }`。[环境夹具](../src/fixtures/env.ts)
-- **被测代码直接读取 `process.env` 时**，用 `const restore = isolateProcessEnv(...)` 设置临时环境，并在 `finally` 调用 `restore()`。它修改整个进程，同一 worker 内使用这项夹具的测试应顺序运行。[环境恢复用例](../test/fixtures.test.ts)
-- **要发现意外的联网请求**，可以在 Vitest 的 `setupFiles` 中注册 `useNetworkGuard()`。testkit 和 KAP 场景项目已经启用它。其他包若需要相同行为，在自己的 setup 文件中从 `@moonshot-ai/testkit/vitest` 导入并调用它。守卫检查当前 Node 进程的 TCP 连接目标，默认允许本机回环连接。端口可以是数字或 Node 接受的端口字符串，Unix socket 路径和 Windows 命名管道交给 Node 处理。IPv4 目标须是 `127.0.0.0/8` 内的合法地址字面量。即使用例捕获了连接错误，结束时仍会报告违规的主机和端口。它的作用域不包括独立子进程。[场景 setup](../../../tests/scenarios/support/setup.ts) · [守卫验收](../test-fixtures/test/network-guard.test.ts)
+- **被测代码接收环境参数时**，传入 `testEnv({ set: { HOME: testHome.home } })`。它返回新的对象，过滤继承来的 `KIMI_*`、已列出的厂商凭据和代理变量，再设置测试默认值。要保留某个原值用 `keep`，要模拟变量缺失用 `set: { MY_OPTION: undefined }`。测试默认值里有两类：关掉遥测、模型目录刷新这类和外界隔离的设置；以及为了让单元测试更快而关掉的产品功能，单独导出为 `UNIT_TEST_SWITCHES`（目前是会话索引的读模型和搜索 worker）。端到端测试要让产品按用户的默认配置跑时，把 `UNIT_TEST_SWITCHES` 的每个名字设成 `undefined` 传进 `set`。新增只为提速的默认值放进 `UNIT_TEST_SWITCHES`。[环境夹具](../src/fixtures/env.ts)
+- **被测代码直接读取 `process.env` 时**，用 `const restore = isolateProcessEnv(...)` 设置临时环境，并在 `finally` 调用 `restore()`。它修改整个进程，同一 worker 内使用这项夹具的测试应顺序运行。agent-core-v2 和 kap-server 的 Vitest setup 文件不带参数调用它，整个测试进程都按 `testEnv()` 隔离。[环境恢复用例](../test/fixtures.test.ts)
+- **要发现意外的联网请求**，可以在 Vitest 的 `setupFiles` 中注册 `useNetworkGuard()`。testkit、KAP 场景项目、agent-core-v2、kap-server 和 node-sdk 已经启用它。其他包若需要相同行为，在自己的 setup 文件中从 `@moonshot-ai/testkit/vitest` 导入并调用它。守卫检查当前 Node 进程的 TCP 连接目标，默认允许本机回环连接。端口可以是数字或 Node 接受的端口字符串，Unix socket 路径和 Windows 命名管道交给 Node 处理。IPv4 目标须是 `127.0.0.0/8` 内的合法地址字面量。即使用例捕获了连接错误，结束时仍会报告违规的主机和端口。它的作用域不包括独立子进程。[场景 setup](../../../tests/scenarios/support/setup.ts) · [守卫验收](../test-fixtures/test/network-guard.test.ts)
 - **临时放行指定主机**时，从 `@moonshot-ai/testkit/fixtures` 调用 `installNetworkGuard({ allowHosts })`，并在 `finally` 里调用返回对象的 `uninstall()`。多个守卫允许同一主机时，卸载最后一个允许该主机的守卫才会撤销这项许可。
 
 ## 等待明确的事件
@@ -52,6 +75,8 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 
 比较一组帧或多个快照时，在**同一个测试**里复用 `createNormalizer({ idKeys: ['session_id'], paths: { '<workspace>': testHome.workspace } })` 返回的函数。它按首次出现的顺序给每个**值**编号：同一个原始 ID 不论出现在哪个键下、ID 数组里还是嵌在文本中的 UUID，都换成同一个标记，标记的种类取首次出现时的键名。所以「用户消息的 `item_id` 就是 `prompt_ids` 里的那个 ID」这种关系在规范化后仍能看出来。`paths` 的键是要显示的占位符，值是测试机上的实际路径。单份数据可以直接调用 `normalize(value, options)`。如果要验证两个真实 ID 是否相同，直接比较原始值即可。[快照规范化用例](../test/fixtures.test.ts)
 
+引擎、KAP 和 SDK 对外报告的本机路径统一用 `/` 分隔，Windows 上是 `C:/Users/me/app`。期望值来自 `mkdtemp`、`join` 这类返回原生路径的 API 时，用 `slashPathOf(path)` 换成这种写法再比较；已经用 `/` 分隔的路径原样返回。只换期望值，传给被测程序的输入保持原生路径。
+
 时间字段默认换成 `<time>`。数据还要交给会解析时间的代码（例如客户端 reducer）时，传 `timePlaceholder: 'fixed'`：时间字符串换成固定的 `FIXED_TIME`，`timeKeys` 里的数字（例如 `duration_ms`）换成 0，字段类型不变。
 
 ## 把预期数据入库：golden
@@ -65,8 +90,8 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 需要真正的进程边界时（冷启动、强杀、终端读屏），用 `TestProcess.start({ label, command, cwd, env, logDir })` 启动 Node 子进程。入口文件不存在时直接失败。它一直读空 stdout，保留 stdout 和 stderr 的尾部，可以用 `waitForLine(predicate)` 等结构化的就绪行，用 `onOutput(listener)` 把输出交给虚拟终端。子进程提前退出时，等待会立刻失败，并附上退出码和 stderr。[进程夹具](../src/fixtures/process.ts) · [用例](../test/fixtures.test.ts)
 
 - **启动 CLI** 用 `command: kimiCliCommand()` 和 `env: kimiCliEnv(testHome, extra)`。前者默认用 tsx 运行 `apps/kimi-code/src/main.ts`；环境变量 `TESTKIT_CLI_BUILD=dist` 时改用 Node 直接运行发布用的 `apps/kimi-code/dist/main.mjs`，不加载 tsx，也不打开开发服务器开关，所以要先构建，没有构建产物时子进程不会启动。后者在 `testEnv()` 基础上，把 OS home、`KIMI_CODE_HOME` 指向测试目录，关闭自动更新，并把 Kimi 服务地址指向网络守卫会拦截的 `KIMI_SERVICE_URL`。产品启动时会读的两个可选配置接口用 `kimiServiceStubs()` 回 404；对这个地址的其他请求都会记为违例，所以首轮流程里新增的服务依赖会让测试变红。只需要 OS home 那组变量（`HOME`、`USERPROFILE`、XDG 和 Windows 的 AppData）时，用 `osHomeEnv(dir)`。[CLI 命令与环境](../src/fixtures/cli.ts)
-- **子进程的网络**：每个 `TestProcess` 都预加载 testkit 的网络守卫，违例逐条追加到 `logDir` 下的日志，所以子进程被强杀后仍能读到。收尾时调用 `await child.networkViolations()`；如果子进程没有加载守卫，这个调用会失败，不会返回空列表。产品会访问、又无法改地址的固定下载（例如 CDN 上的 fd 压缩包），用 `fetchStubs: [{ method, url, status }]` 在子进程里直接回固定状态码。`url` 默认要和请求地址完全相同；调用方算不出完整地址时（例如文件名随平台变化的下载），加 `prefix: true`，以 `url` 开头的地址都回这个状态码。不经 `TestProcess` 启动的 Node 程序，例如 Playwright 启动的 Electron 主进程，用 `-r` 或 `--import` 加载 `NETWORK_GUARD_PRELOAD`，把 `networkGuardEnv(log, stubs)` 合入环境，收尾时用 `readNetworkViolations(log, label)` 读取违例。[桌面夹具](../../../apps/desktop/e2e/fixtures/app.ts)
+- **子进程的网络**：每个 `TestProcess` 都预加载 testkit 的网络守卫，违例逐条追加到 `logDir` 下的日志，所以子进程被强杀后仍能读到。收尾时调用 `await child.networkViolations()`；如果子进程没有加载守卫，这个调用会失败，不会返回空列表。产品会访问、又无法改地址的固定下载（例如 CDN 上的 fd 压缩包），用 `fetchStubs: [{ method, url, status }]` 在子进程里直接回固定状态码。`url` 默认要和请求地址完全相同；调用方算不出完整地址时（例如文件名随平台变化的下载），加 `prefix: true`，以 `url` 开头的地址都回这个状态码。不经 `TestProcess` 启动的 Node 程序，例如 Playwright 启动的 Electron 主进程，用 `-r` 或 `--import` 加载 `NETWORK_GUARD_PRELOAD`，把 `networkGuardEnv(log, stubs)` 合入环境，收尾时用 `readNetworkViolations(log, label)` 读取违例。[Desktop 驱动](../../../tests/e2e/surfaces/desktop.ts)
 - **结束子进程**：先走被测程序自己的退出路径并等 `child.closed`，再检查退出码；超时或模拟崩溃时用 `await child.forceKill()`，它在 POSIX 上结束整个进程组，在 Windows 上结束进程树。只需要清理测试自己启动的其他进程时，用 `killProcessTree(pid)`，并在 POSIX 上以 `detached: true` 启动它。
-- **KAP 服务端子进程**用 `KapProcess.start({ home })`，见 [KAP 场景指南](kap-scenarios.md#重启清理与失败诊断)。终端读屏见 [TUI 夹具](../../../apps/kimi-code/test/e2e/tui/support/terminal-session.ts)。
+- **KAP 服务端子进程**用 `KapProcess.start({ home })`，见 [KAP 场景指南](kap-scenarios.md#重启清理与失败诊断)。终端读屏见 [TUI 驱动](../../../tests/e2e/surfaces/tui.ts)。
 
 需要读取仓库里的数据文件（例如其他包录下的样本）时，用 `repoPath('tests', 'scenarios', ...)` 从仓库根目录定位，不要写跨包的相对路径。

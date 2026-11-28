@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createWatchService,
@@ -20,9 +20,28 @@ const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)
 const longTempDir = (prefix: string): Promise<string> =>
   mkdtemp(join(realpathSync.native(tmpdir()), prefix));
 
+async function untilWatching(
+  events: readonly WatchChange[],
+  writeDir: string,
+  reportedDir = writeDir,
+): Promise<void> {
+  const reported = join(reportedDir, 'watch-probe.txt');
+  let writes = 0;
+  await vi.waitFor(
+    async () => {
+      if (events.some((event) => event.path === reported)) return;
+      writes += 1;
+      await writeFile(join(writeDir, 'watch-probe.txt'), String(writes));
+      throw new Error('the watcher has not reported the probe file yet');
+    },
+    { timeout: 5000, interval: 100 },
+  );
+}
+
 class TestNativeWatcher {
   private errorListener: ((error: NodeJS.ErrnoException) => void) | undefined;
   closed = false;
+  closeCalls = 0;
 
   on(_event: 'error', listener: (error: NodeJS.ErrnoException) => void): this {
     this.errorListener = listener;
@@ -31,6 +50,7 @@ class TestNativeWatcher {
 
   close(): void {
     this.closed = true;
+    this.closeCalls += 1;
   }
 
   fail(code = 'EIO'): void {
@@ -55,7 +75,9 @@ function signalRig(options?: {
   readonly nativeCode?: string;
   readonly platform?: NodeJS.Platform;
   readonly resolvePath?: (path: string) => string;
+  readonly nativeStartSettleMs?: number;
 }): {
+  readonly runtime: WatchRuntime;
   readonly service: ReturnType<typeof createWatchService>;
   readonly attempts: TestNativeAttempt[];
   readonly retries: TestRetry[];
@@ -105,8 +127,12 @@ function signalRig(options?: {
       };
     },
     reportError: () => undefined,
+    ...(options?.nativeStartSettleMs === undefined
+      ? {}
+      : { nativeStartSettleMs: options.nativeStartSettleMs }),
   };
   return {
+    runtime,
     service: createWatchService(runtime),
     attempts,
     retries,
@@ -127,6 +153,134 @@ describe('watch signal mode', () => {
   afterEach(() => {
     handle?.dispose();
     handle = undefined;
+  });
+
+  it('keeps a shared native watch open until its last logical subscriber is disposed', async () => {
+    const rig = signalRig({ resolvePath: (path) => path === '/repo/./' ? '/repo' : path });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true });
+    const second = createWatchService(rig.runtime).watch('/repo/./', { signal: true });
+    try {
+      second.onDidChange((event) => events.push(event));
+      await Promise.all([handle.ready, second.ready]);
+      expect(rig.attempts).toHaveLength(1);
+      handle.dispose();
+      expect(rig.attempt(0).watcher.closed).toBe(false);
+      rig.attempt(0).emit('skills/example/SKILL.md');
+      expect(events).toEqual([{ path: '/repo/./', action: 'modified', kind: 'directory' }]);
+    } finally {
+      second.dispose();
+    }
+    expect(rig.attempt(0).watcher.closed).toBe(true);
+    expect(rig.attempt(0).watcher.closeCalls).toBe(1);
+    const replacement = rig.service.watch('/repo', { signal: true });
+    replacement.dispose();
+    expect(rig.attempts).toHaveLength(2);
+    expect(rig.attempt(1).watcher.closed).toBe(true);
+  });
+
+  it('applies each logical subscriber filter to the shared native event', () => {
+    const rig = signalRig();
+    const firstEvents: WatchChange[] = [];
+    const secondEvents: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true, ignored: (path) => path === join('/repo', 'first', 'SKILL.md') });
+    const second = rig.service.watch('/repo', { signal: true, ignored: (path) => path === join('/repo', 'second', 'SKILL.md') });
+    try {
+      handle.onDidChange((event) => firstEvents.push(event));
+      second.onDidChange((event) => secondEvents.push(event));
+      expect(rig.attempts).toHaveLength(1);
+      rig.attempt(0).emit('first/SKILL.md');
+      expect(firstEvents).toEqual([]);
+      expect(secondEvents).toHaveLength(1);
+      rig.attempt(0).emit('second/SKILL.md');
+      expect(firstEvents).toHaveLength(1);
+      expect(secondEvents).toHaveLength(1);
+    } finally {
+      second.dispose();
+    }
+  });
+
+  it('keeps different paths, recursive modes and runtimes on independent native watches', () => {
+    const rig = signalRig();
+    handle = rig.service.watch('/repo', { signal: true });
+    const others = [
+      rig.service.watch('/other', { signal: true }),
+      rig.service.watch('/repo', { listing: false }),
+      createWatchService({ ...rig.runtime }).watch('/repo', { signal: true }),
+    ];
+    try {
+      expect(rig.attempts).toHaveLength(4);
+      handle.dispose();
+      expect(rig.attempt(0).watcher.closed).toBe(true);
+      expect(rig.attempts.slice(1).every((attempt) => !attempt.watcher.closed)).toBe(true);
+    } finally {
+      for (const other of others) other.dispose();
+    }
+  });
+
+  it('does not merge case-sensitive Windows paths without a runtime path mapping', () => {
+    const rig = signalRig({ platform: 'win32' });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('C:\\Repo\\Skills', { signal: true });
+    const second = rig.service.watch('C:\\repo\\Skills', { signal: true });
+    try {
+      second.onDidChange((event) => events.push(event));
+      expect(rig.attempts).toHaveLength(2);
+      rig.attempt(0).emit('example.md');
+      expect(events).toEqual([]);
+      rig.attempt(1).emit('example.md');
+      expect(events).toEqual([{ path: 'C:\\repo\\Skills', action: 'modified', kind: 'directory' }]);
+    } finally {
+      second.dispose();
+    }
+  });
+
+  it('evicts failed native watches before new subscribers and independent retries join', () => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[][] = [[], [], []];
+    handle = rig.service.watch('/repo', { signal: true });
+    const second = rig.service.watch('/repo', { signal: true });
+    let third: WatchHandle | undefined;
+    try {
+      handle.onDidChange((event) => events[0]!.push(event));
+      second.onDidChange((event) => events[1]!.push(event));
+      expect(rig.attempts).toHaveLength(1);
+      rig.attempt(0).watcher.fail();
+      expect(rig.attempt(0).watcher.closed).toBe(true);
+      expect(rig.retries.slice(0, 2).every((retry) => !retry.active)).toBe(true);
+      expect(rig.retries.filter((retry) => retry.delayMs === 1000)).toHaveLength(2);
+      third = rig.service.watch('/repo', { signal: true });
+      third.onDidChange((event) => events[2]!.push(event));
+      for (const retry of rig.retries.filter((retry) => retry.delayMs === 1000)) retry.run();
+      expect(rig.attempts).toHaveLength(2);
+      rig.attempt(1).emit('skills/example/SKILL.md');
+      expect(events.every((received) => received.length > 0)).toBe(true);
+      handle.dispose();
+      second.dispose();
+      expect(rig.attempt(1).watcher.closed).toBe(false);
+    } finally {
+      second.dispose();
+      third?.dispose();
+    }
+    expect(rig.attempt(1).watcher.closed).toBe(true);
+    expect(rig.attempt(0).watcher.closeCalls).toBe(1);
+    expect(rig.attempt(1).watcher.closeCalls).toBe(1);
+    expect(rig.retries.every((retry) => !retry.active)).toBe(true);
+  });
+
+  it('does not cache a synchronous native creation failure for later subscribers', () => {
+    const rig = signalRig({ synchronousFailures: 1 });
+    handle = rig.service.watch('/repo', { signal: true });
+    const second = rig.service.watch('/repo', { signal: true });
+    try {
+      rig.retry(0).run();
+      expect(rig.attempts).toHaveLength(1);
+      expect(rig.attempt(0).watcher.closed).toBe(false);
+      second.dispose();
+      expect(rig.attempt(0).watcher.closed).toBe(false);
+    } finally {
+      second.dispose();
+    }
   });
 
   it('emits a coarse root invalidation when a native signal path changes', () => {
@@ -282,6 +436,56 @@ describe('watch signal mode', () => {
     expect(rig.attempts).toHaveLength(1);
   });
 
+  it.each([
+    { mode: 'an entry watch', options: { listing: false } },
+    { mode: 'a signal watch', options: { signal: true } },
+  ])('invalidates $mode once after the native start settle window', ({ options }) => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', options);
+    handle.onDidChange((event) => events.push(event));
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([100]);
+    expect(events).toEqual([]);
+
+    rig.retry(0).run();
+
+    expect(events).toEqual([{ path: '/repo', action: 'modified', kind: 'directory' }]);
+  });
+
+  it('settles a rearmed native watch again and drops the settle of the failed one', () => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).watcher.fail();
+    rig.retry(1).run();
+    rig.retry(2).run();
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([100, 1000, 100]);
+    expect(rig.retry(0).active).toBe(false);
+    expect(events).toEqual([
+      { path: '/repo', action: 'modified', kind: 'directory' },
+      { path: '/repo', action: 'modified', kind: 'directory' },
+      { path: '/repo', action: 'modified', kind: 'directory' },
+    ]);
+  });
+
+  it('cancels a pending native start settle when the watch handle is disposed', () => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { listing: false });
+    handle.onDidChange((event) => events.push(event));
+
+    handle.dispose();
+    handle = undefined;
+    rig.retry(0).run();
+
+    expect(rig.retry(0).active).toBe(false);
+    expect(events).toEqual([]);
+  });
+
   it('falls back to chokidar when native recursive watch is unavailable on the platform', async () => {
     const root = await longTempDir('watch-fallback-');
     const rig = signalRig();
@@ -333,6 +537,7 @@ describe('watch signal mode', () => {
       });
       handle.onDidChange((event) => events.push(event));
       await handle.ready;
+      await untilWatching(events, target, requested);
 
       await writeFile(join(target, 'config.toml'), 'x');
 
@@ -363,6 +568,7 @@ describe('watch signal mode', () => {
       handle = service.watch(root, { signal: true });
       handle.onDidChange((event) => events.push(event));
       await handle.ready;
+      await untilWatching(events, root);
 
       const file = join(root, 'a.txt');
       await writeFile(file, 'v1');
@@ -400,6 +606,7 @@ describe('watch chokidar mode', () => {
     const preexisting = join(root, 'pre.txt');
     await writeFile(preexisting, 'v0');
     const events = await start();
+    await untilWatching(events, root);
 
     const file = join(root, 'a.txt');
     const actions = () => events.filter((e) => e.path === file).map((e) => e.action);
@@ -442,6 +649,7 @@ describe('watch chokidar mode', () => {
   it('prunes events matching a custom ignored predicate', async () => {
     root = await mkdtemp(join(tmpdir(), 'watch-'));
     const events = await start({ ignored: (path) => path.includes('node_modules') });
+    await untilWatching(events, root);
 
     await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true });
     await writeFile(join(root, 'node_modules', 'pkg', 'index.js'), 'x');
@@ -455,6 +663,7 @@ describe('watch chokidar mode', () => {
   it('does not report changes below the configured depth', async () => {
     root = await mkdtemp(join(tmpdir(), 'watch-'));
     const events = await start({ depth: 0 });
+    await untilWatching(events, root);
 
     await mkdir(join(root, 'sub'));
     await writeFile(join(root, 'top.txt'), 'x');

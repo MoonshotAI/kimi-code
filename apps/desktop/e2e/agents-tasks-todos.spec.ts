@@ -130,17 +130,3 @@ test('background tasks and the todo list move through a release and survive a re
     await app.snapshot('tasks-restored');
   });
 });
-
-test('the todo list survives a relaunch', async ({ app, model }) => {
-  model.script(todos(['Build', 'done'], ['Ship', 'in_progress']), say('Todos updated.'));
-  await app.startTurn('Track the release');
-  await expect(app.window.getByRole('button', { name: 'Progress 1/2' })).toBeVisible();
-  await app.relaunch();
-  await expect(app.window.getByRole('list').first().getByText('Todos updated.', { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(app.window.getByRole('button', { name: 'Progress 1/2' })).toBeVisible();
-  await app.window.getByRole('button', { name: 'Progress 1/2' }).click();
-  const dock = app.window.locator('.dock-work-panel');
-  await expect(dock.locator('.tc-row')).toHaveText(['Build', 'Ship']);
-  await expect(dock.locator('.tc-row.s-done')).toHaveText(['Build']);
-  await expect(dock.locator('.tc-row.s-in_progress')).toHaveText(['Ship']);
-});

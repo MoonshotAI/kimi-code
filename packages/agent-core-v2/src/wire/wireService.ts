@@ -18,7 +18,7 @@ import {
   fromLlmMessage,
   toLlmMessage,
   type Message as LegacyContractMessage,
-} from '#/llm-adapter/contract/message';
+} from '#/wire/message';
 import {
   type AppendLogTruncation,
   IAppendLogStore,
@@ -75,6 +75,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
 
   private readonly wireScope: string;
   private lines = 0;
+  private appendCount = 0;
   private lastClearLine: number | undefined;
   private readonly agentId: string;
   private persistQueue: Promise<void> | undefined;
@@ -227,8 +228,13 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     let entries: WireLine[] | undefined;
     for (let attempt = 0; attempt < 2 && entries === undefined; attempt++) {
       await this.drainPersisted();
+      const appendsBeforeRead = this.appendCount;
       const read = await this.readStableEntries();
-      if (this.lines === this.lastReadLineCount) entries = read;
+      const nothingWrittenMeanwhile =
+        this.persistQueue === undefined &&
+        this.appendCount === appendsBeforeRead &&
+        this.lines === this.lastReadLineCount;
+      if (nothingWrittenMeanwhile) entries = read;
     }
     if (entries === undefined) {
       throw new WireError(
@@ -276,7 +282,8 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     records: UndoSwitchRecords,
     edgeLine: number,
   ): Promise<void> {
-    const tail: WireRecord[] = [];
+    const expected = [records.switched, records.legacyUndo, records.undone];
+    const placed: WireRecord[] = [];
     let total = 0;
     const tolerate = { onTruncate: () => {} };
     for await (const record of this.log.read<WireRecord>(
@@ -285,14 +292,11 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       tolerate,
     )) {
       total += 1;
-      tail.push(record);
-      if (tail.length > 3) tail.shift();
+      if (total >= edgeLine && total < edgeLine + expected.length) placed.push(record);
     }
-    const expected = [records.switched, records.legacyUndo, records.undone];
     const matches =
-      total === edgeLine + 2 &&
-      tail.length === 3 &&
-      tail.every((record, index) => recordsMatch(record, expected[index]!));
+      placed.length === expected.length &&
+      placed.every((record, index) => recordsMatch(record, expected[index]!));
     if (matches) return;
     throw new WireError(
       WireErrors.codes.RECORDS_WRITE_FAILED,
@@ -688,6 +692,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       onError: onUnexpectedError,
     });
     this.lines += 1;
+    this.appendCount += 1;
     if (isHumanRecordType(record.type)) {
       this.modeTwoEntries.push({ record, line: this.lines });
     } else if (isLoopProfileRecordType(record.type)) {
@@ -701,7 +706,9 @@ function isLoopProfileRecordType(type: string): boolean {
   return type === 'profile.bind' ||
     type === 'config.update' ||
     type === 'tools.set_active_tools' ||
-    type === 'tools.reset_active_tools';
+    type === 'tools.reset_active_tools' ||
+    type === 'tools.settled' ||
+    type === 'tool_select.initialized';
 }
 
 type UnknownRecord = Record<string, unknown>;

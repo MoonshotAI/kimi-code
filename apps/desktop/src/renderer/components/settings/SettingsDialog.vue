@@ -8,7 +8,7 @@ import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
-import type { FontTarget } from '@moonshot-ai/app-core';
+import type { FontTarget } from '@moonshot-ai/app-core/composables';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
 import { usePlugins } from '@moonshot-ai/app-client/composables';
@@ -24,16 +24,18 @@ import {
   effortLabel,
   logWarn,
   modelThinkingAvailability,
+  nativePath,
   segmentsFor,
   thinkingLevelFromConfig,
   thinkingLevelToConfig,
+  workspaceRootKey,
 } from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
-import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
-import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
+import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { usePreventSystemSleep } from '../../composables/usePreventSystemSleep';
@@ -331,12 +333,6 @@ const PRIVACY_POLICY_URL = 'https://www.kimi.com/user/agreement/userPrivacy?vers
 function openAgreement(url: string): void {
   window.open(url, '_blank', 'noopener');
 }
-const permissionModes = ['manual', 'yolo', 'auto'] as const;
-const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {
-  manual: 'status.permissionManual',
-  auto: 'status.permissionAuto',
-  yolo: 'status.permissionYolo',
-};
 
 const dialogRef = ref<HTMLElement | null>(null);
 useDialogFocus(dialogRef);
@@ -471,7 +467,7 @@ async function onCheckUpdate(): Promise<void> {
   checkingUpdate.value = true;
   checkResult.value = null;
   try {
-    checkResult.value = await updateTracker.check();
+    checkResult.value = await updateTracker.checkAndOpen();
   } finally {
     checkingUpdate.value = false;
   }
@@ -485,7 +481,7 @@ const checkResultText = computed(() => {
       if (updateTracker.status.value.state === 'downloaded') {
         return t('settings.updateCheckDownloaded', { version: result.version ?? '' });
       }
-      if (updateTracker.autoDownload.value) {
+      if (updateTracker.status.value.state === 'downloading' || updateTracker.autoDownload.value) {
         return t('settings.updateCheckAvailableAuto', { version: result.version ?? '' });
       }
       return t('settings.updateCheckAvailable', { version: result.version ?? '' });
@@ -536,21 +532,6 @@ const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>
     .map(([provider, options]) => ({ provider, options }));
 });
 
-const defaultModelSelectOptions = computed(() => {
-  const options: Array<{ value: string; label: string; group?: string; disabled?: boolean }> = modelGroups.value.flatMap((group) =>
-    group.options.map((model) => ({ value: model.id, label: model.label, group: providerDisplayName(group.provider, t) })),
-  );
-  if (!props.config?.defaultModel) {
-    options.unshift({ value: '', label: t('settings.noDefaultModel'), group: '', disabled: true });
-  }
-  return options;
-});
-
-const defaultPermissionMode = computed(() => {
-  const mode = props.config?.defaultPermissionMode;
-  return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
-});
-
 function extractConfigModelProvider(raw: unknown): string | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const source = raw as Record<string, unknown>;
@@ -566,20 +547,6 @@ function formatConfigModelLabel(id: string, raw: unknown, provider?: string): st
   if (model && resolvedProvider) return `${id} (${providerDisplayName(resolvedProvider, t)}/${model})`;
   if (model) return `${id} (${model})`;
   return id;
-}
-
-function configBool(value: boolean | undefined): boolean {
-  return value === true;
-}
-
-function setDefaultModel(value: string): void {
-  if (!value || value === props.config?.defaultModel) return;
-  emit('updateConfig', { defaultModel: value });
-}
-
-function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
-  if (mode === defaultPermissionMode.value) return;
-  emit('updateConfig', { defaultPermissionMode: mode });
 }
 
 const secondaryModel = computed(
@@ -613,11 +580,6 @@ async function setSecondaryModel(value: { model: string | null; effort?: string 
   emit('updateConfig', {
     secondaryModel: buildSecondaryModelPatch(props.config?.secondaryModel, { ...value, model }),
   });
-}
-
-function toggleConfigBoolean(key: 'defaultPlanMode'): void {
-  const current = props.config?.[key];
-  emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
 }
 
 const defaultModelInfo = computed(() =>
@@ -677,8 +639,13 @@ async function setTab(tab: SettingsTab): Promise<void> {
   activeTab.value = tab;
 }
 
+async function confirmDiscard(): Promise<boolean> {
+  if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return false;
+  return true;
+}
+
 async function requestClose(): Promise<void> {
-  if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
+  if (!(await confirmDiscard())) return;
   emit('close');
 }
 
@@ -724,21 +691,29 @@ watch(
   { immediate: true },
 );
 
-const archiveWorkspaces = computed<string[]>(() => {
-  const set = new Set<string>();
-  for (const s of archivedItems.value) set.add(s.cwd);
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+function archiveWorkspaceOf(session: AppSession): { id: string; label: string; path?: string } {
+  const id = workspacesStore().workspaceIdForSession(session);
+  const workspace = workspacesStore().workspaces.find((w) => w.id === id);
+  if (workspace === undefined) return { id: workspaceRootKey(session.cwd), label: nativePath(session.cwd) };
+  const shortPath = workspacesStore().workspaceById.get(id)?.shortPath ?? nativePath(workspace.root);
+  return { id, label: workspace.name, path: hostsStore().workspacePathLabel({ shortPath, hostId: workspace.hostId }, t) };
+}
+
+const archiveWorkspaces = computed(() => {
+  const workspaces = new Map(archivedItems.value.map(archiveWorkspaceOf).map((workspace) => [workspace.id, workspace]));
+  return Array.from(workspaces.values(), ({ id, label, path }) => ({ value: id, label, description: path }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 });
 const archiveWorkspaceSelectOptions = computed(() => [
   { value: 'all', label: t('settings.archivedAllWorkspaces') },
-  ...archiveWorkspaces.value.map((workspace) => ({ value: workspace, label: workspace })),
+  ...archiveWorkspaces.value,
 ]);
 
 const filteredArchived = computed<AppSession[]>(() => {
   const q = archiveQuery.value.trim().toLowerCase();
   let rows = archivedItems.value.filter((s) => s.archived === true && !client.isSessionDeleted(s.id));
   if (archiveWsFilter.value !== 'all') {
-    rows = rows.filter((s) => s.cwd === archiveWsFilter.value);
+    rows = rows.filter((s) => archiveWorkspaceOf(s).id === archiveWsFilter.value);
   }
   if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
   rows = rows.slice();
@@ -754,14 +729,15 @@ const filteredArchived = computed<AppSession[]>(() => {
   return rows;
 });
 
-const groupedArchived = computed<{ cwd: string; items: AppSession[] }[]>(() => {
-  const map = new Map<string, AppSession[]>();
+const groupedArchived = computed<{ id: string; label: string; path?: string; items: AppSession[] }[]>(() => {
+  const map = new Map<string, { id: string; label: string; path?: string; items: AppSession[] }>();
   for (const s of filteredArchived.value) {
-    const list = map.get(s.cwd) ?? [];
-    list.push(s);
-    map.set(s.cwd, list);
+    const workspace = archiveWorkspaceOf(s);
+    const group = map.get(workspace.id) ?? { ...workspace, items: [] };
+    group.items.push(s);
+    map.set(workspace.id, group);
   }
-  return Array.from(map.entries()).map(([cwd, items]) => ({ cwd, items }));
+  return Array.from(map.values());
 });
 
 async function onRestore(id: string): Promise<void> {
@@ -784,6 +760,8 @@ function archiveTime(iso: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+defineExpose({ confirmDiscard });
 </script>
 
 <template>
@@ -1092,34 +1070,6 @@ function archiveTime(iso: string): string {
             <template v-if="config">
               <div class="row">
                 <span class="rlabel">
-                  {{ t('settings.defaultModel') }}
-                  <span class="hint">{{ t('settings.defaultModelHint') }}</span>
-                </span>
-                <div v-if="modelGroups.length > 0" class="select-wrap">
-                  <Select
-                    :model-value="config.defaultModel ?? ''"
-                    :options="defaultModelSelectOptions"
-                    :aria-label="t('settings.defaultModel')"
-                    @update:model-value="setDefaultModel"
-                  />
-                </div>
-                <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.defaultPermission') }}
-                  <span class="hint">{{ t('settings.defaultPermissionHint') }}</span>
-                </span>
-                <SegmentedControl
-                  :model-value="defaultPermissionMode"
-                  :options="permissionModes.map((m) => ({ value: m, label: t(permissionLabelKey[m]) }))"
-                  @update:model-value="setDefaultPermissionMode($event as 'manual' | 'auto' | 'yolo')"
-                />
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
                   {{ t('settings.defaultThinking') }}
                   <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
                 </span>
@@ -1139,18 +1089,6 @@ function archiveTime(iso: string): string {
                   @update:model-value="setDefaultThinkingSegment"
                 />
                 <span v-else class="rvalue mono">{{ effortLabel(defaultThinkingSegments[0] ?? 'on') }}</span>
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.defaultPlanMode') }}
-                  <span class="hint">{{ t('settings.defaultPlanModeHint') }}</span>
-                </span>
-                <Switch
-                  :model-value="configBool(config.defaultPlanMode)"
-                  :label="t('settings.defaultPlanMode')"
-                  @update:model-value="toggleConfigBoolean('defaultPlanMode')"
-                />
               </div>
             </template>
 
@@ -1527,10 +1465,11 @@ function archiveTime(iso: string): string {
 
           <template v-else>
             <div v-if="groupedArchived.length > 0" class="archive-list">
-              <section v-for="g in groupedArchived" :key="g.cwd" class="archive-card">
+              <section v-for="g in groupedArchived" :key="g.id" class="archive-card">
                 <div class="archive-workspace">
                   <Icon name="folder-closed" size="md" />
-                  <span class="path">{{ g.cwd }}</span>
+                  <span class="path">{{ g.label }}</span>
+                  <span v-if="g.path" class="path hint">{{ g.path }}</span>
                   <span class="count">{{ t('settings.archivedSessionsCount', { count: g.items.length }) }}</span>
                 </div>
                 <div class="setting-card">

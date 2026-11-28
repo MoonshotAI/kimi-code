@@ -18,7 +18,7 @@ import {
   ISessionSkillCatalog,
   ISkillDiscovery,
   ITelemetryService,
-  IWorkspaceService,
+  IProjectService,
   InMemorySkillCatalog,
   isUserActivatableSkillType,
   reloadOnStale,
@@ -167,7 +167,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const ws = await core.accessor.get(IWorkspaceService).get(workspace_id);
+      const ws = await core.accessor.get(IProjectService).get(workspace_id);
       if (ws === undefined) {
         reply.send(
           errEnvelope(
@@ -373,9 +373,9 @@ async function listWorkspaceSkillsForRoots(
       ? Promise.resolve([])
       : projectRootsForDirs([workDir, ...additionalDirs], rootOptions),
     useExplicitDirs
-      ? configuredRoots(explicitDirs, workDir, bootstrap.osHomeDir, 'user')
+      ? configuredRoots(explicitDirs, [workDir], bootstrap.osHomeDir, 'user')
       : Promise.resolve([]),
-    configuredRoots(extraSkillDirs, workDir, bootstrap.osHomeDir, 'extra'),
+    configuredRoots(extraSkillDirs, [workDir, ...additionalDirs], bootstrap.osHomeDir, 'extra'),
     plugins.pluginSkillRoots(),
   ]);
   const [user, project, explicit, extra, plugin] = await Promise.all([

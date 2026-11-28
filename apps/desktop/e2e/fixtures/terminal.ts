@@ -35,7 +35,6 @@ export const shellCommands = isWindows
       sleep: (seconds: number) => `ping -n ${seconds + 1} 127.0.0.1 > $null`,
       exit: 'exit',
       shellPid: (tag: string) => `Write-Output "${tag}-pid-$PID"`,
-      size: (tag: string) => `Write-Output "${tag}-size-$($Host.UI.RawUI.WindowSize.Height) $($Host.UI.RawUI.WindowSize.Width)"`,
     }
   : {
       echo: (text: string) => `echo ${text}`,
@@ -44,7 +43,6 @@ export const shellCommands = isWindows
       sleep: (seconds: number) => `sleep ${seconds}`,
       exit: 'exit',
       shellPid: (tag: string) => `echo ${tag}-pid-$$`,
-      size: (tag: string) => `echo "${tag}-size-$(stty size)"`,
     };
 
 export async function enableTerminalScreenReader(window: Page): Promise<void> {
@@ -113,31 +111,6 @@ export async function selectTerminalLine(window: Page, text: string): Promise<vo
   const row = terminalHost(window).getByRole('list').getByRole('listitem').filter({ hasText: exact }).last();
   const box = (await row.boundingBox())!;
   await window.mouse.click(box.x + 4, box.y + box.height / 2, { clickCount: 3 });
-}
-
-let sizeReads = 0;
-
-export async function readTerminalSize(host: Locator): Promise<{ rows: number; cols: number }> {
-  const window = host.page();
-  const tag = `size${sizeReads += 1}`;
-  await host.locator('.xterm-screen').click();
-  await window.keyboard.type(shellCommands.size(tag));
-  await window.keyboard.press('Enter');
-  let size: { rows: number; cols: number } | undefined;
-  await expect.poll(async () => {
-    const match = [...(await screenText(host)).matchAll(new RegExp(`^${tag}-size-(\\d+) (\\d+)$`, 'gm'))].at(-1);
-    size = match ? { rows: Number(match[1]), cols: Number(match[2]) } : undefined;
-    return size;
-  }, { message: 'waiting for the terminal to print its size', timeout: 10_000 }).toBeDefined();
-  return size!;
-}
-
-export async function expectTerminalSize(host: Locator, check: (size: { rows: number; cols: number }) => boolean | Promise<boolean>): Promise<void> {
-  await expect.poll(async () => check(await readTerminalSize(host)), { message: 'waiting for the terminal to report the expected size', timeout: 30_000 }).toBe(true);
-}
-
-export function terminalInput(host: Locator): Locator {
-  return host.getByRole('textbox', { name: 'Terminal input' });
 }
 
 export async function readShellPid(window: Page, tag: string): Promise<string> {

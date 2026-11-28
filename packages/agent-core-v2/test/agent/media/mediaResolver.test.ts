@@ -16,15 +16,15 @@ import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
 import type { Event2 } from '#/app/event/event2';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
+import { registerAgentMediaPolicy, registerAgentMediaTools } from '#/agent/loop/mediaPolicy';
 import { createStructureResolver } from '#/agent/loop/projectionPolicy';
 import { AgentLoopProjector } from '#/agent/loop/projector';
+import { createPolicyRegistry } from '@moonshot-ai/core/llm/policy/registry';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
-import type { ImageUploader, VideoUploader } from '#/llm-adapter/model/media';
-import type { Model } from '#/llm-adapter/model/catalog';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import type { ImageUploader, VideoUploader } from '#/provider-catalog/model/media';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { LlmFiles, LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
@@ -42,7 +42,7 @@ import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '@moonshot-ai/core/llm/message';
 import type { LlmOutcome, LlmRunEvent } from '@moonshot-ai/core/llm/response';
-import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import type { Protocol } from '#/provider-catalog/protocol/protocol';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -51,7 +51,8 @@ import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 import { registerStateServices } from '../../state/stubs';
 import { createStaticCredentialProvider } from '#human/credentials/credentials';
-import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import { ImageUploadUnsupportedError } from '#/provider-catalog/errors';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const FILE_ID = 'file_abc';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');
@@ -169,6 +170,9 @@ function stubEnvironmentBinding(environmentId = LOCAL_ENVIRONMENT_ID): IAgentEnv
     bind: () => {
       throw new Error('unused');
     },
+    rebindLocalWorkDir: async () => {
+      throw new Error('unused');
+    },
   };
 }
 
@@ -269,7 +273,7 @@ function requester(opts: {
     },
     ...(hasFailed === undefined ? {} : { hasFailed: (id: string) => hasFailed(id) }),
   };
-  const initial = new ProtocolAdapterRegistry().request(model);
+  const initial = new ProviderCatalogService().createRequester(model);
   return {
     model,
     requester: initial.with({ endpoint: { files } }),
@@ -282,7 +286,7 @@ function resolveMedia(
   resolution: TestMediaResolution,
   signal?: AbortSignal,
 ): Promise<readonly Message[]> {
-  return service.resolve(messages, resolution.model, resolution.requester, signal);
+  return service.resolve(messages, resolution.requester.request({ content: { messages: [] } }), signal);
 }
 
 function msPart(id: string): VideoURLPart {
@@ -311,23 +315,25 @@ async function generateKimiMediaRequest(
     baseUrl: 'https://example.test/v1',
     credentialProvider: createStaticCredentialProvider(apiKey),
   });
-  const routed = new ProtocolAdapterRegistry()
-    .request(model, { protocol: { stream: false } })
+  const routed = new ProviderCatalogService()
+    .createRequester(model, { protocol: { stream: false } })
     .with({
       endpoint: {
-        fetch: (input, init) => (input === 'data:,' ? Promise.resolve(new Response()) : fetch(input, init)),
+        fetch: (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+          input === 'data:,' ? Promise.resolve(new Response()) : fetch(input, init),
       },
     });
-  const media = createAgentMediaPolicy(service, model, routed);
+  const policy = createPolicyRegistry();
+  registerAgentMediaTools(policy);
+  registerAgentMediaPolicy(policy, service);
   const events: LlmRunEvent[] = [];
   for await (const event of streamLlmRequest(
     routed.request({
       profile: { systemPrompt: '' },
       content: { messages },
       policy: {
+        ...policy.asPolicy(),
         retry: { infiniteRetry },
-        recoveries: [media.recovery],
-        resolvers: [media.toolResolver, media.resolver],
       },
     }),
     { signal: new AbortController().signal },
@@ -1078,10 +1084,12 @@ describe('AgentMediaResolverService image upload', () => {
       baseUrl: 'https://example.test/v1',
       credentialProvider: createStaticCredentialProvider('YOUR_API_KEY'),
     });
-    const routed = new ProtocolAdapterRegistry()
-      .request(model, { protocol: { stream: false } })
+    const routed = new ProviderCatalogService()
+      .createRequester(model, { protocol: { stream: false } })
       .with({ endpoint: { fetch: mockFetch } });
-    const media = createAgentMediaPolicy(resolver(new Map(), sessionDir, mediaStore), model, routed);
+    const policy = createPolicyRegistry();
+    registerAgentMediaTools(policy);
+    registerAgentMediaPolicy(policy, resolver(new Map(), sessionDir, mediaStore));
     for (const history of [
       messages,
       [...messages, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], toolCalls: [] }] satisfies Message[],
@@ -1090,10 +1098,7 @@ describe('AgentMediaResolverService image upload', () => {
         routed.request({
           profile: { systemPrompt: '' },
           content: { messages: history },
-          policy: {
-            recoveries: [media.recovery],
-            resolvers: [media.toolResolver, media.resolver],
-          },
+          policy: policy.asPolicy(),
         }),
         { signal: new AbortController().signal },
       );
@@ -1829,10 +1834,10 @@ describe('AgentMediaResolverService media labels', () => {
       [],
       environmentId,
     );
-    const { model, requester: request } = requester({});
+    const { requester: request } = requester({});
     const [message] = await service.resolve(
       [imageMessage(url, { type: 'image_url', imageUrl: { url, name: 'alias.png' } })],
-      model, request,
+      request.request({ content: { messages: [] } }),
     );
     const path = includeUserPaths ? ` path="${join(sessionDir, 'session', 'media', `${fileId}.png`)}"` : '';
     expect(message!.content).toEqual([
@@ -1878,7 +1883,7 @@ describe('AgentMediaResolverService media labels', () => {
       [],
       environmentId,
     );
-    const { model, requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
+    const { requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
     const reject = Response.json({
       error: { message: status === 400 ? 'Unsupported image format' : 'Request Entity Too Large' },
     }, { status });
@@ -1889,7 +1894,9 @@ describe('AgentMediaResolverService media labels', () => {
       }),
     );
     const request = base.with({ protocol: { stream: false }, endpoint: { fetch: mockFetch } });
-    const { resolver: resolve, toolResolver, recovery } = createAgentMediaPolicy(service, model, request);
+    const policy = createPolicyRegistry();
+    registerAgentMediaTools(policy);
+    registerAgentMediaPolicy(policy, service);
     const contents: (readonly ContentPart[])[] = [];
     const generate = (first: string) => request.generate({
       content: { messages: [{ role: 'user', content: [
@@ -1897,7 +1904,7 @@ describe('AgentMediaResolverService media labels', () => {
         namedImage('f_img', 'second.png'),
         { type: 'image_url', imageUrl: { url: PNG_DATA_URL, name: 'inline.png' } },
       ] }] },
-      policy: { recoveries: [recovery], resolvers: [toolResolver, resolve] },
+      policy: policy.asPolicy(),
     }, {
       signal: new AbortController().signal,
       onAttempt: (attempt) => { contents.push(attempt.content.messages[0]!.content); },
@@ -1934,7 +1941,7 @@ describe('AgentMediaResolverService media labels', () => {
       [],
       environmentId,
     );
-    const { model, requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
+    const { requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
     const mockFetch = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: { message: 'Request Entity Too Large' } }, { status: 413 }))
       .mockImplementation(async () =>
@@ -1944,7 +1951,10 @@ describe('AgentMediaResolverService media labels', () => {
         }),
       );
     const request = base.with({ protocol: { stream: false }, endpoint: { fetch: mockFetch } });
-    const media = createAgentMediaPolicy(service, model, request);
+    const policy = createPolicyRegistry();
+    registerAgentMediaTools(policy);
+    policy.addResolver(createStructureResolver(new AgentLoopProjector(() => {})));
+    registerAgentMediaPolicy(policy, service);
     const attempts: (readonly Message[])[] = [];
     const outcome = await request.generate({
       content: { messages: [
@@ -1957,10 +1967,7 @@ describe('AgentMediaResolverService media labels', () => {
         { role: 'tool', toolCallId: 'call_1', content: [{ type: 'image_url', imageUrl: { url: buildKimiFileUrl('f_tool') } }] },
         { role: 'user', content: [namedImage('f_a', 'a.png'), namedImage('f_b', 'b.png')] },
       ] },
-      policy: {
-        recoveries: [media.recovery],
-        resolvers: [media.toolResolver, createStructureResolver(new AgentLoopProjector(() => {})), media.resolver],
-      },
+      policy: policy.asPolicy(),
     }, {
       signal: new AbortController().signal,
       onAttempt: (attempt) => { attempts.push(attempt.content.messages); },

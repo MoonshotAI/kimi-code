@@ -1,18 +1,22 @@
 import { writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 
-import { WaitTimeoutError } from '#/errors';
+import { KapSchemaError, WaitTimeoutError } from '#/errors';
 import { createTestHome, type TestHome } from '#/fixtures/home';
 import { FIXED_TIME } from '#/fixtures/normalize';
-import { isConversationFrame, turnsFromFrames, type KapFrame } from '#/kap/frames';
+import { KapClient } from '#/kap/client';
+import { isConversationFrame, turnsFromFrames, type KapFrame, type KapTurn } from '#/kap/frames';
 import { startKap, type KapRunningServer } from '#/kap/harness';
+import { verifyKapInvariants } from '#/kap/invariants';
 import { KapProcess } from '#/kap/process';
 import { dropFrames, duplicateFrames, insertUnknownFrame, KapRecorder, mutateKapRecording, readKapRecording, replayKapRecording, UNKNOWN_FRAME_TYPE, type KapRecording } from '#/kap/recording';
-import { KapEnvelopeError, KapRest } from '#/kap/rest';
+import { KapEnvelopeError, KapRest, type KapExchange } from '#/kap/rest';
+import { verifyKapSchemas } from '#/kap/schemas';
 import { KapCommandError, KapSocket, WS_BEARER_PROTOCOL_PREFIX } from '#/kap/socket';
 
 describe('turnsFromFrames', () => {
@@ -125,6 +129,22 @@ describe('KapRest', () => {
     await expect(refused.rest.post('/api/v1/sessions/x/prompts')).rejects.toBeInstanceOf(KapEnvelopeError);
     const garbled = restWith(502, '<html>bad gateway</html>');
     await expect(garbled.rest.get('/api/v1/sessions')).rejects.toThrow(/HTTP 502: "<html>bad gateway<\/html>"/);
+  });
+
+  it('records each response with its JSON body, including raw responses the caller reads itself', async () => {
+    const exchanges: Promise<KapExchange>[] = [];
+    const answers = [
+      new Response(JSON.stringify({ code: 0, data: { id: 's1' } }), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }),
+      new Response('# KAP', { status: 200, headers: { 'content-type': 'text/markdown' } }),
+    ];
+    const fetchImpl: typeof fetch = () => Promise.resolve(answers.shift() ?? new Response(null, { status: 500 }));
+    const rest = new KapRest('http://kap.test', () => 'tok', fetchImpl, (exchange) => exchanges.push(exchange));
+    await rest.post('/api/v1/sessions', { cwd: '/w' });
+    await expect((await rest.raw('/api/v1/kap.md', { query: { lang: 'en' } })).text()).resolves.toBe('# KAP');
+    await expect(Promise.all(exchanges)).resolves.toEqual([
+      { method: 'POST', path: '/api/v1/sessions', status: 200, json: true, body: '{"code":0,"data":{"id":"s1"}}' },
+      { method: 'GET', path: '/api/v1/kap.md', status: 200, json: false, body: undefined },
+    ]);
   });
 });
 
@@ -309,6 +329,448 @@ describe('KapHarness', () => {
     expect(process.env['HOME']).toBe(second.home.home);
     await second.close();
     expect(process.env['HOME']).toBe(before);
+  });
+});
+
+describe('verifyKapInvariants', () => {
+  interface StubKap {
+    readonly session: Readonly<Record<string, unknown>>;
+    readonly turns: readonly KapTurn[];
+    readonly agents?: Readonly<Record<string, readonly KapTurn[]>>;
+    readonly snapshot?: Readonly<Record<string, unknown>>;
+    readonly frames?: readonly Readonly<Record<string, unknown>>[];
+    readonly afterUnsubscribe?: readonly Readonly<Record<string, unknown>>[];
+    readonly queued?: readonly unknown[];
+    readonly deleted?: boolean;
+    readonly broken?: boolean;
+    readonly notFoundStatus?: number;
+  }
+
+  const idle = { id: 's1', activity: 'idle', pending_interaction: 'none', last_turn_outcome: 'completed', archived: false };
+  const header = { turn_id: 't1', ordinal: 0, kind: 'agent', status: 'ended', outcome: 'completed' };
+  const reply = { item_id: 'a1', type: 'assistant_message', status: 'ended', outcome: 'completed', text: 'hi' };
+  const answered: KapTurn = { ...header, items: [reply] };
+  const live = (frame: Readonly<Record<string, unknown>>) => ({ session_id: 's1', agent_id: 'main', ...frame });
+  const answeringFrames = [
+    live({ type: 'turn.started', turn: { ...header, status: 'running', outcome: undefined } }),
+    live({ type: 'item.ended', turn_id: 't1', item: reply }),
+    live({ type: 'turn.ended', turn: header }),
+  ];
+  const closers: (() => Promise<void>)[] = [];
+
+  afterEach(async () => {
+    await Promise.all(closers.splice(0).map((close) => close()));
+  });
+
+  function send(peer: ServerSocket, frames: readonly Readonly<Record<string, unknown>>[]): void {
+    for (const frame of frames) peer.send(JSON.stringify(frame));
+  }
+
+  async function stubKap(stub: StubKap, options: { readonly subscribe?: boolean; readonly agentIds?: readonly string[] } = {}): Promise<KapClient> {
+    const server = createServer((request, response) => {
+      const path = new URL(request.url ?? '/', 'http://kap.test').pathname;
+      const routes: Readonly<Record<string, unknown>> = {
+        '/api/v1/sessions': stub.session,
+        '/api/v1/sessions/s1': stub.session,
+        '/api/v1/sessions/s1/prompts': { active: null, queued: stub.queued ?? [] },
+        '/api/v1/sessions/s1/agents/main/turns': { turns: stub.turns, has_more: false },
+        ...Object.fromEntries(Object.entries(stub.agents ?? {}).map(([agentId, turns]) => [`/api/v1/sessions/s1/agents/${agentId}/turns`, { turns, has_more: false }])),
+      };
+      const creating = path === '/api/v1/sessions';
+      const found = creating || stub.deleted !== true ? routes[path] : undefined;
+      const status = stub.broken === true && !creating ? 500 : found === undefined ? 404 : 200;
+      response.writeHead(status === 404 ? (stub.notFoundStatus ?? 404) : status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(status === 200 ? { code: 0, data: found } : { code: status === 500 ? 50001 : 40401, msg: status === 500 ? 'internal error' : 'not found' }));
+    });
+    const sockets = new WebSocketServer({ server });
+    sockets.on('connection', (peer) => {
+      peer.on('message', (data) => {
+        const bytes = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+        const command = JSON.parse(bytes.toString('utf8')) as Readonly<Record<string, unknown>>;
+        peer.send(JSON.stringify({ type: 'response', request_id: command['request_id'], code: 0 }));
+        if (command['type'] === 'unsubscribe') {
+          send(peer, stub.afterUnsubscribe ?? []);
+          return;
+        }
+        const agentIds = command['agent_ids'] as readonly string[];
+        const snapshots = agentIds.map((agentId) => live({ type: 'turns', agent_id: agentId, turns: [], has_more: false, ...(agentId === 'main' ? stub.snapshot : {}) }));
+        send(peer, [...snapshots, ...(stub.frames ?? [])]);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const client = new KapClient({ origin: () => `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: () => 'tok' });
+    closers.push(async () => {
+      await Promise.all(client.connectedSockets.map((socket) => socket.close()));
+      for (const peer of sockets.clients) peer.terminate();
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    await client.createSession();
+    if (options.subscribe === false) return client;
+    const socket = await client.connect();
+    const agentIds = options.agentIds ?? ['main'];
+    await socket.subscribe('s1', { agentIds });
+    await socket.waitFor(() => socket.frames.length === 1 + agentIds.length + (stub.frames ?? []).length);
+    return client;
+  }
+
+  it('passes when REST, the folded frames and the latest session frame agree', async () => {
+    const client = await stubKap({
+      session: idle,
+      turns: [answered],
+      frames: [
+        ...answeringFrames,
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' },
+        { type: 'session', change: 'updated', session: { ...idle, activity: 'turn', pending_interaction: 'approval' } },
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'ended' },
+        { type: 'session', change: 'updated', session: idle },
+      ],
+    });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a session that is still busy and leaves its turns alone', async () => {
+    const client = await stubKap({ session: { ...idle, activity: 'background' }, turns: [{ ...header, status: 'running', items: [] }], queued: [{}] }, { subscribe: false });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      name: 'KapInvariantError',
+      problems: [expect.stringMatching(/^session s1 is still busy when the test ends \(activity background, pending interaction none, no running prompt, 1 queued prompt\(s\)\)/)],
+    });
+  });
+
+  it('reports why it could not read a session instead of calling it busy', async () => {
+    const client = await stubKap({ session: idle, turns: [], broken: true }, { subscribe: false });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: [expect.stringMatching(/^could not read the state of session s1: KAP GET \/api\/v1\/sessions\/s1(\/prompts)? failed with HTTP 500 and code 50001/)],
+    });
+  });
+
+  it('reports a turn and an item still running after the session went idle', async () => {
+    const client = await stubKap({ session: idle, turns: [{ ...header, status: 'running', items: [{ ...reply, status: 'running' }] }] }, { subscribe: false });
+    await expect(verifyKapInvariants(client)).rejects.toMatchObject({
+      problems: [
+        'turn t1 of agent main in session s1 is still running after the session went idle',
+        'assistant_message item a1 in turn t1 of agent main in session s1 is still running after the session went idle',
+      ],
+    });
+  });
+
+  it('follows the agent references of tool calls to the turns of subagents', async () => {
+    const delegation = { item_id: 'c1', type: 'tool_call', status: 'ended', outcome: 'completed', name: 'Agent', agent_refs: [{ agent_id: 'child', role: 'child' }] };
+    const client = await stubKap(
+      { session: idle, turns: [{ ...header, items: [delegation] }], agents: { child: [{ ...header, turn_id: 'c-t1', status: 'running', items: [] }] } },
+      { subscribe: false },
+    );
+    await expect(verifyKapInvariants(client)).rejects.toMatchObject({
+      problems: ['turn c-t1 of agent child in session s1 is still running after the session went idle'],
+    });
+  });
+
+  it('reports a subscribed client whose frames fold into other turns than REST returns', async () => {
+    const client = await stubKap({ session: idle, turns: [answered], frames: [answeringFrames[0]!, answeringFrames[2]!] });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: ['client #1 subscribed to agent main of session s1 folds its frames into turns that differ from REST: turn t1: the client has 0 item(s), REST has 1'],
+    });
+  });
+
+  it('compares a client that got a paged snapshot only with the turns from that page on', async () => {
+    const earlier: KapTurn = { ...answered, turn_id: 't0', ordinal: 0 };
+    const paged: KapTurn = { ...answered, ordinal: 1 };
+    const client = await stubKap({ session: idle, turns: [earlier, paged], snapshot: { turns: [paged], has_more: true } });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('compares the stream of a subagent that ended with what REST returns for it', async () => {
+    const child = (frame: Readonly<Record<string, unknown>>) => ({ ...live(frame), agent_id: 'child' });
+    const childTurn: KapTurn = { ...answered, turn_id: 'c1' };
+    const ended = child({ type: 'agent', status: 'ended' });
+    const streamed = [child({ type: 'turn.started', turn: { ...header, turn_id: 'c1', status: 'running', outcome: undefined } }), child({ type: 'turn.ended', turn: { ...header, turn_id: 'c1' } })];
+    const complete = await stubKap(
+      { session: idle, turns: [], agents: { child: [childTurn] }, frames: [streamed[0]!, child({ type: 'item.ended', turn_id: 'c1', item: reply }), streamed[1]!, ended] },
+      { agentIds: ['main', 'child'] },
+    );
+    await expect(verifyKapInvariants(complete)).resolves.toBeUndefined();
+    const missingReply = await stubKap({ session: idle, turns: [], agents: { child: [childTurn] }, frames: [...streamed, ended] }, { agentIds: ['main', 'child'] });
+    await expect(verifyKapInvariants(missingReply, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: ['client #1 subscribed to agent child of session s1 folds its frames into turns that differ from REST: turn c1: the client has 0 item(s), REST has 1'],
+    });
+  });
+
+  it('compares turns that started after a paged snapshot even when an undo gave them lower ordinals', async () => {
+    const at = (second: number) => `2026-01-01T00:00:0${second}.000Z`;
+    const paged: KapTurn = { ...answered, turn_id: 't50', ordinal: 50, started_at: at(0) };
+    const kept: KapTurn = { ...answered, turn_id: 't10', ordinal: 10, started_at: at(0) };
+    const resent = { ...header, turn_id: 't11', ordinal: 11, started_at: at(2) };
+    const client = await stubKap({
+      session: idle,
+      turns: [kept, { ...resent, items: [reply] }],
+      snapshot: { turns: [paged], has_more: true, event_created_at: at(1) },
+      frames: [
+        live({ type: 'turns.removed', turn_ids: ['t50'] }),
+        live({ type: 'turn.started', turn: { ...resent, status: 'running', outcome: undefined } }),
+        live({ type: 'item.ended', turn_id: 't11', item: reply }),
+        live({ type: 'turn.ended', turn: resent }),
+      ],
+    });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a latest session frame that drops a field REST still has', async () => {
+    const archived = { ...idle, archived: true };
+    const { last_turn_outcome: _outcome, pending_interaction: _pending, ...withoutOutcome } = archived;
+    const client = await stubKap({ session: archived, turns: [answered], frames: [...answeringFrames, { type: 'session', change: 'archived', session: withoutOutcome }] });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: [
+        `client #1's latest session frame for s1 says ${JSON.stringify({ activity: 'idle', pending_interaction: 'none', archived: true })}, but REST says ${JSON.stringify({ activity: 'idle', pending_interaction: 'none', last_turn_outcome: 'completed', archived: true })}`,
+      ],
+    });
+  });
+
+  it('reads a session frame without a pending interaction as none, as archived frames send it', async () => {
+    const archived = { ...idle, archived: true };
+    const { pending_interaction: _pending, ...archivedFrame } = archived;
+    const client = await stubKap({ session: archived, turns: [answered], frames: [...answeringFrames, { type: 'session', change: 'archived', session: archivedFrame }] });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a session frame that says nothing is pending while an interaction the client was sent is still open', async () => {
+    const client = await stubKap({
+      session: idle,
+      turns: [answered],
+      frames: [
+        ...answeringFrames,
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' },
+        { type: 'session', change: 'updated', session: { ...idle, activity: 'turn' } },
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'ended' },
+        { type: 'session', change: 'updated', session: idle },
+      ],
+    });
+    await expect(verifyKapInvariants(client)).rejects.toMatchObject({
+      problems: [expect.stringMatching(/^client #1 received session frame #6 for s1 saying nothing is pending while interaction i1 was still pending/)],
+    });
+  });
+
+  it('forgets the interactions of a session the client unsubscribed from', async () => {
+    const client = await stubKap({
+      session: idle,
+      turns: [answered],
+      frames: [...answeringFrames, { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' }],
+      afterUnsubscribe: [{ type: 'session', change: 'updated', session: idle }],
+    });
+    const [socket] = client.connectedSockets;
+    await socket!.command({ type: 'unsubscribe', session_id: 's1', agent_ids: ['main'] });
+    await socket!.waitFor((frame) => frame.type === 'session');
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('forgets the interactions of a session once the last subagent the client subscribed to ends', async () => {
+    const child = (frame: Readonly<Record<string, unknown>>) => ({ ...live(frame), agent_id: 'child' });
+    const client = await stubKap(
+      {
+        session: idle,
+        turns: [],
+        agents: { child: [] },
+        frames: [
+          { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' },
+          child({ type: 'agent', status: 'ended' }),
+          { type: 'session', change: 'updated', session: idle },
+        ],
+      },
+      { agentIds: ['child'] },
+    );
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('skips an agent that REST no longer knows, as a closed side agent answers with code 40401', async () => {
+    const delegation = { item_id: 'c1', type: 'tool_call', status: 'ended', outcome: 'completed', name: 'Agent', agent_refs: [{ agent_id: 'closed', role: 'child' }] };
+    const client = await stubKap({ session: idle, turns: [{ ...header, items: [delegation] }], notFoundStatus: 200 }, { subscribe: false });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('skips a session that no longer exists', async () => {
+    const client = await stubKap({ session: idle, turns: [], deleted: true }, { subscribe: false });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+});
+
+describe('verifyKapSchemas', () => {
+  interface StubAnswer {
+    readonly status?: number;
+    readonly contentType?: string;
+    readonly body: unknown;
+  }
+
+  const json = (schema: Readonly<Record<string, unknown>>) => ({ content: { 'application/json': { schema } } });
+  const envelope = (code: number, data: Readonly<Record<string, unknown>>) => ({
+    type: 'object',
+    additionalProperties: false,
+    required: ['code', 'msg', 'data', 'request_id'],
+    properties: { code: { type: 'number', enum: [code] }, msg: { type: 'string' }, request_id: { type: 'string' }, data },
+  });
+  const sessionSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id', 'created_at'],
+    properties: {
+      id: { type: 'string' },
+      created_at: { type: 'string' },
+      title: { type: 'string', nullable: true },
+      count: { type: 'integer', minimum: 0, exclusiveMinimum: true },
+      thread: { $ref: '#/components/schemas/Thread' },
+    },
+  };
+  const threadSchema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string' }, reply: { $ref: '#/components/schemas/Thread' } } };
+  const openapi = {
+    openapi: '3.0.3',
+    paths: {
+      '/api/v1/sessions/{session_id}': {
+        get: { responses: { '200': json({ oneOf: [envelope(0, { $ref: '#/components/schemas/Session' }), envelope(40401, { type: 'string', nullable: true, enum: [null] })] }) } },
+        delete: { responses: { '204': { description: 'deleted' } } },
+      },
+      '/api/v1/sessions/{session_id}:cancel': {
+        post: { responses: { '200': json(envelope(0, { type: 'object', additionalProperties: false, required: ['cancelled'], properties: { cancelled: { type: 'boolean' } } })) } },
+      },
+      '/api/v1/kap.md': { get: { responses: { '200': { content: { 'text/markdown': { schema: { type: 'string' } } } } } } },
+    },
+    components: { schemas: { Session: sessionSchema, Thread: threadSchema } },
+  };
+  const asyncapi = {
+    asyncapi: '3.1.0',
+    operations: {
+      receiveClientMessages: { action: 'receive', messages: [{ $ref: '#/components/messages/subscribe' }] },
+      sendServerMessages: { action: 'send', messages: [{ $ref: '#/components/messages/response' }, { $ref: '#/components/messages/item' }] },
+    },
+    components: {
+      messages: {
+        subscribe: { payload: { type: 'object', properties: { type: { type: 'string', const: 'subscribe' } } } },
+        response: {
+          payload: { type: 'object', required: ['type', 'request_id', 'code'], properties: { type: { type: 'string', const: 'response' }, request_id: { type: 'string' }, code: { type: 'integer' } } },
+        },
+        item: {
+          payload: {
+            type: 'object',
+            required: ['type', 'item'],
+            properties: {
+              type: { type: 'string', enum: ['item.started', 'item.ended'] },
+              item: {
+                anyOf: [
+                  { type: 'object', required: ['type', 'created_at'], properties: { type: { type: 'string', const: 'tool_call' }, created_at: { type: 'string' } } },
+                  { type: 'object', required: ['type', 'text'], properties: { type: { type: 'string', const: 'assistant_message' }, text: { type: 'string' } } },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const ok = (data: unknown): StubAnswer => ({ body: { code: 0, msg: 'ok', data, request_id: 'r1' } });
+  const done = { type: 'response', request_id: 'done', code: 0 };
+  const closers: (() => Promise<void>)[] = [];
+
+  afterEach(async () => {
+    await Promise.all(closers.splice(0).map((close) => close()));
+  });
+
+  async function stubKap(answers: Readonly<Record<string, StubAnswer>>, frames: readonly unknown[]): Promise<KapClient> {
+    const routes: Readonly<Record<string, StubAnswer>> = { 'GET /openapi.json': { body: openapi }, 'GET /asyncapi.json': { body: asyncapi }, ...answers };
+    const server = createServer((request, response) => {
+      const answer = routes[`${request.method} ${new URL(request.url ?? '/', 'http://kap.test').pathname}`];
+      if (answer === undefined) return response.writeHead(404).end();
+      response.writeHead(answer.status ?? 200, { 'content-type': answer.contentType ?? 'application/json' });
+      response.end(typeof answer.body === 'string' ? answer.body : JSON.stringify(answer.body));
+    });
+    const sockets = new WebSocketServer({ server });
+    sockets.on('connection', (peer) => {
+      for (const frame of [...frames, done]) peer.send(typeof frame === 'string' ? frame : JSON.stringify(frame));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const client = new KapClient({ origin: () => `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: () => 'tok' });
+    closers.push(async () => {
+      await Promise.all(client.connectedSockets.map((socket) => socket.close()));
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const socket = await client.connect();
+    await socket.waitFor((frame) => frame['request_id'] === 'done');
+    return client;
+  }
+
+  async function problemsOf(client: KapClient): Promise<readonly string[]> {
+    const error = await verifyKapSchemas(client).then(() => undefined, (caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KapSchemaError);
+    return (error as KapSchemaError).problems;
+  }
+
+  it('passes when every REST body and frame matches the published schema', async () => {
+    const client = await stubKap(
+      {
+        'GET /api/v1/sessions/s1': ok({ id: 's1', created_at: FIXED_TIME, title: null, count: 1, thread: { text: 'a', reply: { text: 'b', reply: {} } } }),
+        'GET /api/v1/sessions/gone': { body: { code: 40401, msg: 'not found', data: null, request_id: 'r2' } },
+        'POST /api/v1/sessions/s1:cancel': ok({ cancelled: true }),
+        'GET /api/v1/kap.md': { contentType: 'text/markdown', body: '# KAP' },
+      },
+      [
+        { type: 'item.ended', item: { type: 'tool_call', created_at: FIXED_TIME } },
+        { type: 'item.started', item: { type: 'assistant_message', text: 'hi' } },
+      ],
+    );
+    await client.rest.get('/api/v1/sessions/s1');
+    await client.rest.raw('/api/v1/sessions/gone');
+    await client.rest.post('/api/v1/sessions/s1:cancel');
+    await client.rest.raw('/api/v1/kap.md');
+    await expect(verifyKapSchemas(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a missing required field once per kind, checked against the variant the message claims to be', async () => {
+    const client = await stubKap({ 'GET /api/v1/sessions/s1': ok({ id: 's1' }) }, [
+      { type: 'item.ended', item: { type: 'tool_call' } },
+      { type: 'item.ended', item: { type: 'tool_call' } },
+    ]);
+    await client.rest.get('/api/v1/sessions/s1');
+    await client.rest.get('/api/v1/sessions/s1');
+    expect(await problemsOf(client)).toEqual([
+      `GET /api/v1/sessions/{session_id} → HTTP 200: /data must have required property 'created_at'; first offending value: {"id":"s1"} (2 times)`,
+      `WebSocket item.ended frame: /item must have required property 'created_at'; first offending value: {"type":"tool_call"} (2 times)`,
+    ]);
+  });
+
+  it('reads OpenAPI 3.0 exclusive bounds and closed objects', async () => {
+    const client = await stubKap({ 'GET /api/v1/sessions/s1': ok({ id: 's1', created_at: FIXED_TIME, count: 0, extra: true }) }, []);
+    await client.rest.get('/api/v1/sessions/s1');
+    expect(await problemsOf(client)).toEqual([
+      `GET /api/v1/sessions/{session_id} → HTTP 200: /data must NOT have additional properties ("extra"); first offending value: {"id":"s1","created_at":"${FIXED_TIME}","count":0,"extra":true}`,
+      'GET /api/v1/sessions/{session_id} → HTTP 200: /data/count must be > 0; first offending value: 0',
+    ]);
+  });
+
+  it('accepts an empty body only where the contract declares none', async () => {
+    const empty: StubAnswer = { body: '' };
+    const client = await stubKap({ 'DELETE /api/v1/sessions/s1': { status: 204, body: '' }, 'POST /api/v1/sessions/s1:cancel': empty, 'GET /api/v1/unknown': empty }, []);
+    await client.rest.raw('/api/v1/sessions/s1', { method: 'DELETE' });
+    await client.rest.raw('/api/v1/sessions/s1:cancel', { method: 'POST', body: {} });
+    await client.rest.raw('/api/v1/unknown');
+    expect(await problemsOf(client)).toEqual([
+      'POST /api/v1/sessions/{session_id}:cancel → HTTP 200: the body is empty, but /openapi.json declares a JSON body for this response',
+      'GET /api/v1/unknown answered, but /openapi.json declares no such route',
+    ]);
+  });
+
+  it('reports routes, statuses and frames the contract does not declare', async () => {
+    const client = await stubKap(
+      {
+        'GET /api/v1/unknown': ok({}),
+        'POST /api/v1/sessions/s1:cancel': { status: 500, body: { code: 50001, msg: 'internal error', data: null, request_id: 'r3' } },
+      },
+      [{ type: 'mystery' }, 'not json'],
+    );
+    await client.rest.raw('/api/v1/unknown');
+    await client.rest.raw('/api/v1/sessions/s1:cancel', { method: 'POST', body: {} });
+    expect(await problemsOf(client)).toEqual([
+      'GET /api/v1/unknown answered, but /openapi.json declares no such route',
+      'POST /api/v1/sessions/{session_id}:cancel → HTTP 500: /openapi.json declares only HTTP 200 for this route; first offending value: {"code":50001,"msg":"internal error","data":null,"request_id":"r3"}',
+      'client #1 received a WebSocket frame that is not a JSON object with a string type; first offending value: not json',
+      'WebSocket frame type "mystery" is not a server message in /asyncapi.json; first offending value: {"type":"mystery"}',
+    ]);
   });
 });
 

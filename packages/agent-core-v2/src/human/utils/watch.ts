@@ -56,6 +56,7 @@ export interface WatchRuntime {
   ): NativeFsWatcher;
   scheduleRetry(callback: () => void, delayMs: number): WatchSubscription;
   reportError(error: unknown): void;
+  readonly nativeStartSettleMs?: number;
 }
 
 const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.test(p);
@@ -71,6 +72,7 @@ const CHOKIDAR_EVENTS: Record<string, { action: WatchChangeAction; kind: WatchCh
 const NATIVE_RETRY_BASE_MS = 1000;
 const NATIVE_RETRY_MAX_MS = 30000;
 const LISTING_MISSING_RETRY_MS = 250;
+const DARWIN_NATIVE_START_SETTLE_MS = 100;
 
 const NODE_WATCH_RUNTIME: WatchRuntime = {
   platform: process.platform,
@@ -88,6 +90,7 @@ const NODE_WATCH_RUNTIME: WatchRuntime = {
     };
   },
   reportError: (error) => console.error(error),
+  ...(process.platform === 'darwin' ? { nativeStartSettleMs: DARWIN_NATIVE_START_SETTLE_MS } : {}),
 };
 
 interface WatchMachineInput {
@@ -113,6 +116,7 @@ type WatchEvent =
   | { type: 'leg.error'; error: unknown }
   | { type: 'leg.change'; change: WatchChange }
   | { type: 'leg.nativeStarted' }
+  | { type: 'leg.nativeSettled' }
   | { type: 'leg.nativeEvent'; filename: string | null }
   | { type: 'leg.nativeError'; error: NodeJS.ErrnoException }
   | { type: 'leg.retryFired' };
@@ -151,15 +155,89 @@ interface NativeLegInput {
   readonly recursive: boolean;
 }
 
+interface NativeWatchSubscriber {
+  readonly change: (eventType: string, filename: string | null) => void;
+  readonly errors: Set<(error: NodeJS.ErrnoException) => void>;
+}
+
+interface SharedNativeWatch {
+  readonly watcher: NativeFsWatcher;
+  readonly subscribers: Set<NativeWatchSubscriber>;
+  closed: boolean;
+  error?: NodeJS.ErrnoException;
+}
+
+const sharedNativeWatches = new WeakMap<WatchRuntime, Map<string, SharedNativeWatch>>();
+
+function subscribeNativeWatch(
+  input: NativeLegInput,
+  change: NativeWatchSubscriber['change'],
+): NativeFsWatcher {
+  const { runtime, root, recursive } = input;
+  const key = `${recursive}:${root}`;
+  let watches = sharedNativeWatches.get(runtime);
+  if (watches === undefined) {
+    watches = new Map();
+    sharedNativeWatches.set(runtime, watches);
+  }
+  let shared = watches.get(key);
+  const subscriber: NativeWatchSubscriber = { change, errors: new Set() };
+  if (shared === undefined) {
+    const subscribers = new Set([subscriber]);
+    const watcher = runtime.watchNative(root, (eventType, filename) => {
+      const currentSubscribers = [...subscribers];
+      for (const current of currentSubscribers) {
+        if (subscribers.has(current)) current.change(eventType, filename);
+      }
+    }, { recursive });
+    shared = { watcher, subscribers, closed: false };
+    watches.set(key, shared);
+    const entry = shared;
+    const registry = watches;
+    watcher.on('error', (error) => {
+      if (entry.closed) return;
+      entry.closed = true;
+      entry.error = error;
+      if (registry.get(key) === entry) registry.delete(key);
+      watcher.close();
+      const currentSubscribers = [...subscribers];
+      for (const current of currentSubscribers) {
+        const listeners = [...current.errors];
+        for (const listener of listeners) listener(error);
+      }
+    });
+  } else {
+    shared.subscribers.add(subscriber);
+  }
+  const entry = shared;
+  const registry = watches;
+  return {
+    close() {
+      if (!entry.subscribers.delete(subscriber)) return;
+      subscriber.errors.clear();
+      if (entry.subscribers.size !== 0 || entry.closed) return;
+      entry.closed = true;
+      if (registry.get(key) === entry) registry.delete(key);
+      entry.watcher.close();
+    },
+    on(_event, listener) {
+      if (entry.subscribers.has(subscriber)) {
+        if (entry.error === undefined) subscriber.errors.add(listener);
+        else listener(entry.error);
+      }
+      return this;
+    },
+  };
+}
+
 const nativeLeg = fromCallback<WatchEvent, NativeLegInput>(({ input, sendBack }) => {
   let watcher: NativeFsWatcher;
   try {
-    watcher = input.runtime.watchNative(
-      input.root,
+    watcher = subscribeNativeWatch(
+      input,
       (_eventType, filename) => {
         sendBack({ type: 'leg.nativeEvent', filename });
       },
-      { recursive: input.recursive },
     );
   } catch (error) {
     sendBack({ type: 'leg.nativeError', error: error as NodeJS.ErrnoException });
@@ -167,7 +245,13 @@ const nativeLeg = fromCallback<WatchEvent, NativeLegInput>(({ input, sendBack })
   }
   watcher.on('error', (error) => sendBack({ type: 'leg.nativeError', error }));
   sendBack({ type: 'leg.nativeStarted' });
+  const settleMs = input.runtime.nativeStartSettleMs;
+  const settle =
+    settleMs === undefined
+      ? undefined
+      : input.runtime.scheduleRetry(() => sendBack({ type: 'leg.nativeSettled' }), settleMs);
   return () => {
+    settle?.dispose();
     watcher.close();
   };
 });
@@ -278,6 +362,9 @@ const watchMachine = setup({
             actions: assign({ ready: true }),
           },
         ],
+        'leg.nativeSettled': {
+          actions: emit(({ context }) => invalidation(context.input.path)),
+        },
         'leg.nativeEvent': [
           {
             guard: ({ context, event }) => {

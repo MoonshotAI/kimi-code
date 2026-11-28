@@ -61,4 +61,35 @@ describe('sessionRowsForPicker', () => {
 
     expect(rows.map((row) => row.id)).toEqual(['ses_previous_empty']);
   });
+
+  it('carries the project directory and the location tags of each working directory', () => {
+    const worktreeSession = {
+      ...summary({ id: 'ses_wt' }),
+      workDir: '/tmp/wt/x',
+      projectWorkDir: '/tmp/project',
+    };
+    const goneSession = { ...summary({ id: 'ses_gone' }), workDir: '/tmp/gone' };
+    const rows = sessionRowsForPicker(
+      [worktreeSession, goneSession, summary({ id: 'ses_plain' })],
+      '',
+      false,
+      new Map([
+        ['/tmp/wt/x', { worktree: 'x', missing: false }],
+        ['/tmp/gone', { missing: true }],
+      ]),
+    );
+
+    expect(
+      rows.map(({ id, project_work_dir, worktree, missing }) => ({
+        id,
+        project_work_dir,
+        worktree,
+        missing,
+      })),
+    ).toEqual([
+      { id: 'ses_wt', project_work_dir: '/tmp/project', worktree: 'x', missing: false },
+      { id: 'ses_gone', project_work_dir: undefined, worktree: undefined, missing: true },
+      { id: 'ses_plain', project_work_dir: undefined, worktree: undefined, missing: undefined },
+    ]);
+  });
 });

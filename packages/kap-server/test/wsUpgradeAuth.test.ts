@@ -2,7 +2,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2';
 import { createActor, setup } from '@moonshot-ai/agent-core-v2/human/xstate2';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
@@ -12,6 +11,7 @@ import { fakeModelCatalog } from './helpers/fakeModelCatalog';
 import { fixedTokenAuth } from './helpers/fixedAuth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { sharedServer } from './helpers/sharedServer';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 function rawToString(data: RawData): string {
   if (typeof data === 'string') return data;
@@ -115,7 +115,7 @@ describe('WS upgrade auth', () => {
         logLevel: 'silent',
         debugEndpoints: true,
         authTokenService: fixedTokenAuth(),
-        seeds: [[IModelCatalog, fakeModelCatalog()]],
+        seeds: [[IProviderCatalogService, fakeModelCatalog()]],
       });
       const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/debug/ws`, {
         headers: { Authorization: 'Bearer test-token' },

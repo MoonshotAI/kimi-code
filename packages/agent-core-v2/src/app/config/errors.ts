@@ -1,5 +1,5 @@
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
-import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
+import { CONFIG_INVALID_ERROR_CODE } from '#/provider-catalog/errors';
 
 export const ConfigErrors = {
   codes: {

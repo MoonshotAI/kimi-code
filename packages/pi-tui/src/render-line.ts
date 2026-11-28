@@ -134,7 +134,7 @@ function getMemberOwner(component: Component, key: PropertyKey): object | undefi
 	return undefined;
 }
 
-function structuredLinesFromText(lines: string[]): TuiRenderLine[] {
+function structuredLinesFromText(lines: readonly string[]): TuiRenderLine[] {
 	const structured = new Array<TuiRenderLine>(lines.length);
 	for (const key of Object.keys(lines)) {
 		const index = Number(key);

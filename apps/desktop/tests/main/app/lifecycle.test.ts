@@ -84,17 +84,19 @@ vi.mock('../../../src/main/server/connect', () => ({
 vi.mock('../../../src/main/server/session-continue', () => ({
   prepareSessionContinue: mocks.prepareSessionContinue,
 }));
-vi.mock('../../../src/main/window/main-window', () => ({
-  createWindow: mocks.createWindow,
+vi.mock('../../../src/main/window/window-registry', () => ({
   cancelQuitting: mocks.cancelQuitting,
   getMainWindow: mocks.getMainWindow,
   isMarkedQuitting: mocks.isMarkedQuitting,
   isQuitConfirmSkipped: mocks.isQuitConfirmSkipped,
   markQuitting: mocks.markQuitting,
+  sendToRenderer: mocks.sendToRenderer,
+}));
+vi.mock('../../../src/main/window/main-window', () => ({
+  createWindow: mocks.createWindow,
   reportIfStillRunning: mocks.reportIfStillRunning,
   selectSessionInRenderer: vi.fn(),
   sendLaunchAction: mocks.sendLaunchAction,
-  sendToRenderer: mocks.sendToRenderer,
   showMainWindow: mocks.showMainWindow,
   setScreenActionHandler: mocks.setScreenActionHandler,
   showStartupScreen: mocks.showStartupScreen,
@@ -200,6 +202,19 @@ describe('app second-instance routing', () => {
     });
   });
 
+  it('routes session links to the renderer as open-session launch actions, queued until ready', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    main();
+    const event = { preventDefault: vi.fn() };
+    mocks.listeners.get('open-url')!(event, 'kimi-code://sessions/session_1');
+    expect(mocks.sendLaunchAction).not.toHaveBeenCalled();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.sendLaunchAction).toHaveBeenCalledWith({ action: 'open-session', sessionId: 'session_1' }));
+    mocks.listeners.get('second-instance')!({}, ['desktop', 'kimi-code://sessions/session_2']);
+    expect(mocks.sendLaunchAction).toHaveBeenLastCalledWith({ action: 'open-session', sessionId: 'session_2' });
+    expect(mocks.sendToRenderer).not.toHaveBeenCalled();
+  });
+
   it.each(['', '/'])('routes workspace links from an already running second instance with pathname "%s"', async (pathname) => {
     main();
     mocks.ready();
@@ -228,9 +243,11 @@ describe('app second-instance routing', () => {
 
     void deps.confirmRestart();
     deps.prepareSessionContinue(['s1']);
+    void deps.beforeRestart?.();
 
     expect(mocks.confirmUpdateRestart).toHaveBeenCalledWith(win);
     expect(mocks.prepareSessionContinue).toHaveBeenCalledWith(['s1']);
+    expect(mocks.closeServerHandle).toHaveBeenCalledOnce();
   });
 
   it('starts Preview without either updater', async () => {

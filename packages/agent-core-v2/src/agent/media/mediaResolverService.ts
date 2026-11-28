@@ -12,7 +12,7 @@ import { WarningIssued } from '#/agent/profile/profileOps';
 import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import { ImageUploadUnsupportedError } from '#/provider-catalog/errors';
 import {
   mediaOmissionOf,
   mediaPlaceholderText,
@@ -21,9 +21,8 @@ import {
   type Message,
 } from '@moonshot-ai/core/llm/message';
 import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
-import { MediaUploadFailedError } from '@moonshot-ai/core/llm/request';
-import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
+import { MediaUploadFailedError, type LlmRequest } from '@moonshot-ai/core/llm/request';
+import { requestModelOf, type RequestModel } from '#/provider-catalog/requester';
 import { runWithCredentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import {
   imageUploaderFor,
@@ -37,7 +36,7 @@ import {
   type ImageUploader,
   type MediaKindSupport,
   type MediaPosition,
-} from '#/llm-adapter/model/media';
+} from '#/provider-catalog/model/media';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
@@ -149,8 +148,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
   async resolve(
     messages: readonly Message[],
-    model: Model,
-    request: InitializedLlmRequester,
+    request: LlmRequest,
     signal?: AbortSignal,
   ): Promise<readonly Message[]> {
     const includeLocalPaths = this.environmentBinding.current.environmentId === LOCAL_ENVIRONMENT_ID;
@@ -208,8 +206,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         }
         const resolved =
           kind === 'video'
-            ? await this.resolveVideoPart(daemonRef, model, request, position, label, signal)
-            : await this.resolveImagePart(daemonRef, model, request, position, label, signal);
+            ? await this.resolveVideoPart(daemonRef, request, position, label, signal)
+            : await this.resolveImagePart(daemonRef, request, position, label, signal);
         budgetEntries.push({
           messageIndex,
           slotIndex: messageSlots.length,
@@ -231,7 +229,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
   async recoverFailedUploads(
     messages: readonly Message[],
-    request: InitializedLlmRequester,
+    request: LlmRequest,
     signal?: AbortSignal,
   ): Promise<boolean> {
     const checkUpload = uploadFailureCheckFor(request);
@@ -344,12 +342,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
   private async resolveImagePart(
     ref: DaemonFileRef,
-    model: Model,
-    request: InitializedLlmRequester,
+    request: LlmRequest,
     position: MediaPosition,
     label: MediaLabel,
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
+    const model = requestModelOf(request);
     const support = mediaSupportForRequest(request, 'image', position);
     if (model.spec.capability?.image_in !== true || support === undefined) {
       this.telemetry.track2('media_resolve_fallback', {
@@ -364,7 +362,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const uploader =
       !uploadSupported || this.imageUploadUnsupported.has(providerKey)
         ? undefined
-        : imageUploaderFor(model, request);
+        : imageUploaderFor(request);
     const inlineKey = `image\0${ref.fileId}`;
     if (uploader === undefined) {
       const memoed = this.memoedImage(inlineKey, model.providerType, support);
@@ -400,8 +398,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   private async resolveImageUncached(
     ref: DaemonFileRef,
     label: MediaLabel,
-    model: Model,
-    request: InitializedLlmRequester,
+    model: RequestModel,
+    request: LlmRequest,
     inlineKey: string,
     upload: { readonly uploader: ImageUploader; readonly coords: UploadCoords } | undefined,
     support: MediaKindSupport,
@@ -456,8 +454,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   }
 
   private async uploadImagePart(
-    model: Model,
-    request: InitializedLlmRequester,
+    model: RequestModel,
+    request: LlmRequest,
     source: { readonly bytes: Buffer; readonly filename: string },
     mimeType: string,
     upload: { readonly uploader: ImageUploader; readonly coords: UploadCoords },
@@ -541,12 +539,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
   private async resolveVideoPart(
     ref: DaemonFileRef,
-    model: Model,
-    request: InitializedLlmRequester,
+    request: LlmRequest,
     position: MediaPosition,
     label: MediaLabel,
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
+    const model = requestModelOf(request);
     const support = mediaSupportForRequest(request, 'video', position);
     if (model.spec.capability?.video_in !== true || support === undefined) {
       return model.spec.capability?.video_in === true ? videoTag(label) : unsupportedMedia('video', label);
@@ -587,8 +585,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   private async resolveVideoUncached(
     ref: DaemonFileRef,
     label: MediaLabel,
-    model: Model,
-    request: InitializedLlmRequester,
+    model: RequestModel,
+    request: LlmRequest,
     coords: UploadCoords,
     support: MediaKindSupport,
     signal: AbortSignal | undefined,
@@ -624,7 +622,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const inlineSupported =
       inlineVideoSupportedForProtocol(model.protocol) && support.sources.includes('inline');
     const uploader = uploadCache
-      ? createVideoUploader(videoUploaderFor(model, request), {
+      ? createVideoUploader(videoUploaderFor(request), {
           client: this.telemetry,
           props: {
             model: model.spec.name,
@@ -719,7 +717,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   }
 }
 
-async function accountHashFor(model: Model): Promise<string> {
+async function accountHashFor(model: RequestModel): Promise<string> {
   let identity: string | undefined;
   const authorization = model.endpoint.headers?.['Authorization'];
   if (authorization !== undefined) {

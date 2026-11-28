@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 
+import { finalizeHeadlessRun } from '#/cli/headless-exit';
 import { getVersion } from '#/cli/version';
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { getDataDir } from '#/utils/paths';
@@ -52,7 +53,7 @@ export function registerAcpCommand(parent: Command): void {
             ? { terminalAuthLegacyCommand: legacyCommand }
             : {}),
         });
-        process.exit(0);
+        await finalizeHeadlessRun(process, [process.stdout, process.stderr], () => 0);
       } catch (error) {
         process.stderr.write(`acp server: fatal error: ${String(error)}\n`);
         process.exit(1);

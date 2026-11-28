@@ -4,7 +4,8 @@ import { useI18n } from 'vue-i18n';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 
 import { usePanelScroll } from '@moonshot-ai/app-client/composables';
-import { ModelDisplayKey, PinScrollKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
+import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
+import { PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { ComposerText } from '@moonshot-ai/app-composer/transcript';
 import type { AgentMember, ChatTurn, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
@@ -220,7 +221,7 @@ const metaLabel = computed(() => {
 
 <template>
   <div class="agent-panel">
-    <div ref="scroller" class="agent-transcript" @scroll.passive="onTranscriptScroll">
+    <div ref="scroller" class="agent-transcript" data-panel-content @scroll.passive="onTranscriptScroll">
       <div class="agent-transcript-inner">
         <div v-if="metaLabel" class="agent-meta" data-row-key="meta">
           <span class="agent-meta-text">{{ metaLabel }}</span>

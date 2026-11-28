@@ -127,6 +127,53 @@ describe('workspacesView ordering', () => {
     store.fsHome = '/Users/x';
     expect(store.workspacesView[0]!.shortPath).toBe('/home/x/code/app');
   });
+
+  it('shortens a Windows home whichever separators it uses and shows local roots in native form', () => {
+    const store = workspacesStore();
+    store.workspaces = [
+      makeWorkspace('slashed', 'C:/Users/me/code/app'),
+      makeWorkspace('native', 'C:\\Users\\me\\notes'),
+      makeWorkspace('home', 'c:/users/me'),
+      makeWorkspace('sibling', 'C:/Users/meow/app'),
+      makeWorkspace('other-drive', 'D:/work/app'),
+    ];
+    store.fsHome = 'C:\\Users\\me';
+    expect(Object.fromEntries(store.workspacesView.map((w) => [w.id, w.shortPath]))).toEqual({
+      slashed: '~\\code\\app',
+      native: '~\\notes',
+      home: '~',
+      sibling: 'C:\\Users\\meow\\app',
+      'other-drive': 'D:\\work\\app',
+    });
+  });
+
+  it('keeps the separator after a home whose name changes length when lowercased', () => {
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('a', 'C:/Users/İlker/code')];
+    store.fsHome = 'C:\\Users\\İlker';
+    expect(store.workspacesView[0]!.shortPath).toBe('~\\code');
+  });
+
+  it('shortens only paths inside a known POSIX home and guesses the home only before it is known', () => {
+    const store = workspacesStore();
+    store.workspaces = [
+      makeWorkspace('inside', '/Users/x/code/app'),
+      makeWorkspace('sibling', '/Users/xy/app'),
+      makeWorkspace('other-user', '/Users/y/app'),
+    ];
+    const shortPaths = () => Object.fromEntries(store.workspacesView.map((w) => [w.id, w.shortPath]));
+    store.fsHome = '/Users/x/';
+    expect(shortPaths()).toEqual({ inside: '~/code/app', sibling: '/Users/xy/app', 'other-user': '/Users/y/app' });
+    store.fsHome = null;
+    expect(shortPaths()).toEqual({ inside: '~/code/app', sibling: '~/app', 'other-user': '~/app' });
+  });
+
+  it('shows a Windows root on a remote host in native form without shortening it', () => {
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('a', 'D:/work/app', { hostId: 'winbox' })];
+    store.fsHome = 'D:\\work';
+    expect(store.workspacesView[0]!.shortPath).toBe('D:\\work\\app');
+  });
 });
 
 describe('ordering actions', () => {
@@ -223,6 +270,55 @@ describe('active workspace resolution', () => {
   it('resolves to null when no workspace exists', () => {
     expect(workspacesStore().activeWorkspaceId).toBeNull();
     expect(workspacesStore().visibleWorkspace).toBeNull();
+  });
+
+  it('roots the active panels at the selected session working directory and at the project root on the draft page', () => {
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wd_repo', '/repo', { additionalDirs: ['/shared'] })];
+    store.storedActiveWorkspaceId = 'wd_repo';
+    sessionsStore().setSessions([
+      makeSession('wt', '2026-01-02T00:00:00.000Z', { workspaceId: 'wd_repo', cwd: '/repo-wt' }),
+      makeSession('main', '2026-01-01T00:00:00.000Z', { workspaceId: 'wd_repo', cwd: '/repo' }),
+    ]);
+    sessionsStore().setActiveSessionId(undefined);
+    expect(store.activePanelRoot).toBe('/repo');
+    expect(store.activePanelRoots).toEqual({ root: '/repo', roots: ['/repo', '/shared'] });
+
+    sessionsStore().setActiveSessionId('wt');
+    expect(store.activePanelRoot).toBe('/repo-wt');
+    expect(store.activePanelRoots).toEqual({ root: '/repo-wt', roots: ['/repo-wt', '/shared'] });
+
+    sessionsStore().setActiveSessionId('main');
+    expect(store.activePanelRoot).toBe('/repo');
+    expect(store.activePanelRoots).toEqual({ root: '/repo', roots: ['/repo', '/shared'] });
+    sessionsStore().setActiveSessionId(undefined);
+  });
+
+  it('roots the active panels at the session working directory alone when no project is visible', () => {
+    const store = workspacesStore();
+    store.hiddenWorkspaceIds = ['wd_gone'];
+    sessionsStore().setSessions([makeSession('loose', '2026-01-01T00:00:00.000Z', { workspaceId: 'wd_gone', cwd: '/loose' })]);
+    expect(store.visibleWorkspace).toBeNull();
+    expect(store.activePanelRoots).toEqual({ root: '', roots: [] });
+
+    sessionsStore().setActiveSessionId('loose');
+    expect(store.activePanelRoots).toEqual({ root: '/loose', roots: ['/loose'] });
+    expect(store.activePanelRoot).toBe('/loose');
+    sessionsStore().setActiveSessionId(undefined);
+  });
+
+  it('roots the active panels in the project of the session when another project is visible', () => {
+    const store = workspacesStore();
+    store.workspaces = [
+      makeWorkspace('wd_hidden', '/hidden', { additionalDirs: ['/hidden-lib'] }),
+      makeWorkspace('wd_other', '/other', { additionalDirs: ['/other-lib'], sessionCount: 1 }),
+    ];
+    store.hiddenWorkspaceIds = ['wd_hidden'];
+    sessionsStore().setSessions([makeSession('s1', '2026-01-01T00:00:00.000Z', { workspaceId: 'wd_hidden', cwd: '/hidden-wt' })]);
+    sessionsStore().setActiveSessionId('s1');
+    expect(store.visibleWorkspace?.id).toBe('wd_other');
+    expect(store.activePanelRoots).toEqual({ root: '/hidden-wt', roots: ['/hidden-wt', '/hidden-lib'] });
+    sessionsStore().setActiveSessionId(undefined);
   });
 
   it('treats only a workspace on an SSH host as non-local', () => {
@@ -338,6 +434,288 @@ describe('mergedWorkspaces wiring', () => {
     expect(store.workspaceIdForSession({ cwd: '/a' })).toBe('a');
     expect(store.workspaceIdForSession({ cwd: '/else', workspaceId: 'wd_1' })).toBe('wd_1');
     expect(store.workspaceIdForSession({ cwd: '/else' })).toBe('/else');
+  });
+});
+
+describe('projects seen only through their sessions', () => {
+  const listed = makeWorkspace('wd_known', '/known');
+  const listWorkspaces = vi.fn<() => Promise<AppWorkspace[]>>();
+
+  beforeEach(() => {
+    listWorkspaces.mockReset();
+    setKimiClientDeps({ api: () => ({ listWorkspaces }) as unknown as KimiWebApi, t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
+  });
+
+  function showSessions(...sessions: { id: string; workspaceId: string; cwd: string }[]): void {
+    sessionsStore().setSessions(sessions.map(({ id, ...extra }) => makeSession(id, '2026-01-01T00:00:00.000Z', extra)));
+  }
+
+  it('lists the projects again and shows the one the server knows instead of the session directory', async () => {
+    const store = workspacesStore();
+    listWorkspaces.mockResolvedValue([listed, makeWorkspace('wd_seen', '/app', { name: 'app', additionalDirs: ['/lib'] })]);
+    store.workspaces = [listed];
+    showSessions({ id: 's1', workspaceId: 'wd_seen', cwd: '/app-fix' }, { id: 's2', workspaceId: 'wd_seen', cwd: '/app-feat' });
+
+    await vi.waitFor(() => expect(store.workspaces.map((w) => w.id)).toEqual(['wd_seen', 'wd_known']));
+
+    expect(store.mergedWorkspaces.find((w) => w.id === 'wd_seen')).toMatchObject({ name: 'app', root: '/app', additionalDirs: ['/lib'] });
+    expect(listWorkspaces).toHaveBeenCalledOnce();
+  });
+
+  it('keeps every project it already knows as it is', async () => {
+    const store = workspacesStore();
+    listWorkspaces.mockResolvedValue([makeWorkspace('wd_known', '/known', { name: 'stale answer' }), makeWorkspace('wd_fresh', '/fresh')]);
+    store.workspaces = [makeWorkspace('wd_known', '/known', { name: 'renamed here' })];
+    showSessions({ id: 's1', workspaceId: 'wd_fresh', cwd: '/fresh-wt' });
+
+    await vi.waitFor(() => expect(store.workspaces).toHaveLength(2));
+    expect(store.workspaces.find((w) => w.id === 'wd_known')?.name).toBe('renamed here');
+  });
+
+  it('asks once about a project the server does not list', async () => {
+    const store = workspacesStore();
+    listWorkspaces.mockResolvedValue([listed]);
+    store.workspaces = [listed];
+    showSessions({ id: 's1', workspaceId: 'wd_missing', cwd: '/missing' });
+    await vi.waitFor(() => expect(listWorkspaces).toHaveBeenCalledOnce());
+    showSessions({ id: 's1', workspaceId: 'wd_missing', cwd: '/missing' }, { id: 's2', workspaceId: 'wd_missing', cwd: '/missing' });
+    await nextTick();
+    await nextTick();
+
+    expect(listWorkspaces).toHaveBeenCalledOnce();
+    expect(store.workspaces).toEqual([listed]);
+    expect(store.mergedWorkspaces.map((w) => w.id)).toEqual(['wd_known', 'wd_missing']);
+  });
+
+  it.each(['rejects', 'answers with nothing'])('keeps the known projects when the list request %s', async (outcome) => {
+    const store = workspacesStore();
+    if (outcome === 'rejects') listWorkspaces.mockRejectedValue(new Error('down'));
+    else listWorkspaces.mockResolvedValue([]);
+    store.workspaces = [listed];
+    showSessions({ id: 's1', workspaceId: `wd_unreachable_${outcome}`, cwd: '/app-fix' });
+    await vi.waitFor(() => expect(listWorkspaces).toHaveBeenCalledOnce());
+    await nextTick();
+
+    expect(store.workspaces).toEqual([listed]);
+  });
+
+  it('asks again with the next session when the list request failed', async () => {
+    const store = workspacesStore();
+    const app = makeWorkspace('wd_retried', '/app');
+    const first = { id: 's1', workspaceId: app.id, cwd: '/app-fix' };
+    listWorkspaces.mockRejectedValueOnce(new Error('HTTP 500')).mockResolvedValue([listed, app]);
+    store.workspaces = [listed];
+    showSessions(first);
+    await vi.waitFor(() => expect(listWorkspaces).toHaveBeenCalledOnce());
+    await nextTick();
+    showSessions(first, { id: 's2', workspaceId: app.id, cwd: '/app-feat' });
+
+    await vi.waitFor(() => expect(store.workspaces.map((w) => w.id)).toEqual([app.id, listed.id]));
+    expect(listWorkspaces).toHaveBeenCalledTimes(2);
+  });
+
+  it('lists the projects again after a reload answered with a list from before their first session', async () => {
+    const store = workspacesStore();
+    const app = makeWorkspace('wd_reloaded', '/app');
+    let answerHome!: (home: { home: string; recentRoots: string[] }) => void;
+    const getFsHome = () => new Promise((resolve) => { answerHome = resolve; });
+    setKimiClientDeps({ api: () => ({ listWorkspaces, getFsHome }) as unknown as KimiWebApi, t: (key) => key });
+    listWorkspaces.mockResolvedValueOnce([listed]).mockResolvedValue([listed, app]);
+    store.workspaces = [listed];
+    const reload = store.loadWorkspaces();
+    showSessions({ id: 's1', workspaceId: app.id, cwd: '/app-fix' });
+    await vi.waitFor(() => expect(store.workspaces.map((w) => w.id)).toEqual([app.id, listed.id]));
+
+    answerHome({ home: '', recentRoots: [] });
+    await reload;
+
+    await vi.waitFor(() => expect(store.workspaces.map((w) => w.id)).toEqual([app.id, listed.id]));
+  });
+
+  it('does not ask about listed projects', async () => {
+    const store = workspacesStore();
+    store.workspaces = [listed];
+    showSessions({ id: 's1', workspaceId: 'wd_known', cwd: '/known-wt' });
+    await nextTick();
+    await nextTick();
+
+    expect(listWorkspaces).not.toHaveBeenCalled();
+  });
+});
+
+describe('removed projects', () => {
+  const app = makeWorkspace('wd_app', '/app', { name: 'app' });
+  const listWorkspaces = vi.fn<() => Promise<AppWorkspace[]>>();
+  const deleteWorkspace = vi.fn<(id: string) => Promise<void>>();
+
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  function showChat(id: string, cwd: string, workspaceId = app.id): void {
+    sessionsStore().setSessions([
+      ...sessionsStore().sessions.filter((s) => s.id !== id),
+      makeSession(id, '2026-01-01T00:00:00.000Z', { workspaceId, cwd }),
+    ]);
+  }
+
+  function shown(): string[] {
+    return workspacesStore().workspacesView.map((w) => w.id);
+  }
+
+  beforeEach(() => {
+    listWorkspaces.mockReset();
+    deleteWorkspace.mockReset().mockResolvedValue(undefined);
+    setKimiClientDeps({
+      api: () => ({
+        listWorkspaces,
+        deleteWorkspace,
+        getFsHome: async () => ({ home: '', recentRoots: [] }),
+      }) as unknown as KimiWebApi,
+      t: (key) => key,
+    });
+    workspacesStore().workspaces = [app];
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
+  });
+
+  it('come back when the server lists them again after they were removed', async () => {
+    const store = workspacesStore();
+    showChat('old', '/app');
+    await store.deleteWorkspace(app.id);
+    listWorkspaces.mockResolvedValue([]);
+    await store.loadWorkspaces();
+    expect(shown()).toEqual([]);
+
+    listWorkspaces.mockResolvedValue([app]);
+    await store.loadWorkspaces();
+
+    expect(shown()).toEqual([app.id]);
+    expect(loadHiddenWorkspaceIds()).toEqual([]);
+  });
+
+  it('come back on the next start when they were used again meanwhile', async () => {
+    const store = workspacesStore();
+    store.workspaces = [];
+    store.hiddenWorkspaceIds = ['wd_app_last_month', 'wd_unused'];
+    listWorkspaces.mockResolvedValue([makeWorkspace('wd_app_last_month', '/app', { name: 'app' })]);
+
+    await store.loadWorkspaces();
+
+    expect(shown()).toEqual(['wd_app_last_month']);
+    expect(loadHiddenWorkspaceIds()).toEqual(['wd_unused']);
+  });
+
+  it('stay hidden while only their sessions are left', async () => {
+    const store = workspacesStore();
+    listWorkspaces.mockResolvedValue([]);
+    await store.deleteWorkspace(app.id);
+    showChat('old', '/app-fix');
+    await vi.waitFor(() => expect(listWorkspaces).toHaveBeenCalledOnce());
+    await store.loadWorkspaces();
+    showChat('older', '/app');
+    await nextTick();
+    await nextTick();
+
+    expect(listWorkspaces).toHaveBeenCalledTimes(2);
+    expect(shown()).toEqual([]);
+    expect(store.hiddenWorkspaceIds).toEqual([app.id]);
+  });
+
+  it('come back when a search finds a new chat in them', async () => {
+    const store = workspacesStore();
+    showChat('old', '/app');
+    await store.deleteWorkspace(app.id);
+    await nextTick();
+    expect(shown()).toEqual([]);
+    expect(listWorkspaces).not.toHaveBeenCalled();
+
+    listWorkspaces.mockResolvedValue([app]);
+    showChat('new', '/app-feat');
+    await vi.waitFor(() => expect(shown()).toEqual([app.id]));
+
+    expect(listWorkspaces).toHaveBeenCalledOnce();
+    expect(store.workspaces).toEqual([app]);
+    expect(loadHiddenWorkspaceIds()).toEqual([]);
+  });
+
+  it('do not pop up from a list that was requested before the removal finished', async () => {
+    const store = workspacesStore();
+    const removal = deferred<void>();
+    const before = deferred<AppWorkspace[]>();
+    const during = deferred<AppWorkspace[]>();
+    deleteWorkspace.mockReturnValue(removal.promise);
+    listWorkspaces.mockReturnValueOnce(before.promise).mockReturnValueOnce(during.promise);
+
+    const firstLoad = store.loadWorkspaces();
+    const removing = store.deleteWorkspace(app.id);
+    const secondLoad = store.loadWorkspaces();
+    before.resolve([app]);
+    await firstLoad;
+    expect(shown()).toEqual([]);
+
+    removal.resolve();
+    await removing;
+    during.resolve([app]);
+    await secondLoad;
+    expect(shown()).toEqual([]);
+    expect(loadHiddenWorkspaceIds()).toEqual([app.id]);
+
+    listWorkspaces.mockResolvedValue([app]);
+    await store.loadWorkspaces();
+    expect(shown()).toEqual([app.id]);
+  });
+
+  it('do not pop up from a list that was requested before another client removed them', async () => {
+    const store = workspacesStore();
+    const stale = deferred<AppWorkspace[]>();
+    listWorkspaces.mockReturnValueOnce(stale.promise);
+    const load = store.loadWorkspaces();
+    store.applyWorkspaceEvent({ type: 'workspaceDeleted', workspaceId: app.id, root: app.root });
+    stale.resolve([app]);
+    await load;
+    expect(shown()).toEqual([]);
+
+    listWorkspaces.mockResolvedValue([app]);
+    await store.loadWorkspaces();
+    expect(shown()).toEqual([app.id]);
+  });
+
+  it('stay hidden for this run when the server could not be told about the removal', async () => {
+    const store = workspacesStore();
+    const unreachable = makeWorkspace('wd_unreachable', '/unreachable');
+    store.workspaces = [unreachable];
+    deleteWorkspace.mockRejectedValue(new Error('offline'));
+    listWorkspaces.mockResolvedValue([unreachable]);
+    await store.deleteWorkspace(unreachable.id);
+    await store.loadWorkspaces();
+
+    expect(shown()).toEqual([]);
+    expect(store.hiddenWorkspaceIds).toEqual([unreachable.id]);
+  });
+
+  it('stay hidden when they are projects the user created, which only an unreachable host still lists', async () => {
+    const store = workspacesStore();
+    const remote = makeWorkspace('wm_remote', '/srv/app', { hostId: 'devbox' });
+    store.hiddenWorkspaceIds = [remote.id];
+    listWorkspaces.mockResolvedValue([app, remote]);
+
+    await store.loadWorkspaces();
+
+    expect(shown()).toEqual([app.id]);
+    expect(store.hiddenWorkspaceIds).toEqual([remote.id]);
   });
 });
 
@@ -1005,6 +1383,45 @@ describe('saveWorkspace', () => {
     });
     expect(setWorkspacePrimary).toHaveBeenCalledWith('wm_1', '/b');
     expect(setWorkspacePrimary.mock.invocationCallOrder[0]).toBeLessThan(updateWorkspace.mock.invocationCallOrder[0]!);
+  });
+
+  it('promotes a picked directory that is registered under the other separator form without adding it again', async () => {
+    const promoted = makeWorkspace('wm_1', 'C:/repo/b', { name: 'Old', additionalDirs: ['C:/repo/a'] });
+    const updated = makeWorkspace('wm_1', 'C:/repo/b', { name: 'New', additionalDirs: ['C:/repo/a'] });
+    const updateWorkspace = vi.fn().mockResolvedValue(updated);
+    const setWorkspacePrimary = vi.fn().mockResolvedValue(promoted);
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wm_1', 'C:/repo/a', { name: 'Old', additionalDirs: ['C:/repo/b'] })];
+
+    const ok = await store.saveWorkspace({
+      id: 'wm_1',
+      name: 'New',
+      additionalDirs: ['C:/repo/a'],
+      primary: 'C:\\repo\\b',
+    });
+
+    expect(ok).toBe(true);
+    expect(updateWorkspace).toHaveBeenCalledOnce();
+    expect(updateWorkspace).toHaveBeenCalledWith('wm_1', { name: 'New', additionalDirs: ['C:/repo/a'] });
+    expect(setWorkspacePrimary).toHaveBeenCalledWith('wm_1', 'C:\\repo\\b');
+  });
+
+  it('keeps the primary when the picked primary is the current root under the other separator form', async () => {
+    const updated = makeWorkspace('wm_1', 'C:/repo/a', { name: 'New', additionalDirs: [] });
+    const updateWorkspace = vi.fn().mockResolvedValue(updated);
+    const setWorkspacePrimary = vi.fn();
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wm_1', 'C:/repo/a', { name: 'Old', additionalDirs: [] })];
+
+    const ok = await store.saveWorkspace({ id: 'wm_1', name: 'New', primary: 'C:\\repo\\a' });
+
+    expect(ok).toBe(true);
+    expect(setWorkspacePrimary).not.toHaveBeenCalled();
+    expect(updateWorkspace).toHaveBeenCalledExactlyOnceWith('wm_1', { name: 'New' });
   });
 
   it('falls back to an id-keyed local override on 40410 rename-only', async () => {

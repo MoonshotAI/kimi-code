@@ -14,6 +14,7 @@ export interface ScrollViewOptions {
 	scrollbarTrackStyle?: (text: string) => string;
 	scrollbarThumbStyle?: (text: string) => string;
 	scrollbarHideDelayMs?: number;
+	onScroll?: (scrollTop: number) => void;
 }
 
 export interface ScrollViewScrollToOptions {
@@ -31,6 +32,7 @@ export class ScrollView extends Container {
 	readonly scrollbarThumbStyle: (text: string) => string;
 	private currentScrollbar: ScrollViewScrollbar;
 	private readonly scrollbarHideDelayMs: number;
+	private readonly onScrollCallback: ((scrollTop: number) => void) | undefined;
 	private currentScrollTop = 0;
 	private contentHeight = 0;
 	private currentViewportHeight = 0;
@@ -57,6 +59,7 @@ export class ScrollView extends Container {
 		this.scrollbarTrackStyle = options.scrollbarTrackStyle ?? ((text) => `\x1b[90m${text}\x1b[39m`);
 		this.scrollbarThumbStyle = options.scrollbarThumbStyle ?? ((text) => `\x1b[37m${text}\x1b[39m`);
 		this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
+		this.onScrollCallback = options.onScroll;
 	}
 
 	get scrollTop(): number {
@@ -152,7 +155,10 @@ export class ScrollView extends Container {
 		this.currentScrollTop = next;
 		this.followingEnd = nextFollowingEnd;
 		this.followSuppressedAtEnd = nextFollowSuppressedAtEnd;
-		if (moved) this.markScrollbarActivity();
+		if (moved) {
+			this.markScrollbarActivity();
+			this.onScrollCallback?.(this.currentScrollTop);
+		}
 		this.requestRenderCallback?.();
 	}
 
@@ -164,40 +170,47 @@ export class ScrollView extends Container {
 		const next = Math.max(0, Math.min(maxScrollTop, start + requested));
 		const moved = next - start;
 		const wasFollowingEnd = this.followingEnd;
+		const scrollChanged = next !== this.currentScrollTop;
 		this.currentScrollTop = next;
 		this.followingEnd = this.followEnd && next === maxScrollTop;
 		this.followSuppressedAtEnd = false;
 		if (moved !== 0) this.markScrollbarActivity();
+		if (scrollChanged) this.onScrollCallback?.(this.currentScrollTop);
 		if (moved !== 0 || this.followingEnd !== wasFollowingEnd) this.requestRenderCallback?.();
 		return requested - moved;
 	}
 
 	scrollToStart(): void {
+		const scrollChanged = this.currentScrollTop !== 0;
 		const changed =
-			this.currentScrollTop !== 0 ||
+			scrollChanged ||
 			this.followingEnd !== (this.followEnd && this.contentHeight <= this.currentViewportHeight);
 		this.currentScrollTop = 0;
 		this.followingEnd = this.followEnd && this.contentHeight <= this.currentViewportHeight;
 		this.followSuppressedAtEnd = false;
 		if (changed) {
 			this.markScrollbarActivity();
+			if (scrollChanged) this.onScrollCallback?.(this.currentScrollTop);
 			this.requestRenderCallback?.();
 		}
 	}
 
 	scrollToEnd(): void {
 		const next = Math.max(0, this.contentHeight - this.currentViewportHeight);
-		const changed = this.currentScrollTop !== next || this.followingEnd !== this.followEnd;
+		const scrollChanged = this.currentScrollTop !== next;
+		const changed = scrollChanged || this.followingEnd !== this.followEnd;
 		this.currentScrollTop = next;
 		this.followingEnd = this.followEnd;
 		this.followSuppressedAtEnd = false;
 		if (changed) {
 			this.markScrollbarActivity();
+			if (scrollChanged) this.onScrollCallback?.(this.currentScrollTop);
 			this.requestRenderCallback?.();
 		}
 	}
 
 	updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+		const previousScrollTop = this.currentScrollTop;
 		this.contentHeight = Math.max(0, Math.floor(contentHeight));
 		this.currentViewportHeight = Math.max(0, Math.floor(viewportHeight));
 		this.requestRenderCallback = requestRender;
@@ -209,6 +222,7 @@ export class ScrollView extends Container {
 			this.followingEnd = true;
 		}
 		if (this.contentHeight <= this.currentViewportHeight) this.hideTransientScrollbar();
+		if (this.currentScrollTop !== previousScrollTop) this.onScrollCallback?.(this.currentScrollTop);
 	}
 
 	override addChild(_component: Component): void {

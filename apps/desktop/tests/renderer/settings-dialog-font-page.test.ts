@@ -13,6 +13,7 @@ afterEach(() => {
   app?.unmount();
   app = null;
   document.body.innerHTML = '';
+  vi.unstubAllGlobals();
 });
 
 async function flush(): Promise<void> {
@@ -136,4 +137,187 @@ it('opens Agent & Sessions on initialTab="agent", scrolls to and highlights runn
   generalTab.click();
   await flush();
   expect(row.getAttribute('data-setting-highlighted')).toBeNull();
+}, 60_000);
+
+it('exposes confirmDiscard so external shortcut or menu toggles respect unsaved Global AGENTS.md edits', async () => {
+  vi.stubGlobal('ResizeObserver', class {
+    observe(): void {}
+    disconnect(): void {}
+  });
+  const { IconResolverKey } = await import('@moonshot-ai/app-ui');
+  const { KimiI18nKey } = await import('@moonshot-ai/app-i18n');
+  const { setKimiClientDeps } = await import('@moonshot-ai/app-client/client');
+  const { useConfirmDialog } = await import('@moonshot-ai/app-client/composables');
+  const { clientPinia } = await import('@moonshot-ai/app-client/stores');
+  const { default: i18n } = await import('../../src/renderer/i18n');
+  const { default: SettingsDialog } = await import('../../src/renderer/components/settings/SettingsDialog.vue');
+  setKimiClientDeps({
+    api: () => ({
+      getMeta: async () => ({ homeDir: '/home/test' }),
+      readHostTextFile: async () => ({ path: '/home/test/AGENTS.md', content: '# Existing\n', revision: 'original' }),
+    }),
+    t: (key: string) => key,
+  } as never);
+
+  let dialogRef!: { confirmDiscard?: () => Promise<boolean> };
+  const host = document.createElement('div');
+  document.body.append(host);
+  app = createApp({
+    render: () =>
+      h(SettingsDialog, {
+        ref: (value) => { dialogRef = value as unknown as typeof dialogRef; },
+        colorScheme: 'light',
+        fontScale: 'medium',
+        notify: false,
+        notifySound: false,
+        initialTab: 'agent',
+        onFetchUsage: async () => ({ kind: 'error' }) as never,
+      }),
+  });
+  app.use(i18n);
+  app.use(clientPinia);
+  app.provide(KimiI18nKey, { t: (key: string) => key });
+  app.provide(IconResolverKey, () => defineComponent({ render: () => h('svg') }));
+  app.mount(host);
+  await flush();
+
+  document.querySelector<HTMLButtonElement>('[data-settings-subpage-origin="globalAgentsMd"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector<HTMLTextAreaElement>('.global-agents-md-editor')?.value).toBe('# Existing\n'));
+  expect(typeof dialogRef.confirmDiscard).toBe('function');
+  await expect(dialogRef.confirmDiscard!()).resolves.toBe(true);
+
+  const editor = document.querySelector<HTMLTextAreaElement>('.global-agents-md-editor')!;
+  editor.value = '# Edited\n';
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  await flush();
+
+  const cancelled = dialogRef.confirmDiscard!();
+  await flush();
+  expect(useConfirmDialog().isConfirmOpen.value).toBe(true);
+  useConfirmDialog().settle(false);
+  await expect(cancelled).resolves.toBe(false);
+
+  const confirmed = dialogRef.confirmDiscard!();
+  await flush();
+  useConfirmDialog().settle(true);
+  await expect(confirmed).resolves.toBe(true);
+}, 60_000);
+
+it('groups and filters archived sessions by project under its name, and by session directory when the project is not listed', async () => {
+  const { IconResolverKey } = await import('@moonshot-ai/app-ui');
+  const { KimiI18nKey } = await import('@moonshot-ai/app-i18n');
+  const { setKimiClientDeps } = await import('@moonshot-ai/app-client/client');
+  const { clientPinia, workspacesStore } = await import('@moonshot-ai/app-client/stores');
+  const { default: i18n } = await import('../../src/renderer/i18n');
+  const { default: SettingsDialog } = await import('../../src/renderer/components/settings/SettingsDialog.vue');
+  const archived = (title: string, workspaceId: string, cwd: string) => ({
+    id: title, title, workspaceId, cwd, archived: true, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+  const items = [
+    archived('in a worktree', 'wd_app', '/code/app-fix'),
+    archived('in a removed project', 'wd_gone', '/code/gone'),
+    archived('in the main checkout', 'wd_app', '/code/app'),
+  ];
+  setKimiClientDeps({ api: () => ({ listSessions: async () => ({ items }) }), t: (key: string) => key } as never);
+  workspacesStore().workspaces = [
+    { id: 'wd_app', root: '/code/app', name: 'My app', kind: 'implicit', additionalDirs: [], sessionCount: 0 },
+  ];
+
+  const host = document.createElement('div');
+  document.body.append(host);
+  app = createApp({
+    render: () =>
+      h(SettingsDialog, {
+        colorScheme: 'light',
+        fontScale: 'medium',
+        notify: false,
+        notifySound: false,
+        initialTab: 'archived',
+        onFetchUsage: async () => ({ kind: 'error' }) as never,
+      }),
+  });
+  app.use(i18n);
+  app.use(clientPinia);
+  app.provide(KimiI18nKey, { t: (key: string) => key });
+  app.provide(IconResolverKey, () => defineComponent({ render: () => h('svg') }));
+  app.mount(host);
+  const text = (element: Element | null) => element?.textContent?.trim();
+  const groups = () => [...document.querySelectorAll('.archive-card')].map((card) => [
+    [...card.querySelectorAll('.archive-workspace .path')].map(text),
+    [...card.querySelectorAll('.archive-name')].map(text),
+  ]);
+
+  await vi.waitFor(() => expect(groups()).toEqual([
+    [['My app', '/code/app'], ['in a worktree', 'in the main checkout']],
+    [['/code/gone'], ['in a removed project']],
+  ]));
+
+  document.querySelector<HTMLButtonElement>('.archive-toolbar [role="combobox"]')!.click();
+  await flush();
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+  expect(options.map(text).slice(1)).toEqual(['/code/gone', 'My app/code/app']);
+  options.find((option) => text(option) === 'My app/code/app')!.click();
+  await flush();
+
+  expect(groups()).toEqual([[['My app', '/code/app'], ['in a worktree', 'in the main checkout']]]);
+  workspacesStore().workspaces = [];
+}, 60_000);
+
+it('shows each archived project path beside its name so two projects named alike stay apart', async () => {
+  const { IconResolverKey } = await import('@moonshot-ai/app-ui');
+  const { KimiI18nKey } = await import('@moonshot-ai/app-i18n');
+  const { setKimiClientDeps } = await import('@moonshot-ai/app-client/client');
+  const { clientPinia, workspacesStore } = await import('@moonshot-ai/app-client/stores');
+  const { default: i18n } = await import('../../src/renderer/i18n');
+  const { default: SettingsDialog } = await import('../../src/renderer/components/settings/SettingsDialog.vue');
+  const archived = (title: string, workspaceId: string, cwd: string) => ({
+    id: title, title, workspaceId, cwd, archived: true, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+  const items = [archived('in a', 'wd_a', '/a/app'), archived('in b', 'wd_b', '/b/app')];
+  setKimiClientDeps({ api: () => ({ listSessions: async () => ({ items }) }), t: (key: string) => key } as never);
+  workspacesStore().workspaces = [
+    { id: 'wd_a', root: '/a/app', name: 'app', kind: 'implicit', additionalDirs: [], sessionCount: 0 },
+    { id: 'wd_b', root: '/b/app', name: 'app', kind: 'implicit', additionalDirs: [], sessionCount: 0 },
+  ];
+
+  const host = document.createElement('div');
+  document.body.append(host);
+  app = createApp({
+    render: () =>
+      h(SettingsDialog, {
+        colorScheme: 'light',
+        fontScale: 'medium',
+        notify: false,
+        notifySound: false,
+        initialTab: 'archived',
+        onFetchUsage: async () => ({ kind: 'error' }) as never,
+      }),
+  });
+  app.use(i18n);
+  app.use(clientPinia);
+  app.provide(KimiI18nKey, { t: (key: string) => key });
+  app.provide(IconResolverKey, () => defineComponent({ render: () => h('svg') }));
+  app.mount(host);
+  const text = (element: Element | null) => element?.textContent?.trim();
+  const groups = () => [...document.querySelectorAll('.archive-card')].map((card) => [
+    [...card.querySelectorAll('.archive-workspace .path')].map(text),
+    [...card.querySelectorAll('.archive-name')].map(text),
+  ]);
+  const trigger = () => document.querySelector<HTMLButtonElement>('.archive-toolbar [role="combobox"]')!;
+  const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+
+  await vi.waitFor(() => expect(groups()).toEqual([
+    [['app', '/a/app'], ['in a']],
+    [['app', '/b/app'], ['in b']],
+  ]));
+
+  trigger().click();
+  await flush();
+  expect(options().map(text).slice(1)).toEqual(['app/a/app', 'app/b/app']);
+  options()[2]!.click();
+  await flush();
+
+  expect(text(trigger())).toBe('app');
+  expect(groups()).toEqual([[['app', '/b/app'], ['in b']]]);
+  workspacesStore().workspaces = [];
 }, 60_000);

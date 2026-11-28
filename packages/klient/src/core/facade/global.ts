@@ -5,15 +5,15 @@ import type {
 import type { SessionMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/queryStore';
 import type {
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+  Project,
+  ProjectUpdate,
+} from '@moonshot-ai/agent-core-v2/app/project/project';
 import type {
   ConfigDiagnostic,
   ConfigInspectValue,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 import type {
   AuthStatus,
   IOAuthService,
@@ -25,8 +25,7 @@ import type {
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 
@@ -52,6 +51,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
 import type { CapabilityInstallOptions, CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 import type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export type Caller = (
   service: string,
@@ -83,12 +83,12 @@ export type OAuthFlowSnapshot = NonNullable<Awaited<ReturnType<IOAuthService['ge
 export type OAuthLoginCancelResponse = Awaited<ReturnType<IOAuthService['cancelLogin']>>;
 export type OAuthLogoutResponse = Awaited<ReturnType<IOAuthService['logout']>>;
 
-export type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
+export type ModelCatalogItem = Awaited<ReturnType<IProviderCatalogService['listModels']>>[number];
 export type ProviderCatalogItem = Awaited<
-  ReturnType<IModelCatalog['listProviders']>
+  ReturnType<IProviderCatalogService['listProviders']>
 >[number];
 export type SetDefaultModelResponse = Awaited<
-  ReturnType<IModelCatalog['setDefaultModel']>
+  ReturnType<IProviderCatalogService['setDefaultModel']>
 >;
 export type RefreshProviderModelsOptions = NonNullable<
   Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
@@ -117,10 +117,10 @@ export interface GlobalSessionsFacade {
 }
 
 export interface GlobalWorkspacesFacade {
-  list(): Promise<readonly Workspace[]>;
-  get(id: string): Promise<Workspace | undefined>;
-  createOrTouch(input: { root: string; name?: string }): Promise<Workspace>;
-  update(input: { id: string; patch: WorkspaceUpdate }): Promise<Workspace | undefined>;
+  list(): Promise<readonly Project[]>;
+  get(id: string): Promise<Project | undefined>;
+  resolveImplicit(dir: string): Promise<Project>;
+  update(input: { id: string; patch: ProjectUpdate }): Promise<Project | undefined>;
   delete(id: string): Promise<void>;
 }
 
@@ -337,12 +337,12 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     },
 
     workspaces: {
-      list: () => call('workspaceService', 'list', []) as Promise<readonly Workspace[]>,
-      get: (id) => call('workspaceService', 'get', [id]) as Promise<Workspace | undefined>,
-      createOrTouch: ({ root, name }) =>
-        call('workspaceService', 'createOrTouch', [root, name]) as Promise<Workspace>,
+      list: () => call('workspaceService', 'list', []) as Promise<readonly Project[]>,
+      get: (id) => call('workspaceService', 'get', [id]) as Promise<Project | undefined>,
+      resolveImplicit: (dir) =>
+        call('workspaceService', 'resolveImplicit', [dir]) as Promise<Project>,
       update: ({ id, patch }) =>
-        call('workspaceService', 'update', [id, patch]) as Promise<Workspace | undefined>,
+        call('workspaceService', 'update', [id, patch]) as Promise<Project | undefined>,
       delete: (id) => call('workspaceService', 'delete', [id]) as Promise<void>,
     },
 

@@ -164,6 +164,7 @@ kimi
 | `KIMI_CODE_SUBAGENT_SCOPE_CACHE_SIZE` | 保留在内存中的已完成 subagent scope 数量，超出后最旧的会被驱逐，恢复时从持久化状态按需重建（默认 `32`；`0` 或负数 = 不驱逐） | 整数；非法值会立即失败 |
 | `KIMI_CODE_SUBAGENT_SCOPE_EVICT_TIMEOUT_MS` | 单个 subagent scope 驱逐允许的最长时间（毫秒），超时后驱逐队列跳过它继续后续驱逐（默认 `15000`） | 正整数；非法值会立即失败 |
 | `KIMI_SUBAGENT_TIMEOUT_MS` | 单个 `Agent` subagent 可运行的最长时间（毫秒），优先级高于 `config.toml` 的 `[subagent] timeout_ms` | 正整数；非法值回退到配置或默认值 |
+| `KIMI_CODE_SWARM` | 新建会话默认进入 swarm mode（含 `kimi -p`）；仍可在会话内通过 `/swarm off` 关闭 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；未设置或其他值保持关闭 |
 | `KIMI_CODE_SWARM_TIMEOUT_MS` | `AgentSwarm` subagent 可运行的最长时间（毫秒），优先级高于 `config.toml` 的 `[swarm] timeout_ms` | 正整数；非法值回退到配置或默认值 |
 | `KIMI_CODE_IDENTITY_NAME` | Agent 在系统提示词中的自称，优先级高于 `config.toml` 的 `[identity] name`，不写回配置文件 | 任意非空字符串；空值视为未设置 |
 | `KIMI_CODE_IDENTITY_SLUG` | 协议标识（`User-Agent` 产品名、MCP 客户端名），优先级高于 `[identity] slug`；未设置时由名称派生 | 任意非空字符串；会转小写并将连续非字母数字字符折叠为 `-` |
@@ -177,10 +178,11 @@ kimi
 | `KIMI_CODE_SEARCH_WORKER` | 全局搜索开启时，在独立 worker 线程中运行索引，优先级高于 `[database] search`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用基于 minidb 的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | MCP server 全局默认连接超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `startupTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
+| `KIMI_MCP_STARTUP_WAIT_MS` | 会话初始化时等待首轮 MCP 工具发现的时间上限（毫秒），超时放行但不终止仍在连接的 server；优先级高于 `[mcp] startup_wait_ms`（默认 `2000`，`0` 表示不等待） | `0` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | MCP server 全局默认单次工具调用超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `toolTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` | workspace 级 MCP server 首次连接失败或意外断连后，首次自动重连前的等待时间（毫秒）；优先级高于配置文件 | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_RECONNECT_MAX_DELAY_MS` | workspace 级 MCP server 自动重连退避等待的上限（毫秒）；优先级高于配置文件 | `1` 到 `2147483647` 的整数；非法值被忽略 |
-| `KIMI_CODE_TRUST_WORKSPACE` | 将当前工作区标记为受信任，等效于在交互式信任提示中选择 "Trust this folder"；按进程生效，不写入持久化的信任记录。该变量与 [`[workspace] require_trust`](./config-files.md#workspace-trust) 相互独立；后者为 `false` 时，假值不会重新启用信任机制 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_TRUST_WORKSPACE` | 将当前项目标记为受信任，等效于在交互式信任提示中选择 "Trust and continue"；按进程生效，不写入持久化的信任记录。该变量与 [`[workspace] require_trust`](./config-files.md#workspace-trust) 相互独立；后者为 `false` 时，假值不会重新启用信任机制 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数，优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`；`0` 表示无上限 | 非负整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` | 单步失败后的最大总尝试次数（含首次尝试），优先级高于 `config.toml` 的 `[loop_control] max_attempts_per_step` | 非负整数；非法值被忽略 |
 | `KIMI_CODE_INFINITE_RETRY` | 让所有失败的 LLM 请求无限重试而不是终止任务；指数退避（32 秒封顶）并尊重 `Retry-After`，等待期间中断仍生效 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |

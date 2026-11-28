@@ -6,7 +6,11 @@ import {
 } from '#/tui/commands/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveUserInput, skillVariantPathsForInput } from '#/tui/commands/resolve';
+import {
+  resolveHostUserInput,
+  resolveUserInput,
+  skillVariantPathsForInput,
+} from '#/tui/commands/resolve';
 
 function resolve(
   input: string,
@@ -18,6 +22,7 @@ function resolve(
     pluginCommandMap: new Map<string, string>(),
     isStreaming: false,
     isCompacting: false,
+    tuiMode: 'regular',
     ...overrides,
   });
 }
@@ -26,6 +31,7 @@ describe('resolveUserInput', () => {
   const options = {
     isStreaming: false,
     isCompacting: false,
+    tuiMode: 'regular' as const,
     skillCommandMap: new Map([
       ['skill:review', 'review'],
       ['quick', 'review'],
@@ -449,6 +455,101 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('resolves /worktree to the builtin command without an experimental flag', () => {
+    expect(resolve('/worktree')).toMatchObject({ kind: 'builtin', name: 'worktree' });
+  });
+
+  it('hides /find in regular mode and lets it fall through to a message or same-named skill', () => {
+    expect(resolve('/find')).toEqual({ kind: 'message', input: '/find' });
+    expect(resolve('/find needle', { tuiMode: 'regular' })).toEqual({
+      kind: 'message',
+      input: '/find needle',
+    });
+
+    const skillCommandMap = new Map([['skill:find', 'find']]);
+    expect(resolve('/find needle', { tuiMode: 'regular', skillCommandMap })).toEqual({
+      kind: 'skill',
+      commandName: 'find',
+      skillName: 'find',
+      args: 'needle',
+    });
+  });
+
+  it('resolves /find as an always-available builtin in fullscreen mode', () => {
+    expect(resolve('/find', { tuiMode: 'fullscreen' })).toMatchObject({
+      kind: 'builtin',
+      name: 'find',
+      args: '',
+    });
+    expect(resolve('/find needle', { tuiMode: 'fullscreen' })).toMatchObject({
+      kind: 'builtin',
+      name: 'find',
+      args: 'needle',
+    });
+    expect(
+      resolve('/find needle', { tuiMode: 'fullscreen', isStreaming: true }),
+    ).toMatchObject({
+      kind: 'builtin',
+      name: 'find',
+      args: 'needle',
+    });
+    expect(
+      resolve('/find needle', { tuiMode: 'fullscreen', isCompacting: true }),
+    ).toMatchObject({
+      kind: 'builtin',
+      name: 'find',
+      args: 'needle',
+    });
+
+    const skillCommandMap = new Map([['skill:find', 'find']]);
+    expect(
+      resolve('/find needle', { tuiMode: 'fullscreen', skillCommandMap }),
+    ).toMatchObject({
+      kind: 'builtin',
+      name: 'find',
+      args: 'needle',
+    });
+  });
+
+});
+
+describe('resolveHostUserInput', () => {
+  const makeHost = (mode: 'regular' | 'fullscreen') => ({
+    state: {
+      appState: {
+        streamingPhase: 'idle' as const,
+        isCompacting: false,
+      },
+      ui: { mode },
+    },
+    skillCommandMap: new Map<string, string>(),
+    pluginCommandMap: new Map<string, string>(),
+  });
+
+  it('resolves built-in visibility from host.state.ui.mode', () => {
+    expect(resolveHostUserInput(makeHost('regular'), '/find needle').intent).toEqual({
+      kind: 'message',
+      input: '/find needle',
+    });
+    expect(resolveHostUserInput(makeHost('fullscreen'), '/find needle').intent).toMatchObject({
+      kind: 'builtin',
+      name: 'find',
+      args: 'needle',
+    });
+  });
+
+  it('applies streaming overrides when resolving host input', () => {
+    expect(resolveHostUserInput(makeHost('fullscreen'), '/new', { isStreaming: true }).intent).toEqual({
+      kind: 'blocked',
+      commandName: 'new',
+      reason: 'streaming',
+    });
+    expect(resolveHostUserInput(makeHost('fullscreen'), '/find needle', { isStreaming: true }).intent).toMatchObject({
+      kind: 'builtin',
+      name: 'find',
+      args: 'needle',
+    });
+  });
 });
 
 describe('goal command resolution', () => {

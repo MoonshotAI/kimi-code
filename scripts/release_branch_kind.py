@@ -229,7 +229,7 @@ def write_cache(cache_dir, repo, branch, head, result):
 
 def main():
     ap = argparse.ArgumentParser(description="判定 release 分支性质（hotfix/weekly/unknown）")
-    ap.add_argument("--repo", required=True, help="owner/name，如 MoonshotAI/kimi-code-app")
+    ap.add_argument("--repo", required=True, help="owner/name，如 MoonshotAI/kimi-code")
     ap.add_argument("--branch", required=True, help="如 release/2026-10-23")
     ap.add_argument("--base", default="main", help="主判据对照分支（默认 main）")
     ap.add_argument("--format", choices=("json", "text"), default="json")

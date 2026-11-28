@@ -17,18 +17,20 @@ import { HostProcessService } from '#/os/backends/node-local/hostProcessService'
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { ProgramDependencies } from '#/program/programDependencies';
 import { ProgramMcp, type ProgramMcpLease } from '#/program/programMcp';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { WorkspaceTrustChange } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
+import type { ProjectTrustChange } from '#/project/projectTrust/projectTrust';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 import { stubLog } from '../_base/log/stubs';
 import { deferredAgentIdentityStub, stubAgentIdentity } from '../app/agentIdentity/stubs';
-import { createMemoryMcpOAuthStore, cwdStdioFixture, stdioFixture } from '../mcpCore/stubs';
+import { createMemoryMcpOAuthStore, cwdStdioServer, mockStdioServer } from '../mcpCore/stubs';
 
 const PROCESS_TIMEOUT_MS = 20_000;
 
 function stdioServer(config: Partial<McpServerConfig> = {}): McpServerConfig {
-  return { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], ...config } as McpServerConfig;
+  return { transport: 'stdio', ...cwdStdioServer(), ...config } as McpServerConfig;
 }
 
 async function cwdOf(view: McpConnectionView, name: string): Promise<string> {
@@ -43,18 +45,22 @@ describe('ProgramMcp', () => {
   let oauth: McpOAuthService;
   let mcp: ProgramMcp;
   let spawn: MockInstance<HostProcessService['spawn']>;
+  let sessions: SessionMcpService[];
+  let environmentServices: IEnvironmentService;
 
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_WATCH', 'false');
     homeDir = tempDir('kimi-program-mcp-home-');
     primary = tempDir('kimi-program-mcp-primary-');
     trusted = true;
+    sessions = [];
     oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     mcp = createMcp();
     spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
   });
 
   afterEach(async () => {
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
     await mcp.dispose();
     await oauth.dispose();
     vi.restoreAllMocks();
@@ -72,14 +78,15 @@ describe('ProgramMcp', () => {
       { process: new HostProcessService() },
     );
     const lease = { environment, track: <T,>(resource: T): T => resource, dispose: () => {} };
+    environmentServices = {
+      _serviceBrand: undefined,
+      inspect: () => environment,
+      acquire: () => lease,
+      acquireWhenReady: async () => lease,
+    } as unknown as IEnvironmentService;
     return new ProgramMcp(
-      {
-        _serviceBrand: undefined,
-        inspect: () => environment,
-        acquire: () => lease,
-        acquireWhenReady: async () => lease,
-      } as unknown as IEnvironmentService,
-      { workspaceId: 'workspace' } as IWorkspaceContext,
+      environmentServices,
+      { workspaceId: 'workspace' } as IProjectContext,
       {
         bootstrap: { homeDir },
         config: { ready: Promise.resolve(), onDidSectionChange: Event.None, get: () => undefined },
@@ -103,7 +110,7 @@ describe('ProgramMcp', () => {
           return primary;
         },
         onDidChange: Event.None,
-      } as unknown as IWorkspaceDirs,
+      } as unknown as IProjectDirs,
       {
         _serviceBrand: undefined,
         ready: Promise.resolve(),
@@ -111,7 +118,7 @@ describe('ProgramMcp', () => {
         isTrusted: () => trusted,
         trust: async () => undefined,
         untrust: async () => undefined,
-        onDidChange: Event.None as Event<WorkspaceTrustChange>,
+        onDidChange: Event.None as Event<ProjectTrustChange>,
       },
     );
   }
@@ -123,8 +130,29 @@ describe('ProgramMcp', () => {
   }
 
   async function connected(lease: ProgramMcpLease): Promise<McpConnectionView> {
-    await lease.service.ready;
-    const view = lease.service.connectionManager();
+    const sessionId = `session-${sessions.length}`;
+    const session = new SessionMcpService(
+      makeSessionContext({ sessionId, workspaceId: 'workspace', sessionDir: primary, sessionScope: 'ws', cwd: primary }),
+      {},
+      lease.service.sources(),
+      [],
+      { ready: Promise.resolve(), get: () => undefined } as never,
+      oauth,
+      environmentServices,
+      stubAgentIdentity(),
+      stubLog(),
+    );
+    sessions.push(session);
+    const disposeLease = lease.dispose;
+    let released = false;
+    lease.dispose = () => {
+      if (released) return;
+      released = true;
+      void session.disposeAsync();
+      disposeLease();
+    };
+    await session.ready;
+    const view = session.connectionManager;
     expect(view.list().filter((entry) => entry.status !== 'connected')).toEqual([]);
     return view;
   }
@@ -178,7 +206,7 @@ describe('ProgramMcp', () => {
 
   it('starts again, once for everyone waiting, only after the previous servers have exited', async () => {
     await writeServers({
-      stubborn: stdioServer({ args: [stdioFixture], env: { KIMI_TEST_MCP_IGNORE_SIGTERM: '1' } }),
+      stubborn: stdioServer(mockStdioServer({ ignoreSigterm: true })),
     });
     const first = await mcp.acquire();
     await connected(first);

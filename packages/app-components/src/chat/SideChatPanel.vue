@@ -17,7 +17,8 @@ import { sideChatDrafts } from '@moonshot-ai/app-client/client';
 import { persistComposerDraftSnapshot } from '@moonshot-ai/app-client/lib';
 import { useEscInterrupt, usePanelScroll } from '@moonshot-ai/app-client/composables';
 import { draftAttachmentsStorageKey, draftStorageKey, safeGetJson, safeGetString, type TranscriptLayout } from '@moonshot-ai/app-core/lib';
-import { FetchTurnFileChangesKey, PinScrollKey } from '@moonshot-ai/app-client/contracts';
+import { FetchTurnFileChangesKey } from '@moonshot-ai/app-client/contracts';
+import { PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import type { ChatTurn, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
 import type { PromptAttachment, SideChatTurnError } from '@moonshot-ai/app-client/client';
 import type { ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
@@ -175,7 +176,7 @@ defineExpose({ focusInput });
 
 <template>
   <div class="sc" @keydown="onRootKeydown">
-    <div ref="bodyRef" class="sc-body" @scroll.passive="onBodyScroll">
+    <div ref="bodyRef" class="sc-body" data-panel-content @scroll.passive="onBodyScroll">
       <EmptyState v-if="turns.length === 0" class="sc-empty" :title="t('sideChat.title')" :hint="t('sideChat.empty')">
         <template #icon>
           <Icon name="side-chat" size="lg" />

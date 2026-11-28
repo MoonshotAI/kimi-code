@@ -3,6 +3,8 @@ import { aroundEach, type TestContext } from 'vitest';
 import { createTestHome, type TestHome } from '#/fixtures/home';
 import { installNetworkGuard, type NetworkGuardOptions } from '#/fixtures/network';
 import { startKap, type KapHarness, type KapLaunchOptions, type KapRunningServer, type StartKapOptions } from '#/kap/harness';
+import { verifyKapInvariants } from '#/kap/invariants';
+import { verifyKapSchemas } from '#/kap/schemas';
 import { createFakeModel, type FakeModel, type FakeModelOptions } from '#/model/fake-model';
 
 export type Use<T> = (value: T) => Promise<void>;
@@ -30,11 +32,12 @@ export interface HomeFixtureDefinitions {
 }
 
 export interface KapFixtureDefinitions<S extends KapRunningServer> extends ModelFixtureDefinitions {
-  readonly kap: FixtureDefinition<ModelFixtures, KapHarness<S>>;
+  readonly kap: FixtureDefinition<ModelFixtures & TestContext, KapHarness<S>>;
 }
 
 export interface KapFixtureOptions<O extends KapLaunchOptions, S extends KapRunningServer> extends Omit<StartKapOptions<O, S>, 'model'> {
   readonly modelOptions?: FakeModelOptions;
+  readonly verifyInvariants?: boolean;
   readonly createServerLogger?: (options: { level: 'info'; stream: { write(line: string): void } }) => O['logger'];
 }
 
@@ -79,10 +82,10 @@ export function homeFixtures(): HomeFixtureDefinitions {
 }
 
 export function kapFixtures<O extends KapLaunchOptions, S extends KapRunningServer>(options: KapFixtureOptions<O, S>): KapFixtureDefinitions<S> {
-  const { modelOptions, createServerLogger, ...kapOptions } = options;
+  const { modelOptions, createServerLogger, verifyInvariants, ...kapOptions } = options;
   return {
     ...modelFixtures(modelOptions),
-    kap: async ({ model }, use) => {
+    kap: async ({ model, task }, use) => {
       const frames: string[] = [];
       const logs: string[] = [];
       let modelBeforeShutdown: string | undefined;
@@ -109,6 +112,11 @@ export function kapFixtures<O extends KapLaunchOptions, S extends KapRunningServ
       try {
         await use(kap);
         verifyModelOnce(model);
+        if (verifyInvariants === true && task.result?.state !== 'fail') {
+          await verifyKapInvariants(kap);
+          await verifyKapSchemas(kap);
+          model.verify();
+        }
       } finally {
         modelBeforeShutdown = describeModel(model);
         await kap.close();

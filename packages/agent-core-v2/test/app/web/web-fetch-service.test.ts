@@ -12,13 +12,14 @@ import {
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+import { type ProviderConfig } from '#/provider-catalog/provider/provider';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/app/web/providers/moonshot-fetch-url';
 import { IWebFetchService } from '#/app/web/web';
 import { WebFetchService } from '#/app/web/webService';
 
 import { stubAgentIdentity } from '../agentIdentity/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const OAUTH_PROVIDER = 'managed:kimi-code';
 const NON_OAUTH_PROVIDER = 'openai-main';
@@ -45,8 +46,8 @@ describe('WebFetchService', () => {
       .mockReturnValue({ getAccessToken: async () => 'access-token' });
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IProviderService, {
-          get: ((name: string) => providers[name]) as IProviderService['get'],
+        reg.definePartialInstance(IProviderCatalogService, {
+          getProviderConfig: ((name: string) => providers[name]) as IProviderCatalogService['getProviderConfig'],
         });
         reg.definePartialInstance(IOAuthService, {
           resolveTokenProvider:

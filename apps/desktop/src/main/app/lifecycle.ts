@@ -13,7 +13,8 @@ import { prepareSessionContinue } from '../server/session-continue';
 import { screenLocale, type ScreenAction } from './screens';
 import { getColorScheme } from './ui-state';
 import { stopShellEnvProbe } from '../system/shell-env';
-import { createWindow, cancelQuitting, getMainWindow, isQuitConfirmSkipped, markQuitting, reportIfStillRunning, selectSessionInRenderer, sendLaunchAction, sendToRenderer, setScreenActionHandler, showMainWindow, showStartupScreen, type MainWindow } from '../window/main-window';
+import { createWindow, reportIfStillRunning, selectSessionInRenderer, sendLaunchAction, setScreenActionHandler, showMainWindow, showStartupScreen } from '../window/main-window';
+import { cancelQuitting, getMainWindow, isQuitConfirmSkipped, markQuitting, sendToRenderer, type MainWindow } from '../window/window-registry';
 import { createTray, destroyTray } from '../shell/tray';
 import { initDockIcon } from '../shell/dock-icon';
 import { e2eWindowMode } from './e2e-mode';
@@ -53,10 +54,18 @@ function openDeepLinkWorkspace(root: string): void {
   sendLaunchAction({ action: 'open-workspace', root, newChat: true });
 }
 
+function openDeepLinkSession(sessionId: string): void {
+  sendLaunchAction({ action: 'open-session', sessionId });
+}
+
+function routeDeepLink(url: string): void {
+  handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace, openDeepLinkSession);
+}
+
 function handleSecondInstanceArgv(argv: readonly string[]): void {
   const deepLink = extractDeepLink(argv);
   if (deepLink !== undefined) {
-    handleDeepLink(deepLink, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+    routeDeepLink(deepLink);
     return;
   }
   showMainWindow();
@@ -124,7 +133,7 @@ export function main(): void {
       pendingDeepLinks.push(url);
       return;
     }
-    handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+    routeDeepLink(url);
   });
 
   registerIpcHandlers();
@@ -260,11 +269,12 @@ export function main(): void {
       initAutoUpdater({
         confirmRestart: () => confirmUpdateRestart(getMainWindow()),
         prepareSessionContinue,
+        beforeRestart: closeServerHandle,
       });
     }
     const startupDeepLink = process.platform === 'darwin' ? undefined : extractDeepLink(process.argv);
     if (startupDeepLink !== undefined) {
-      handleDeepLink(startupDeepLink, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+      routeDeepLink(startupDeepLink);
     } else {
       forwardLaunchArgs(process.argv);
     }
@@ -274,7 +284,7 @@ export function main(): void {
     const deepLinks = pendingDeepLinks.splice(0);
     launchRoutingReady = true;
     for (const url of deepLinks) {
-      handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+      routeDeepLink(url);
     }
     app.on('activate', () => {
       showMainWindow();

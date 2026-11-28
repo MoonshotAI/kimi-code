@@ -14,6 +14,7 @@ export default {
   openPr: '打开 Pull Request',
   options: '选项',
   copySessionId: '复制 Session ID',
+  copySessionLink: '复制会话链接',
   pinSession: '置顶',
   unpinSession: '取消置顶',
   renameSession: '重命名',

@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onActivated, onDeactivated, onMounted, onUn
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
-import { useAppearance } from '@moonshot-ai/app-core';
+import { useAppearance } from '@moonshot-ai/app-core/composables';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { Badge, Button, Icon, IconButton, Spinner, Textarea, Tooltip, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
@@ -387,7 +387,7 @@ onUpdated(updateScrollSeams);
     </div>
 
     <div v-if="paneMounted" ref="paneEl" class="apane" :inert="minimized">
-      <div class="ab">
+      <div class="ab" :class="{ 'has-feedback': feedbackOpen }">
         <Tooltip v-if="block.kind === 'plan_review' && block.path" :text="block.path">
           <button
             type="button"
@@ -637,8 +637,10 @@ onUpdated(updateScrollSeams);
   min-height: 0;
   padding: var(--space-2) var(--space-4) 0;
 }
+.ab.has-feedback { overflow: hidden auto; }
 .ab > * { flex: 0 1 auto; min-height: 0; }
-.ab > .plan-path { flex: none; }
+.ab > .plan-path,
+.ab > .feedback-wrap { flex: none; }
 .ab > .body-plan-wrap { flex: 1; }
 
 .plan-path {

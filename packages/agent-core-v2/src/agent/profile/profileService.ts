@@ -4,7 +4,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import type { LlmSampling, ThinkingEffort } from '@moonshot-ai/core/llm/request';
-import { fromLlmModelSpec, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
+import { fromLlmModelSpec, UNKNOWN_CAPABILITY, type ModelCapability } from '#/provider-catalog/capability';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import {
   modelSupportsThinkingEffort,
@@ -13,14 +13,13 @@ import {
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
 } from '@moonshot-ai/core/llm/thinking';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { type ModelOverrides } from '#/llm-adapter/model/model.types';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { type Model } from '#/provider-catalog/model/catalog';
+import { type ModelOverrides } from '#/provider-catalog/model/model.types';
 import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,
   type ThinkingConfig,
-} from '#/llm-adapter/model/thinking';
+} from '#/provider-catalog/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
@@ -88,6 +87,7 @@ import {
 } from './profileOps';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export type { WarningEvent } from '#/errors';
 
@@ -140,8 +140,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IConfigService private readonly config: IConfigService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
-    @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
+    @IProviderCatalogService private readonly modelCatalog: IProviderCatalogService,
+    @IProviderCatalogService private readonly protocolAdapters: IProviderCatalogService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,

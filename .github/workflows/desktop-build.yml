@@ -49,8 +49,13 @@ on:
   # release.yml 通过 workflow_call 调用本 workflow 打发版产物。
   workflow_call:
     inputs:
+      sha:
+        description: 'Exact release commit'
+        required: false
+        type: string
+        default: ''
       renderer-ci-run-id:
-        description: 'Successful release-branch push CI run containing the Desktop renderer for this SHA'
+        description: 'Optional workflow run containing a prebuilt Desktop renderer for this SHA'
         type: string
         default: ''
       pnpm-cache-restore-only:
@@ -179,8 +184,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ inputs.sha || github.sha }}
       - name: Fetch Changesets base branch
-        if: startsWith(github.ref, 'refs/heads/release/') && (inputs.canary || github.event_name == 'push')
+        if: (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') && (inputs.canary || github.event_name == 'push')
         run: git fetch --no-tags origin main:refs/heads/main
       - uses: actions/setup-node@v6
         with:
@@ -236,6 +242,8 @@ jobs:
         # desktop 经 workspace import kimi-code 的 packages 源码，必须拉
         # submodule；kimi-code 是公开仓，默认 GITHUB_TOKEN 即可。
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -267,13 +275,13 @@ jobs:
         # postinstall 会自动跑 electron-rebuild。
         run: pnpm install --frozen-lockfile
 
-      - name: Download Desktop renderer from the verified push CI
+      - name: Download prebuilt Desktop renderer
         if: inputs.renderer-ci-run-id != ''
         uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.renderer-ci-run-id }}
-          name: desktop-renderer-${{ github.sha }}
+          name: desktop-renderer-${{ inputs.sha || github.sha }}
           path: apps/desktop/desktop-dist
 
       - name: Setup macOS keychain (Developer ID)

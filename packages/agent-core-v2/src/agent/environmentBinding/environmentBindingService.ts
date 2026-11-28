@@ -8,23 +8,35 @@ import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { ContextInjectionContext, ContextInjectionResult, ReminderRegistration } from '#/features/reminder/types';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
-import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from './environmentBinding';
+import {
+  IAgentEnvironmentBindingSeed,
+  IAgentEnvironmentBindingService,
+  type LocalWorkDirRebindInput,
+} from './environmentBinding';
 import { EnvironmentSetBinding, environmentBindingKey } from './environmentBindingOps';
 
 export const ENVIRONMENT_BINDING_REMINDER_VARIANT = 'environment_binding';
 
 export const PROJECT_CONTEXT_REMINDER_VARIANT = 'project_context';
+
+export const MISSING_WORKDIR_REMINDER_VARIANT = 'missing_workdir';
+
+interface MissingWorkdirDisclosure {
+  readonly missingCwd?: string;
+}
 
 function projectContextReminderText(binding: EnvironmentBinding, cwd: string, paths: readonly string[]): string {
   return (
@@ -51,6 +63,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private readonly changeEmitter = new Emitter<EnvironmentBinding>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly restoreHook: IDisposable;
+  private readonly missingWorkdirRegistration: ReminderRegistration | undefined;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -58,7 +71,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IAgentEnvironmentBindingSeed private readonly seed: IAgentEnvironmentBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
     @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
@@ -79,6 +92,12 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
       }
       await next();
     });
+    this.missingWorkdirRegistration =
+      this.scopeContext.agentId === MAIN_AGENT_ID
+        ? this.reminder.register<MissingWorkdirDisclosure>(MISSING_WORKDIR_REMINDER_VARIANT, (context) =>
+            this.missingWorkdirReminder(context),
+          )
+        : undefined;
   }
 
   private isSeedRoundTrip(binding: EnvironmentBinding): boolean {
@@ -104,7 +123,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
         resolvedHost = undefined;
       }
     }
-    return resolveEffectiveWorkspaceRoots(this.session, binding, this.workspaceInfo, resolvedHost);
+    return resolveEffectiveWorkspaceRoots(this.session, binding, this.projectInfo, resolvedHost);
   }
 
   get current(): EnvironmentBinding {
@@ -116,6 +135,26 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     const lease = this.resolver.acquire(binding, []);
     lease.dispose();
     return this.commit(binding);
+  }
+
+  async rebindLocalWorkDir(input: LocalWorkDirRebindInput): Promise<EnvironmentBinding> {
+    const next: EnvironmentBinding = {
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      cwd: input.cwd,
+    };
+    await this.dispatcher.dispatch(
+      new EnvironmentSetBinding({
+        agentId: this.scopeContext.agentId,
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        cwd: input.cwd,
+        originCwd: input.originCwd,
+        pendingBaseline: input.pendingBaseline,
+      }),
+    );
+    this.state.set(environmentBindingKey, next);
+    this.applySessionWorkDir(next);
+    this.changeEmitter.fire(next);
+    return next;
   }
 
   private commit(binding: EnvironmentBinding): EnvironmentBinding {
@@ -189,7 +228,48 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
   }
 
+  private async missingWorkdirReminder(
+    context: ContextInjectionContext<MissingWorkdirDisclosure>,
+  ): Promise<ContextInjectionResult<MissingWorkdirDisclosure> | undefined> {
+    if (!context.isNewTurn) return undefined;
+    const binding = this.current;
+    if (binding.environmentId !== LOCAL_ENVIRONMENT_ID) return undefined;
+    const cwd = this.effectiveRoots(binding).workDir;
+    let lease: EnvironmentLease;
+    try {
+      lease = this.resolver.acquire(binding, ['fs']);
+    } catch (error) {
+      if (error instanceof EnvironmentError) return undefined;
+      throw error;
+    }
+    try {
+      const fs = lease.environment.fs;
+      if (fs === undefined) return undefined;
+      const state: 'present' | 'missing' | 'unknown' = await fs.stat(cwd).then(
+        (stat) => (stat.isDirectory ? 'present' : 'missing'),
+        (error: unknown) =>
+          isHostFsNotFound(error) || isHostFsNotDirectory(error) ? 'missing' : 'unknown',
+      );
+      if (state === 'unknown') return undefined;
+      if (state === 'present') {
+        if (context.lastDisclosure?.missingCwd !== cwd) return undefined;
+        return {
+          content: `The working directory \`${cwd}\` is available again.`,
+          disclosure: {},
+        };
+      }
+      if (context.lastDisclosure?.missingCwd === cwd) return undefined;
+      return {
+        content: `The working directory \`${cwd}\` no longer exists.`,
+        disclosure: { missingCwd: cwd },
+      };
+    } finally {
+      lease.dispose();
+    }
+  }
+
   dispose(): void {
+    this.missingWorkdirRegistration?.dispose();
     this.restoreHook.dispose();
     this.changeEmitter.dispose();
   }

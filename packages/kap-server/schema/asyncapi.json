@@ -113,6 +113,9 @@
             "event_created_at": {
               "type": "string"
             },
+            "missing_model": {
+              "type": "string"
+            },
             "model": {
               "type": "string"
             },
@@ -126,6 +129,11 @@
             },
             "plan_mode": {
               "type": "boolean"
+            },
+            "profile_revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             },
             "session_id": {
               "minLength": 1,
@@ -1630,6 +1638,35 @@
                           "type": "object"
                         }
                       },
+                      "type": "object"
+                    },
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "status_code": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
                       "type": "object"
                     },
                     "instruction": {
@@ -4992,6 +5029,35 @@
                                   "type": "object"
                                 }
                               },
+                              "type": "object"
+                            },
+                            "error": {
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "request_id": {
+                                  "type": "string"
+                                },
+                                "retryable": {
+                                  "type": "boolean"
+                                },
+                                "status_code": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "message"
+                              ],
                               "type": "object"
                             },
                             "instruction": {

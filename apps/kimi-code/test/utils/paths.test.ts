@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  abbreviateHome,
   getBinDir,
   getDataDir,
   getInputHistoryFile,
@@ -100,5 +101,17 @@ describe('getInputHistoryFile', () => {
     expect(getInputHistoryFile('/proj')).toBe(
       join('/custom/data', 'user-history', `${hash}.jsonl`),
     );
+  });
+});
+
+describe('abbreviateHome', () => {
+  it('abbreviates POSIX and Windows home prefixes without matching sibling directories', () => {
+    expect(abbreviateHome('/Users/alice', '/Users/alice')).toBe('~');
+    expect(abbreviateHome('/Users/alice/repo', '/Users/alice')).toBe('~/repo');
+    expect(abbreviateHome('/Users/alice/repo', '/Users/alice/')).toBe('~/repo');
+    expect(abbreviateHome('/Users/alice2/repo', '/Users/alice')).toBe('/Users/alice2/repo');
+    expect(abbreviateHome('C:\\Users\\alice\\repo', 'C:\\Users\\alice')).toBe('~\\repo');
+    expect(abbreviateHome('C:/Users/alice/repo', 'C:\\Users\\alice')).toBe('~/repo');
+    expect(abbreviateHome('C:\\Users\\alice2\\repo', 'C:\\Users\\alice')).toBe('C:\\Users\\alice2\\repo');
   });
 });

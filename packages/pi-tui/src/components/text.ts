@@ -32,6 +32,8 @@ export class Text implements Component {
 	}
 
 	setText(text: string): void {
+		// Renderers often set the same text on every update; keep the wrapped lines then.
+		if (text === this.text) return;
 		this.text = text;
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;

@@ -11,7 +11,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import {
   listToolsQuerySchema,
@@ -22,18 +22,7 @@ import type { ToolDescriptor } from '../protocol/tool';
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
 
-interface ToolsRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
-
-export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
+export function registerToolsRoutes(app: GetRouteHost, core: Scope): void {
   const listToolsRoute = defineRoute(
     {
       method: 'GET',
@@ -60,7 +49,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
   app.get(
     listToolsRoute.path,
     listToolsRoute.options,
-    listToolsRoute.handler as Parameters<ToolsRouteHost['get']>[2],
+    listToolsRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 }
 

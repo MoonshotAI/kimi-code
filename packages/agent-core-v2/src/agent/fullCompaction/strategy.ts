@@ -1,7 +1,7 @@
 import type { Message } from '@moonshot-ai/core/llm/message';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
-import { estimateTokensForMessage } from '#/llm-adapter/contract/tokens';
+import { estimateTokensForMessage } from '#/session/tokenCounting/tokens';
 
 export interface CompactionConfig {
   triggerRatio: number;

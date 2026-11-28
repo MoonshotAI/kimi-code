@@ -5,6 +5,8 @@ import { waitForModelEvent } from '#/model/wait';
 
 export const BUILT_IN_LANES = ['main', 'subagent', 'compaction', 'side'] as const;
 
+export type BuiltInLaneName = (typeof BUILT_IN_LANES)[number];
+
 export type LaneMatcher = (request: RequestFacts) => boolean;
 
 export interface Lane {
@@ -96,7 +98,18 @@ export class LaneState implements Lane {
   }
 }
 
-export function builtInLaneOf(request: RequestFacts): (typeof BUILT_IN_LANES)[number] {
+export function subagentStepOf(request: RequestFacts): { readonly agent: string; readonly continues: boolean } | undefined {
+  const metadata = request.metadata;
+  if (metadata?.agentRole === undefined || metadata.agentRole === 'main') return undefined;
+  return { agent: `${metadata.agentRole} ${metadata.parentRequestId ?? ''}`, continues: metadata.stepReason === 'tool_results' };
+}
+
+export function promptCacheRoleOf(request: RequestFacts): BuiltInLaneName {
+  const agentRole = request.metadata?.agentRole;
+  return agentRole !== undefined && agentRole !== 'main' ? 'subagent' : builtInLaneOf(request);
+}
+
+export function builtInLaneOf(request: RequestFacts): BuiltInLaneName {
   const metadata = request.metadata;
   if (metadata !== undefined) {
     if (metadata.stepReason === 'compact') return 'compaction';
