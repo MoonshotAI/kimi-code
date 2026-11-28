@@ -3,6 +3,7 @@ import {
   buildAddProviderInput,
   buildUpdateProviderInput,
   emptyModelRow,
+  fetchedModelToRow,
   isManagedOAuthProvider,
   PROVIDER_TYPES,
   providerModelRows,
@@ -253,5 +254,60 @@ describe('emptyModelRow', () => {
       supportEfforts: [],
       adaptiveThinking: true,
     });
+  });
+});
+
+describe('fetchedModelToRow', () => {
+  it('carries fetched vision capabilities, context size, and efforts into the provider payload', () => {
+    const row = fetchedModelToRow(
+      {
+        id: 'example-vision-pro',
+        displayName: 'Example Vision Pro',
+        maxContextSize: 1048576,
+        capabilities: ['thinking', 'always_thinking', 'image_in', 'video_in', 'tool_use'],
+        supportEfforts: ['low', 'high', 'max'],
+      },
+      '256000',
+    );
+    const input = buildAddProviderInput(validForm({ models: [row] }));
+    expect(input.models).toEqual([
+      {
+        model: 'example-vision-pro',
+        maxContextSize: 1048576,
+        displayName: 'Example Vision Pro',
+        capabilities: ['thinking', 'always_thinking', 'image_in', 'video_in', 'tool_use'],
+        supportEfforts: ['low', 'high', 'max'],
+        adaptiveThinking: true,
+      },
+    ]);
+  });
+
+  it('keeps the existing defaults when the endpoint returns only model ids', () => {
+    const row = fetchedModelToRow({ id: 'gpt-4.1', ownedBy: 'openai' }, '256000');
+    expect(row).toEqual({
+      model: 'gpt-4.1',
+      maxContextSize: '256000',
+      displayName: '',
+      capabilities: ['tool_use', 'thinking'],
+      supportEfforts: [],
+      adaptiveThinking: true,
+    });
+  });
+
+  it('clears adaptiveThinking when fetched capabilities explicitly omit thinking', () => {
+    const row = fetchedModelToRow(
+      { id: 'vision-plain', capabilities: ['image_in', 'tool_use'] },
+      '256000',
+    );
+    expect(row.adaptiveThinking).toBe(false);
+    const input = buildAddProviderInput(validForm({ type: 'anthropic', models: [row] }));
+    expect(input.models).toEqual([
+      {
+        model: 'vision-plain',
+        maxContextSize: 256000,
+        capabilities: ['image_in', 'tool_use'],
+        adaptiveThinking: false,
+      },
+    ]);
   });
 });

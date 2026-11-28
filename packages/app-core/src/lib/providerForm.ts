@@ -1,6 +1,7 @@
 
 import type { AddProviderInput, AddProviderModelInput, AppCatalogModel, AppProvider, UpdateProviderInput } from '../api/types';
 import { MANAGED_KIMI_CODE_PROVIDER_ID } from '../api/types';
+import type { FetchedProviderModel } from './providerModelsFetch';
 
 export const PROVIDER_TYPES = [
   'kimi',
@@ -90,6 +91,23 @@ export function catalogModelToRow(model: AppCatalogModel): ModelRow {
     capabilities: [...(model.capabilities ?? ['tool_use', 'thinking'])],
     supportEfforts: [],
     adaptiveThinking: true,
+  };
+}
+
+export function fetchedModelToRow(model: FetchedProviderModel, fallbackContextSize: string): ModelRow {
+  const supportsThinking =
+    model.capabilities === undefined ||
+    model.capabilities.includes('thinking') ||
+    model.capabilities.includes('always_thinking');
+  return {
+    ...emptyModelRow(),
+    model: model.id,
+    maxContextSize:
+      model.maxContextSize !== undefined ? String(model.maxContextSize) : fallbackContextSize,
+    adaptiveThinking: supportsThinking,
+    ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
+    ...(model.capabilities !== undefined ? { capabilities: [...model.capabilities] } : {}),
+    ...(model.supportEfforts !== undefined ? { supportEfforts: [...model.supportEfforts] } : {}),
   };
 }
 

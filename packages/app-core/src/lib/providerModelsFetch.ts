@@ -2,6 +2,10 @@
 export interface FetchedProviderModel {
   id: string;
   ownedBy?: string;
+  displayName?: string;
+  maxContextSize?: number;
+  capabilities?: string[];
+  supportEfforts?: string[];
 }
 
 export type FetchModelsErrorKind =
@@ -91,16 +95,154 @@ export function buildModelsRequestHeaders(
   return key === '' ? {} : { authorization: `Bearer ${key}` };
 }
 
-function modelIdFromEntry(entry: unknown): { id: string; ownedBy?: string } | null {
-  if (entry === null || typeof entry !== 'object') return null;
-  const record = entry as Record<string, unknown>;
-  const raw = record['slug'] ?? record['id'] ?? record['name'];
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+  return items.length > 0 ? items : undefined;
+}
+
+function parsePositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  if (typeof value === 'string' && value.trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function firstBoolean(...values: unknown[]): boolean | undefined {
+  return values.find((value): value is boolean => typeof value === 'boolean');
+}
+
+function capabilitiesFromEntry(record: Record<string, unknown>): string[] | undefined {
+  const rawModalities = record['modalities'];
+  const rawCapabilities = record['capabilities'];
+  const rawReasoning = record['reasoning'];
+  const rawTools = record['tools'];
+  if (
+    !isRecord(rawModalities) &&
+    !isRecord(rawCapabilities) &&
+    !isRecord(rawReasoning) &&
+    typeof rawReasoning !== 'boolean' &&
+    !isRecord(rawTools) &&
+    !isRecord(record['think_efforts']) &&
+    typeof record['tool_call'] !== 'boolean' &&
+    typeof record['supports_tool_use'] !== 'boolean' &&
+    typeof record['supports_image_in'] !== 'boolean' &&
+    typeof record['supports_video_in'] !== 'boolean' &&
+    typeof record['supports_reasoning'] !== 'boolean' &&
+    typeof record['supports_thinking_type'] !== 'string' &&
+    typeof record['dynamically_loaded_tools'] !== 'boolean'
+  ) {
+    return undefined;
+  }
+
+  const modalities = isRecord(rawModalities) ? rawModalities : undefined;
+  const nested = isRecord(rawCapabilities) ? rawCapabilities : undefined;
+  const reasoning = isRecord(rawReasoning) ? rawReasoning : undefined;
+  const tools = isRecord(rawTools) ? rawTools : undefined;
+  const inputModalities =
+    parseStringList(modalities?.['input']) ?? parseStringList(nested?.['input_modalities']);
+  const reasoningType = reasoning?.['type'];
+  const flatThinkingType = record['supports_thinking_type'];
+  const thinkingType =
+    reasoningType === 'only' || reasoningType === 'both' || reasoningType === 'none'
+      ? reasoningType
+      : flatThinkingType === 'only' || flatThinkingType === 'both' || flatThinkingType === 'no'
+        ? flatThinkingType
+        : undefined;
+  const supportsReasoning =
+    thinkingType === 'none' || thinkingType === 'no'
+      ? false
+      : (firstBoolean(
+          rawReasoning,
+          reasoning?.['support'],
+          nested?.['reasoning'],
+          record['supports_reasoning'],
+        ) ?? false);
+  const toolUse =
+    firstBoolean(
+      record['tool_call'],
+      tools?.['support'],
+      nested?.['tool_call'],
+      record['supports_tool_use'],
+    ) ?? true;
+  const supportsImageIn =
+    inputModalities !== undefined
+      ? inputModalities.includes('image')
+      : record['supports_image_in'] === true;
+  const supportsVideoIn =
+    inputModalities !== undefined
+      ? inputModalities.includes('video')
+      : record['supports_video_in'] === true;
+
+  const caps = new Set<string>();
+  if (thinkingType === 'only') {
+    caps.add('thinking');
+    caps.add('always_thinking');
+  } else if (thinkingType === 'both' || supportsReasoning) {
+    caps.add('thinking');
+  }
+  if (supportsImageIn) caps.add('image_in');
+  if (supportsVideoIn) caps.add('video_in');
+  if (inputModalities?.includes('audio') === true) caps.add('audio_in');
+  if (toolUse) caps.add('tool_use');
+  if (tools?.['dynamic_load'] === true || record['dynamically_loaded_tools'] === true) {
+    caps.add('dynamically_loaded_tools');
+  }
+  return [...caps];
+}
+
+function supportEffortsFromEntry(record: Record<string, unknown>): string[] | undefined {
+  const rawReasoning = record['reasoning'];
+  const reasoning = isRecord(rawReasoning) ? rawReasoning : undefined;
+  const rawEffort = reasoning?.['effort'];
+  const effort = isRecord(rawEffort) ? rawEffort : undefined;
+  const rawThinkEfforts = record['think_efforts'];
+  const thinkEfforts = isRecord(rawThinkEfforts) ? rawThinkEfforts : undefined;
+  const rawCapabilities = record['capabilities'];
+  const nested = isRecord(rawCapabilities) ? rawCapabilities : undefined;
+  return (
+    parseStringList(effort?.['valid']) ??
+    (thinkEfforts?.['support'] === true
+      ? parseStringList(thinkEfforts['valid_efforts'])
+      : undefined) ??
+    parseStringList(nested?.['support_efforts']) ??
+    parseStringList(record['support_efforts'])
+  );
+}
+
+function modelFromEntry(entry: unknown): FetchedProviderModel | null {
+  if (!isRecord(entry)) return null;
+  const raw = entry['slug'] ?? entry['id'] ?? entry['name'];
   if (typeof raw !== 'string') return null;
   const stripped = raw.startsWith('models/') ? raw.slice('models/'.length) : raw;
   const id = stripped.trim();
   if (id === '') return null;
-  const ownedBy = record['owned_by'];
-  return ownedBy === undefined ? { id } : { id, ...(typeof ownedBy === 'string' ? { ownedBy } : {}) };
+
+  const ownedBy = entry['owned_by'];
+  const rawDisplayName = entry['display_name'];
+  const displayName =
+    typeof rawDisplayName === 'string' && rawDisplayName.trim() !== '' ? rawDisplayName : undefined;
+  const rawLimit = entry['limit'];
+  const limit = isRecord(rawLimit) ? rawLimit : undefined;
+  const maxContextSize =
+    parsePositiveInteger(limit?.['context']) ??
+    parsePositiveInteger(entry['context_length']) ??
+    parsePositiveInteger(entry['context_tokens']);
+  const capabilities = capabilitiesFromEntry(entry);
+  const supportEfforts = supportEffortsFromEntry(entry);
+
+  return {
+    id,
+    ...(typeof ownedBy === 'string' ? { ownedBy } : {}),
+    ...(displayName !== undefined ? { displayName } : {}),
+    ...(maxContextSize !== undefined ? { maxContextSize } : {}),
+    ...(capabilities !== undefined ? { capabilities } : {}),
+    ...(supportEfforts !== undefined ? { supportEfforts } : {}),
+  };
 }
 
 export function parseModelsResponseBody(body: string): FetchedProviderModel[] | null {
@@ -121,7 +263,7 @@ export function parseModelsResponseBody(body: string): FetchedProviderModel[] | 
   const models: FetchedProviderModel[] = [];
   const seen = new Set<string>();
   for (const entry of entries) {
-    const parsed = modelIdFromEntry(entry);
+    const parsed = modelFromEntry(entry);
     if (parsed === null || seen.has(parsed.id)) continue;
     seen.add(parsed.id);
     models.push(parsed);
